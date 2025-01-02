@@ -1,12 +1,11 @@
 # git2txt Exporter
 
-A Python script that exports text files from either a remote GitHub repository (by cloning) or a local directory. Perfect for archiving code, creating documentation, or simply having a consolidated view of text-based files in your project.
+This is a simple Python script that extracts all of the text in files from either a local directory or remote GitHub repository (by cloning) or a local directory. The script extracts the context of the files recursively and flattens them into a single file that is easy for ingestion into a LLM. 
 
 ## Features
 
 ### Automatic Dependency Management
-- Installs GitPython automatically if not present
-- Handles all dependencies quietly with a single status message
+- Installs all dependencies quietly on first run
 
 ### Flexible Input Sources
 - Remote GitHub repositories (public or private)
@@ -60,16 +59,6 @@ python -m venv venv
 source venv/bin/activate  # or .\venv\Scripts\activate on Windows
 ```
 
-3. (Optional) Run tests:
-```bash
-pytest tests/
-```
-
-If you'd like, you can view coverage as well:
-```bash
-pytest tests/ --cov=git2txt
-```
-
 ## Quick Start Usage
 
 You can run `git2txt.py` directly without installing anything else, as the script handles dependencies automatically. Below are common usage patterns:
@@ -117,43 +106,4 @@ This places the file in `exports/my_export.txt`.
 
 After cloning, you can edit `git2txt.py` or the supporting modules. We recommend using a virtual environment and the pytest library for testing.
 
-### Running Tests
-
-```bash
-# Run all tests
-pytest tests/
-
-# Run with coverage
-pytest tests/ --cov=git2txt
-
-# Run a specific test file
-pytest tests/test_git2txt.py
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. Git Not Found
-```
-Error: Git is not installed or not in PATH
-```
-Solution: Install Git and ensure your system PATH includes it.
-
-2. Permission Denied
-```
-PermissionError: [Errno 13] Permission denied: 'exports'
-```
-Solution: Run the script in a directory where you have write permissions, or adjust permissions on the `exports/` folder.
-
-3. Network Issues
-```
-fatal: unable to access: Connection refused
-```
-Solution: Check your internet connection, firewall settings, or verify the repository URL.
-
-For more issues or help, please check the GitHub issues page or open a new ticket.
-
-## License
-
-This project is licensed under the MIT License.
+For help, please check the GitHub issues page or open a new issue.
