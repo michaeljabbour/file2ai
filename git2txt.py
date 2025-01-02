@@ -109,22 +109,23 @@ def parse_args() -> argparse.Namespace:
     """
     Parse and validate command-line arguments.
 
-    Returns:
-        Namespace containing the parsed arguments.
+    Logic:
+        - If --local-dir is provided, use that directly
+        - If --repo-url is provided, use that directly
+        - If neither is provided, prompt user for input
     """
     parser = argparse.ArgumentParser(
-        description="Clone a GitHub repo and export text files to a single file.",
+        description="Clone a GitHub repo or export text files from a local directory to a single file.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    
+
     parser.add_argument(
         "--repo-url",
-        help="GitHub URL (e.g., https://github.com/owner/repo.git)"
+        help="GitHub URL (e.g., https://github.com/owner/repo.git)."
     )
-    
     parser.add_argument(
         "--local-dir",
-        help="Local directory path to export"
+        help="Local directory path to export."
     )
     
     parser.add_argument(
@@ -155,17 +156,32 @@ def parse_args() -> argparse.Namespace:
     )
     
     args = parser.parse_args()
-    
-    # Interactive prompts with defaults
-    if not args.repo_url:
-        args.repo_url = input("Enter the GitHub repository URL (or press Enter to export local directory): ").strip()
-    
-    if not args.repo_url:
-        args.local_dir = input("Enter a local directory path for export (or press Enter for current directory): ").strip()
-        if not args.local_dir:
+
+    # If both provided, that's invalid
+    if args.repo_url and args.local_dir:
+        logger.error("Please specify either --repo-url OR --local-dir, not both.")
+        sys.exit(1)
+
+    # If local-dir is provided, use it directly (no prompting)
+    if args.local_dir:
+        return args
+
+    # If repo-url is provided, use it directly (no prompting)
+    if args.repo_url:
+        return args
+
+    # If neither is provided, then prompt
+    tmp_url = input("Enter the GitHub repository URL (or press Enter to export local directory): ").strip()
+    if tmp_url:
+        args.repo_url = tmp_url
+    else:
+        tmp_dir = input("Enter a local directory path for export (or press Enter for current directory): ").strip()
+        if tmp_dir:
+            args.local_dir = tmp_dir
+        else:
             args.local_dir = os.getcwd()
-            logger.info(f"Using current directory: {args.local_dir}")
-    
+            logger.info(f"No directory specified, defaulting to current directory: {args.local_dir}")
+
     return args
 
 def parse_github_url(url: str) -> Tuple[str, Optional[str]]:
@@ -307,8 +323,8 @@ def _write_directory_structure(repo_root: Path, outfile) -> None:
                 if not file.startswith('.') and "test" not in file.lower():
                     outfile.write(f"{'  ' * level}└── {file}\n")
 
-def _process_repository_files(repo_root: Path, outfile, stats: dict, repo: Optional[Repo]) -> None:
-    """Process all repository/local files and update statistics."""
+def _process_repository_files(repo_root: Path, outfile: Path, stats: dict, repo: Optional[Repo]) -> None:
+    """Process all repository files and update statistics."""
     files_to_process = [
         f for f in repo_root.rglob('*')
         if f.is_file() and not f.name.startswith('.') and '.git' not in str(f)
