@@ -181,21 +181,27 @@ def test_json_export_with_git(tmp_path, caplog):
 
 
 def test_parse_github_url():
-    """Test GitHub URL parsing."""
+    """Test GitHub URL parsing and validation."""
     # Test basic URL
-    url, branch = parse_github_url("https://github.com/owner/repo.git")
+    url = parse_github_url("https://github.com/owner/repo.git")
     assert url == "https://github.com/owner/repo.git"
-    assert branch is None
 
-    # Test URL with branch
-    url, branch = parse_github_url("https://github.com/owner/repo.git#main")
+    # Test URL without .git (should add it)
+    url = parse_github_url("https://github.com/owner/repo")
     assert url == "https://github.com/owner/repo.git"
-    assert branch == "main"
 
-    # Test URL without .git
-    url, branch = parse_github_url("https://github.com/owner/repo")
-    assert url == "https://github.com/owner/repo"
-    assert branch is None
+    # Test invalid URLs
+    with pytest.raises(SystemExit):
+        parse_github_url("https://github.com/owner/repo/pulls")
+    
+    with pytest.raises(SystemExit):
+        parse_github_url("https://github.com/owner/repo/issues")
+    
+    with pytest.raises(SystemExit):
+        parse_github_url("https://github.com/owner/repo/tree/main")
+    
+    with pytest.raises(SystemExit):
+        parse_github_url("not_a_url")
 
 
 def test_build_auth_url():
@@ -215,7 +221,7 @@ def test_prepare_exports_dir(tmp_path):
 
 
 def test_clone_and_export_basic(tmp_path, caplog):
-    """Test basic repository cloning and export."""
+    """Test basic repository cloning and export with branch and subdirectory handling."""
     import logging
     from git2txt import setup_logging
     import subprocess
@@ -227,7 +233,14 @@ def test_clone_and_export_basic(tmp_path, caplog):
     # Create a temporary git repository
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
+    
+    # Create main test file
     (repo_dir / "test.py").write_text("print('test')")
+    
+    # Create subdirectory with content
+    subdir = repo_dir / "subdir"
+    subdir.mkdir()
+    (subdir / "subfile.py").write_text("print('subdir test')")
 
     # Initialize git repo
     subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
@@ -244,6 +257,17 @@ def test_clone_and_export_basic(tmp_path, caplog):
     subprocess.run(
         ["git", "commit", "-m", "Initial commit"], cwd=repo_dir, check=True, capture_output=True
     )
+    
+    # Create and switch to test branch
+    subprocess.run(["git", "checkout", "-b", "test-branch"], cwd=repo_dir, check=True, capture_output=True)
+    (repo_dir / "branch-file.py").write_text("print('branch test')")
+    subprocess.run(["git", "add", "."], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Branch commit"], cwd=repo_dir, check=True, capture_output=True
+    )
+    
+    # Switch back to main
+    subprocess.run(["git", "checkout", "main"], cwd=repo_dir, check=True, capture_output=True)
     
     # Ensure .git directory is copied properly
     subprocess.run(["chmod", "-R", "755", repo_dir], check=True, capture_output=True)
@@ -280,6 +304,36 @@ def test_clone_and_export_basic(tmp_path, caplog):
         args.format = "text"
         args.output_file = "test_export.txt"
         args.skip_remove = False
+        args.subdir = None  # Explicitly set subdir to None
+
+        # Test with default branch
+        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+            clone_and_export(args)
+            assert "Using default branch" in caplog.text
+
+        # Test with explicit branch
+        args.branch = "test-branch"
+        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+            clone_and_export(args)
+            assert f"Checked out branch: {args.branch}" in caplog.text
+
+        # Test with subdirectory
+        args.branch = None
+        args.subdir = "subdir"
+        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+            clone_and_export(args)
+            assert "Exporting from subdirectory: subdir" in caplog.text
+
+        # Test with invalid subdirectory
+        args.subdir = "nonexistent"
+        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+            with pytest.raises(SystemExit):
+                clone_and_export(args)
+            assert "Subdirectory nonexistent does not exist" in caplog.text
+
+        # Reset to default for final verification
+        args.subdir = None
+        args.branch = None
 
         # Patch exports directory
         with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
@@ -334,6 +388,146 @@ def test_local_export(tmp_path, caplog):
 
     # Verify export was logged
     assert any("Starting export of local directory" in record.message for record in caplog.records)
+
+
+def test_branch_handling(tmp_path, caplog):
+    """Test branch checkout behavior."""
+    from argparse import Namespace
+    import logging
+    import subprocess
+    
+    caplog.set_level(logging.INFO)
+    
+    # Create a test repository
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    (repo_dir / "test.py").write_text("print('test')")
+    
+    # Initialize git repo
+    subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo_dir, check=True, capture_output=True)
+    
+    # Create and switch to test branch
+    subprocess.run(["git", "checkout", "-b", "test-branch"], cwd=repo_dir, check=True, capture_output=True)
+    (repo_dir / "branch-file.py").write_text("print('branch test')")
+    subprocess.run(["git", "add", "."], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "Branch commit"], cwd=repo_dir, check=True, capture_output=True)
+    
+    # Switch back to main
+    subprocess.run(["git", "checkout", "main"], cwd=repo_dir, check=True, capture_output=True)
+    
+    # Create exports directory
+    exports_dir = tmp_path / "exports"
+    exports_dir.mkdir()
+    
+    # Mock subprocess.run for git clone
+    def mock_clone(*args, **kwargs):
+        cmd = args[0] if args else kwargs.get("args", [])
+        if cmd[0] == "git" and cmd[1] == "clone":
+            target = Path(cmd[-1])
+            import shutil
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(repo_dir, target, symlinks=True)
+        return MagicMock(returncode=0)
+    
+    
+    with patch("subprocess.run", side_effect=mock_clone):
+        # Test default branch
+        args = Namespace(
+            repo_url="https://github.com/owner/repo.git",
+            branch=None,
+            token=None,
+            output_file=str(tmp_path / "output.txt"),
+            skip_remove=False,
+            format="text",
+            subdir=None
+        )
+        
+        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+            clone_and_export(args)
+            assert "Using default branch" in caplog.text
+        
+        # Test explicit branch
+        args.branch = "test-branch"
+        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+            clone_and_export(args)
+            assert f"Checked out branch: {args.branch}" in caplog.text
+
+
+def test_subdirectory_handling(tmp_path, caplog):
+    """Test subdirectory export behavior."""
+    from argparse import Namespace
+    import logging
+    import subprocess
+    
+    caplog.set_level(logging.INFO)
+    
+    # Create test repository
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    
+    # Create main directory content
+    (repo_dir / "main.py").write_text("print('main')")
+    
+    # Create subdirectory content
+    subdir = repo_dir / "subdir"
+    subdir.mkdir()
+    (subdir / "sub.py").write_text("print('sub')")
+    
+    # Initialize git repo
+    subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo_dir, check=True, capture_output=True)
+    
+    # Create exports directory
+    exports_dir = tmp_path / "exports"
+    exports_dir.mkdir()
+    
+    # Mock subprocess.run for git clone
+    def mock_clone(*args, **kwargs):
+        cmd = args[0] if args else kwargs.get("args", [])
+        if cmd[0] == "git" and cmd[1] == "clone":
+            target = Path(cmd[-1])
+            import shutil
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(repo_dir, target, symlinks=True)
+        return MagicMock(returncode=0)
+    
+    with patch("subprocess.run", side_effect=mock_clone):
+        # Test with valid subdirectory
+        args = Namespace(
+            repo_url="https://github.com/owner/repo.git",  # Use GitHub URL to pass validation
+            branch=None,
+            token=None,
+            output_file=str(tmp_path / "output.txt"),
+            skip_remove=False,
+            format="text",
+            subdir="subdir"
+        )
+        
+        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+            clone_and_export(args)
+            assert "Exporting from subdirectory: subdir" in caplog.text
+        
+        # Test with invalid subdirectory
+        args.subdir = "nonexistent"
+        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+            with pytest.raises(SystemExit):
+                clone_and_export(args)
+            assert "Subdirectory nonexistent does not exist" in caplog.text
+        
+        # Test without subdirectory
+        args.subdir = None
+        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+            clone_and_export(args)
+            assert "Exporting from repository root" in caplog.text
 
 
 def test_logging_setup(tmp_path, caplog):

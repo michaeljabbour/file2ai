@@ -161,6 +161,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--local-dir", help="Local directory path to export.")
 
     parser.add_argument("--branch", help="Branch or commit to checkout (optional)")
+    parser.add_argument("--subdir", help="Optional subdirectory to export (defaults to repo root)")
 
     parser.add_argument("--token", help="GitHub Personal Access Token for private repos")
 
@@ -217,43 +218,39 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def parse_github_url(url: str) -> Tuple[str, Optional[str]]:
+def parse_github_url(url: str) -> str:
     """
-    Parse a GitHub URL and extract repository information.
+    Ensure url is a valid GitHub repository clone URL.
+    If invalid, log error and exit. Otherwise, return sanitized URL.
 
     Args:
         url: The GitHub repository URL to parse.
 
     Returns:
-        Tuple containing the base repository URL and optional branch name.
+        Sanitized GitHub repository URL ending with .git.
+
+    Raises:
+        SystemExit: If the URL is invalid or points to a non-repository endpoint.
     """
-    # First check for branch indicators
-    tree_pattern = r"/tree/([^/]+)"
-    hash_pattern = r"#([^/]+)"
+    if not re.match(r"^https?://github\.com/[^/]+/[^/]+", url):
+        logger.error(f"Invalid GitHub URL: {url}")
+        sys.exit(1)
 
-    tree_match = re.search(tree_pattern, url)
-    hash_match = re.search(hash_pattern, url)
+    # Check for and reject invalid URL suffixes
+    disallowed_suffixes = ("/pulls", "/issues", "/actions", "/wiki", "/tree")
+    for suffix in disallowed_suffixes:
+        if suffix in url:
+            logger.error(f"Invalid URL endpoint detected ({suffix}): {url}")
+            sys.exit(1)
 
-    # Get branch from either pattern
-    branch = None
-    base_url = url
+    # Remove any trailing slashes and fragments
+    clean_url = url.split("#")[0].rstrip("/")
 
-    if tree_match:
-        branch = tree_match.group(1)
-        base_url = url.split("/tree/")[0]  # Remove /tree/ and branch
-    elif hash_match:
-        branch = hash_match.group(1)
-        base_url = url.split("#")[0]  # Remove # and branch
+    # Ensure URL ends with .git
+    if not clean_url.endswith(".git"):
+        clean_url += ".git"
 
-    # Extract base URL
-    base_pattern = r"^https?://github\.com/([^/]+/[^/]+)(?:\.git)?$"
-    base_match = re.match(base_pattern, base_url)
-
-    if not base_match:
-        return url, None
-
-    # Keep original format (with or without .git)
-    return base_url, branch
+    return clean_url
 
 
 def build_auth_url(base_url: str, token: str) -> str:
@@ -566,19 +563,14 @@ def clone_and_export(args: argparse.Namespace) -> None:
     logger.info(f"Starting export of repository: {args.repo_url}")
     exports_dir = Path(EXPORTS_DIR)
     exports_dir.mkdir(parents=True, exist_ok=True)
-    base_url, branch = parse_github_url(args.repo_url)
-
-    final_branch = args.branch or branch
-    logger.info(f"Using branch: {final_branch if final_branch else 'default'}")
+    clone_url = parse_github_url(args.repo_url)
 
     if args.token:
         masked_token = (
             f"{args.token[:3]}...{args.token[-3:]}" if len(args.token) > 6 else "REDACTED"
         )
         logger.info(f"Using token: {masked_token}")
-        clone_url = build_auth_url(base_url, args.token)
-    else:
-        clone_url = base_url
+        clone_url = build_auth_url(clone_url, args.token)
 
     repo_name = clone_url.rstrip("/").split("/")[-1].replace(".git", "")
     extension = ".json" if args.format == "json" else ".txt"
@@ -607,18 +599,31 @@ def clone_and_export(args: argparse.Namespace) -> None:
             logger.error(f"Failed to initialize repository: {e}")
             sys.exit(1)
 
-        if final_branch:
+        if args.branch:
             try:
-                repo.git.checkout(final_branch)
-                logger.info(f"Checked out branch: {final_branch}")
+                repo.git.checkout(args.branch)
+                logger.info(f"Checked out branch: {args.branch}")
             except exc.GitCommandError as e:
-                logger.error(f"Failed to checkout {final_branch}: {e}")
+                logger.error(f"Failed to checkout {args.branch}: {e}")
                 sys.exit(1)
+        else:
+            logger.info("Using default branch")
+
+        # Handle subdirectory if specified
+        if args.subdir:
+            export_target = clone_path / args.subdir
+            if not export_target.is_dir():
+                logger.error(f"Subdirectory {args.subdir} does not exist in the repository")
+                sys.exit(1)
+            logger.info(f"Exporting from subdirectory: {args.subdir}")
+        else:
+            export_target = clone_path
+            logger.info("Exporting from repository root")
 
         if args.format == "json":
-            export_files_to_json(repo, repo_name, clone_path, output_path)
+            export_files_to_json(repo, repo_name, export_target, output_path)
         else:
-            export_files_to_single_file(repo, repo_name, clone_path, output_path)
+            export_files_to_single_file(repo, repo_name, export_target, output_path)
         logger.info(f"Repository exported to {output_path}")
 
         if not args.skip_remove:
