@@ -69,6 +69,14 @@ def install_excel_support() -> bool:
     """Install openpyxl package for Excel document support."""
     return install_package_support("openpyxl")
 
+def check_pptx_support() -> bool:
+    """Check if python-pptx is available for PowerPoint document support."""
+    return check_package_support("python-pptx")
+
+def install_pptx_support() -> bool:
+    """Install python-pptx package for PowerPoint document support."""
+    return install_package_support("python-pptx")
+
 
 class CommitInfo(TypedDict, total=False):
     message: str
@@ -1133,6 +1141,106 @@ def convert_document(args: argparse.Namespace) -> None:
         
         except Exception as e:
             logger.error(f"Error converting Word document: {e}")
+            sys.exit(1)
+    
+    elif input_extension in [".ppt", ".pptx"]:
+        # For image output, check Pillow support first
+        if output_format == "image":
+            if not check_package_support("PIL"):
+                logger.info("Installing image support...")
+                if not install_package_support("Pillow"):
+                    logger.error("Failed to install image support")
+                    sys.exit(1)
+                logger.info("Image support installed successfully")
+
+        if not check_pptx_support():
+            logger.info("Installing PowerPoint document support...")
+            if not install_pptx_support():
+                logger.error("Failed to install PowerPoint document support")
+                sys.exit(1)
+            logger.info("PowerPoint document support installed successfully")
+        
+        try:
+            from pptx import Presentation
+        except ImportError:
+            logger.error("Failed to import python-pptx")
+            sys.exit(1)
+
+        try:
+            prs = Presentation(input_path)
+            
+            if output_format == "text":
+                # Extract text from PowerPoint document
+                full_text = []
+                for slide_number, slide in enumerate(prs.slides, 1):
+                    full_text.append(f"Slide {slide_number}:\n")
+                    
+                    # Extract text from shapes
+                    for shape in slide.shapes:
+                        if hasattr(shape, "text") and shape.text.strip():
+                            full_text.append(shape.text.strip())
+                    
+                    # Add spacing between slides
+                    full_text.append("\n---\n")
+                
+                output_path.write_text("\n".join(full_text))
+                logger.info(f"Successfully converted PowerPoint document to text: {output_path}")
+            
+            elif output_format == "image":
+
+                try:
+                    from PIL import Image, ImageDraw
+                except ImportError:
+                    logger.error("Failed to import Pillow")
+                    sys.exit(1)
+
+                # Create images directory inside exports
+                images_dir = exports_dir / "images"
+                images_dir.mkdir(exist_ok=True)
+                
+                try:
+                    # Create an image for each slide
+                    for i, slide in enumerate(prs.slides, 1):
+                        # Create a blank image
+                        img = Image.new('RGB', (1920, 1080), 'white')
+                        draw = ImageDraw.Draw(img)
+                        
+                        # Extract and draw text from shapes
+                        y_offset = 50
+                        draw.text((50, y_offset), f"Slide {i}", fill='black')
+                        y_offset += 50
+                        
+                        for shape in slide.shapes:
+                            if hasattr(shape, "text") and shape.text.strip():
+                                draw.text((50, y_offset), shape.text.strip(), fill='black')
+                                y_offset += 30
+                        
+                        # Save the image
+                        slide_path = images_dir / f"{input_path.stem}_slide_{i}.png"
+                        img.save(str(slide_path))
+                        logger.info(f"Created image for slide {i}: {slide_path}")
+                    
+                    # Create a combined output file listing all image paths
+                    image_list = [str(p) for p in sorted(images_dir.glob(f"{input_path.stem}_slide_*.png"))]
+                    output_path.write_text("\n".join(image_list))
+                    
+                    logger.info(f"Successfully converted PowerPoint to images in {images_dir}")
+                
+                except Exception as e:
+                    logger.error(f"Error creating slide images: {e}")
+                    sys.exit(1)
+            
+            elif output_format == "pdf":
+                logger.error("PDF conversion requires additional system dependencies.")
+                logger.error("Please use a PDF printer or converter tool to convert the PowerPoint file.")
+                sys.exit(1)
+            
+            else:
+                logger.error(f"Unsupported output format for PowerPoint documents: {output_format}")
+                sys.exit(1)
+        
+        except Exception as e:
+            logger.error(f"Error converting PowerPoint document: {e}")
             sys.exit(1)
     
     else: 
