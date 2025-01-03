@@ -254,22 +254,25 @@ def parse_github_url(url: str, use_subdirectory: bool = False) -> Tuple[str, Opt
         - subdirectory: Subdirectory path if specified and use_subdirectory=True, None otherwise
 
     Raises:
-        SystemExit: If the URL is not a valid GitHub repository URL or contains invalid suffixes.
+        SystemExit: If the URL is not a valid GitHub repository URL.
     """
-    # Step 1: Check for invalid URL suffixes
-    invalid_suffixes = ["/pulls", "/issues", "/actions", "/wiki"]
-    for suffix in invalid_suffixes:
-        if url.endswith(suffix):
-            logger.error(f"Invalid GitHub URL: {url} (contains invalid suffix {suffix})")
-            sys.exit(1)
-
-    # Step 2: Extract base repository URL
+    # Step 1: Extract base repository URL first
     base_match = re.match(r"^(https?://github\.com/[^/]+/[^/]+)", url)
     if not base_match:
         logger.error(f"Invalid GitHub URL: {url}")
         sys.exit(1)
     
     base_repo = base_match.group(1)
+    remaining_path = url[len(base_repo):]
+
+    # Step 2: Check for invalid URL suffixes in the remaining path
+    invalid_suffixes = ["/pulls", "/issues", "/actions", "/wiki"]
+    for suffix in invalid_suffixes:
+        if remaining_path.startswith(suffix):
+            # Just log a warning and continue with the base URL
+            logger.warning(f"Removing invalid suffix {suffix} from URL: {url}")
+            remaining_path = remaining_path[len(suffix):]
+            break
 
     # Step 3: Check for tree/<branch>/<path> pattern
     tree_match = re.search(r"/tree/([^/]+)(?:/(.+))?$", url)

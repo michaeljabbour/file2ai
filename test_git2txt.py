@@ -212,13 +212,23 @@ def test_parse_github_url():
     assert branch == "feature"
     assert subdir == "nested/path"
 
-    # Test invalid URLs
-    with pytest.raises(SystemExit):
-        parse_github_url("https://github.com/owner/repo/pulls")
-    
-    with pytest.raises(SystemExit):
-        parse_github_url("https://github.com/owner/repo/issues")
-    
+    # Test URLs with invalid suffixes (should be removed)
+    base_url, branch, subdir = parse_github_url("https://github.com/owner/repo/pulls")
+    assert base_url == "https://github.com/owner/repo.git"
+    assert branch is None
+    assert subdir is None
+
+    base_url, branch, subdir = parse_github_url("https://github.com/owner/repo/issues")
+    assert base_url == "https://github.com/owner/repo.git"
+    assert branch is None
+    assert subdir is None
+
+    base_url, branch, subdir = parse_github_url("https://github.com/owner/repo/actions")
+    assert base_url == "https://github.com/owner/repo.git"
+    assert branch is None
+    assert subdir is None
+
+    # Test invalid URL format (should still exit)
     with pytest.raises(SystemExit):
         parse_github_url("not_a_url")
 
