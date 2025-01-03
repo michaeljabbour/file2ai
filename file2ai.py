@@ -1144,6 +1144,15 @@ def convert_document(args: argparse.Namespace) -> None:
             sys.exit(1)
     
     elif input_extension in [".ppt", ".pptx"]:
+        # For image output, check Pillow support first
+        if output_format == "image":
+            if not check_package_support("PIL"):
+                logger.info("Installing image support...")
+                if not install_package_support("Pillow"):
+                    logger.error("Failed to install image support")
+                    sys.exit(1)
+                logger.info("Image support installed successfully")
+
         if not check_pptx_support():
             logger.info("Installing PowerPoint document support...")
             if not install_pptx_support():
@@ -1178,13 +1187,6 @@ def convert_document(args: argparse.Namespace) -> None:
                 logger.info(f"Successfully converted PowerPoint document to text: {output_path}")
             
             elif output_format == "image":
-                # Check for Pillow support
-                if not check_package_support("PIL"):
-                    logger.info("Installing Pillow for image support...")
-                    if not install_package_support("Pillow"):
-                        logger.error("Failed to install Pillow")
-                        sys.exit(1)
-                    logger.info("Pillow installed successfully")
 
                 try:
                     from PIL import Image, ImageDraw
