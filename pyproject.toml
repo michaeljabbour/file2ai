@@ -28,6 +28,11 @@ test = [
 [project.urls]
 "Source Code" = "https://github.com/michaeljabbour/git2txt"
 
+[tool.setuptools]
+py-modules = ["git2txt"]
+packages = []
+exclude = ["logs*", "exports*", "launchers*", "examples*"]
+
 [tool.black]
 line-length = 100
 target-version = ['py37']
