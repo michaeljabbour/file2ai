@@ -19,6 +19,8 @@ from file2ai import (
     local_export,
     check_docx_support,
     install_docx_support,
+    check_excel_support,
+    install_excel_support,
     convert_document,
     setup_logging,
 )
@@ -731,43 +733,205 @@ def test_word_to_text_conversion(tmp_path, caplog, monkeypatch):
 def test_word_conversion_errors(tmp_path, caplog, monkeypatch):
     """Test error handling in Word document conversion."""
     import logging
+    from unittest.mock import patch
 
     # Mock Document class
     class MockDocument:
         def __init__(self, file_path=None):
-            self.paragraphs = []
-            self.tables = []
+            raise ImportError("Failed to import python-docx")
         
         def save(self, path):
-            path.write_text("Mock DOCX content")
-    
+            raise ImportError("Failed to save document")
+
     monkeypatch.setattr("docx.Document", MockDocument)
     setup_logging()
     caplog.set_level(logging.ERROR)
-    
-    # Test non-existent file
-    with patch('sys.argv', ['file2ai.py', 'convert', '--input', 'nonexistent.docx', '--format', 'text']):
-        args = parse_args()
-        with pytest.raises(SystemExit):
-            convert_document(args)
-        assert "Input file not found" in caplog.text
-    
-    # Test unsupported output format
+
+    # Create a test Word document
     test_doc = tmp_path / "test.docx"
-    MockDocument().save(test_doc)
+    test_doc.write_bytes(b"Mock DOCX content")
+
+    # Test conversion with import error
+    with pytest.raises(SystemExit):
+        with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_doc), '--format', 'text']):
+            args = parse_args()
+            convert_document(args)
+
+    assert "Error converting Word document" in caplog.text
+
+
+def test_excel_dependency_management(monkeypatch, caplog):
+    """Test openpyxl dependency checking and installation."""
+    import logging
+    from importlib.util import find_spec
+
+    # Mock importlib.util.find_spec to simulate missing openpyxl
+    def mock_find_spec(name):
+        return None if name == "openpyxl" else find_spec(name)
     
-    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_doc), '--format', 'pdf']):
+    monkeypatch.setattr(importlib.util, "find_spec", mock_find_spec)
+    
+    # Mock successful pip install
+    def mock_check_call(*args, **kwargs):
+        return 0
+    monkeypatch.setattr(subprocess, "check_call", mock_check_call)
+    
+    # Test dependency checking
+    assert check_excel_support() is False
+    
+    # Test installation
+    assert install_excel_support() is True
+
+
+def test_excel_to_text_conversion(tmp_path, caplog, monkeypatch):
+    """Test Excel document to text conversion."""
+    import logging
+    from unittest.mock import Mock, patch
+
+    # Mock Workbook class
+    class MockWorkbook:
+        def __init__(self):
+            self.active = Mock()
+            self.worksheets = [self.active]
+            self.active.title = "Sheet1"
+            mock_rows = [
+                [Mock(value="Name"), Mock(value="Age"), Mock(value="Notes")],
+                [Mock(value="John Doe"), Mock(value="30"), Mock(value="Regular customer")],
+                [Mock(value="Jane Smith"), Mock(value="25"), Mock(value="VIP, priority service")]
+            ]
+            self.active.rows = mock_rows
+            self.active.iter_rows = Mock(return_value=mock_rows)
+
+    def mock_load_workbook(file_path, data_only=False):
+        return MockWorkbook()
+
+    monkeypatch.setattr("openpyxl.load_workbook", mock_load_workbook)
+    setup_logging()
+    caplog.set_level(logging.INFO)
+
+    # Create a test Excel document
+    test_excel = tmp_path / "test.xlsx"
+    test_excel.write_bytes(b"Mock Excel content")
+    
+    # Convert the document
+    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_excel), '--format', 'text']):
+        args = parse_args()
+        convert_document(args)
+    
+    # Check output file
+    exports_dir = Path("exports")
+    output_files = list(exports_dir.glob("test*.text"))
+    assert len(output_files) == 1
+    output_content = output_files[0].read_text()
+    
+    # Verify content
+    assert "Name" in output_content
+    assert "John Doe" in output_content
+    assert "Regular customer" in output_content
+    
+    # Clean up
+    shutil.rmtree(exports_dir)
+
+
+def test_excel_to_csv_conversion(tmp_path, caplog, monkeypatch):
+    """Test Excel document to CSV conversion."""
+    import logging
+    from unittest.mock import Mock, patch
+
+    # Mock Workbook class
+    class MockWorkbook:
+        def __init__(self):
+            self.active = Mock()
+            self.worksheets = [self.active]
+            self.active.title = "Sheet1"
+            self.active.rows = []
+            self.active.iter_rows.return_value = [
+                [Mock(value="Product"), Mock(value="Price")],
+                [Mock(value="Widget"), Mock(value="99.99")],
+                [Mock(value="Gadget"), Mock(value="149.99")]
+            ]
+
+    def mock_load_workbook(file_path, data_only=False):
+        return MockWorkbook()
+
+    monkeypatch.setattr("openpyxl.load_workbook", mock_load_workbook)
+    setup_logging()
+    caplog.set_level(logging.INFO)
+
+    # Create a test Excel document
+    test_excel = tmp_path / "test.xlsx"
+    test_excel.write_bytes(b"Mock Excel content")
+    
+    # Convert the document
+    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_excel), '--format', 'csv']):
+        args = parse_args()
+        convert_document(args)
+    
+    # Check output file
+    exports_dir = Path("exports")
+    output_files = list(exports_dir.glob("test*.csv"))
+    assert len(output_files) == 1
+    output_content = output_files[0].read_text()
+    
+    # Verify CSV content
+    assert "Product,Price" in output_content
+    assert "Widget,99.99" in output_content
+    assert "Gadget,149.99" in output_content
+    
+    # Clean up
+    shutil.rmtree(exports_dir)
+
+
+def test_excel_conversion_errors(tmp_path, caplog, monkeypatch):
+    """Test error handling in Excel document conversion."""
+    import logging
+    from unittest.mock import Mock, patch
+
+    setup_logging()
+    caplog.set_level(logging.ERROR)
+
+    # Create a test Excel document
+    test_excel = tmp_path / "test.xlsx"
+    test_excel.write_bytes(b"Mock Excel content")
+
+    # Test unsupported output format first (before import error mock)
+    class MockWorkbook:
+        def __init__(self):
+            self.active = Mock()
+            self.worksheets = [self.active]
+            self.active.title = "Sheet1"
+
+    def mock_load_workbook_success(file_path, data_only=False):
+        return MockWorkbook()
+
+    monkeypatch.setattr("openpyxl.load_workbook", mock_load_workbook_success)
+
+    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_excel), '--format', 'pdf']):
         args = parse_args()
         with pytest.raises(SystemExit):
             convert_document(args)
-        assert "PDF conversion not yet implemented" in caplog.text
-    
-    # Test unsupported input format
-    test_txt = tmp_path / "test.txt"
-    test_txt.write_text("Hello")
-    
-    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_txt), '--format', 'text']):
+
+    assert "Unsupported output format for Excel documents" in caplog.text
+    caplog.clear()
+
+    # Now test import error
+    def mock_load_workbook_error(file_path, data_only=False):
+        raise ImportError("Failed to import openpyxl")
+
+    monkeypatch.setattr("openpyxl.load_workbook", mock_load_workbook_error)
+
+    with pytest.raises(SystemExit):
+        with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_excel), '--format', 'csv']):
+            args = parse_args()
+            convert_document(args)
+
+    assert "Error converting Excel document" in caplog.text
+    caplog.clear()
+
+    # Test non-existent file
+    with patch('sys.argv', ['file2ai.py', 'convert', '--input', 'nonexistent.xlsx', '--format', 'text']):
         args = parse_args()
         with pytest.raises(SystemExit):
             convert_document(args)
-        assert "Unsupported input format" in caplog.text
+
+    assert "Input file not found" in caplog.text

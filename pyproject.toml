@@ -18,7 +18,8 @@ classifiers = [
 ]
 dependencies = [
     "gitpython",
-    "python-docx"
+    "python-docx",
+    "openpyxl"
 ]
 
 [project.optional-dependencies]

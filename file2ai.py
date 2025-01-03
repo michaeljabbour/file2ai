@@ -23,21 +23,51 @@ from typing import Optional, Tuple, Set, NoReturn, TextIO, Dict, List, TypedDict
 import json
 
 
-def check_docx_support() -> bool:
-    """Check if python-docx is available for Word document support."""
-    return importlib.util.find_spec("docx") is not None
+def check_package_support(package: str) -> bool:
+    """Check if a Python package is available.
+    
+    Args:
+        package: Name of the package to check
+    
+    Returns:
+        bool: True if package is available, False otherwise
+    """
+    return importlib.util.find_spec(package) is not None
 
-def install_docx_support() -> bool:
-    """Install python-docx package for Word document support."""
+def install_package_support(package: str) -> bool:
+    """Install a Python package.
+    
+    Args:
+        package: Name of the package to install
+    
+    Returns:
+        bool: True if installation successful, False otherwise
+    """
     try:
         subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "python-docx"],
+            [sys.executable, "-m", "pip", "install", package],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
         return True
     except subprocess.CalledProcessError:
         return False
+
+def check_docx_support() -> bool:
+    """Check if python-docx is available for Word document support."""
+    return check_package_support("docx")
+
+def install_docx_support() -> bool:
+    """Install python-docx package for Word document support."""
+    return install_package_support("python-docx")
+
+def check_excel_support() -> bool:
+    """Check if openpyxl is available for Excel document support."""
+    return check_package_support("openpyxl")
+
+def install_excel_support() -> bool:
+    """Install openpyxl package for Excel document support."""
+    return install_package_support("openpyxl")
 
 
 class CommitInfo(TypedDict, total=False):
@@ -225,7 +255,7 @@ def parse_args() -> argparse.Namespace:
     convert_parser.add_argument(
         "--format",
         required=True,
-        choices=["pdf", "text", "image", "docx"],
+        choices=["pdf", "text", "image", "docx", "csv"],
         help="Output format for the conversion",
     )
     convert_parser.add_argument(
@@ -991,8 +1021,72 @@ def convert_document(args: argparse.Namespace) -> None:
     input_extension = input_path.suffix.lower()
     output_format = args.format.lower()
 
+    # Handle Excel documents (XLS/XLSX)
+    if input_extension in [".xls", ".xlsx"]:
+        if not check_excel_support():
+            logger.info("Installing Excel document support...")
+            if not install_excel_support():
+                logger.error("Failed to install Excel document support")
+                sys.exit(1)
+            logger.info("Excel document support installed successfully")
+        
+        try:
+            import openpyxl
+        except ImportError:
+            logger.error("Failed to import openpyxl")
+            sys.exit(1)
+
+        try:
+            workbook = openpyxl.load_workbook(input_path, data_only=True)
+            
+            if output_format == "text":
+                # Extract text from Excel workbook
+                full_text = []
+                for sheet in workbook.worksheets:
+                    full_text.append(f"Sheet: {sheet.title}\n")
+                    for row in sheet.iter_rows():
+                        row_text = []
+                        for cell in row:
+                            if cell.value is not None:
+                                row_text.append(str(cell.value).strip())
+                        if row_text:
+                            full_text.append(" | ".join(row_text))
+                        
+                output_path.write_text("\n".join(full_text))
+                logger.info(f"Successfully converted Excel document to text: {output_path}")
+            
+            elif output_format == "csv":
+                # Convert active sheet to CSV
+                sheet = workbook.active
+                if sheet is None:
+                    logger.error("No active sheet found in workbook")
+                    sys.exit(1)
+                
+                csv_lines = []
+                # Use sheet.iter_rows() which is safer than .rows property
+                for row in sheet.iter_rows():
+                    row_text = []
+                    for cell in row:
+                        value = cell.value if cell.value is not None else ""
+                        # Quote strings containing commas
+                        if isinstance(value, str) and "," in value:
+                            value = f'"{value}"'
+                        row_text.append(str(value))
+                    csv_lines.append(",".join(row_text))
+                
+                output_path.write_text("\n".join(csv_lines))
+                logger.info(f"Successfully converted Excel document to CSV: {output_path}")
+            
+            else:
+                logger.error(f"Unsupported output format for Excel documents: {output_format}")
+                sys.exit(1)
+        
+        except Exception as e:
+            logger.error(f"Error converting Excel document: {e}")
+            sys.exit(1)
+            
     # Handle Word documents (DOC/DOCX)
-    if input_extension in [".doc", ".docx"]:
+    elif input_extension in [".doc", ".docx"]:
         if not check_docx_support():
             logger.info("Installing Word document support...")
             if not install_docx_support():
