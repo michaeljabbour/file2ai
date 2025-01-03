@@ -17,7 +17,7 @@ import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, Set, NoReturn
+from typing import Optional, Tuple, Set, NoReturn, TextIO, Dict
 import json
 
 # Version and constants
@@ -59,7 +59,7 @@ def install_gitpython_quietly() -> None:
 def ensure_gitpython() -> None:
     """Ensure GitPython is available, installing if necessary."""
     try:
-        import git  # noqa: F401
+        import git  # type: ignore # noqa: F401
     except ImportError:
         install_gitpython_quietly()
 
@@ -282,7 +282,7 @@ def export_files_to_single_file(
         skip_commit_info: If True, do not attempt to read Git commit info.
     """
     logger.info("Starting file export process")
-    stats = {
+    stats: Dict[str, int] = {
         'processed_files': 0,
         'skipped_files': 0,
         'total_chars': 0,
@@ -309,7 +309,7 @@ def export_files_to_single_file(
     
     _log_export_stats(stats)
 
-def _write_directory_structure(repo_root: Path, outfile) -> None:
+def _write_directory_structure(repo_root: Path, outfile: TextIO) -> None:
     """Write the repository/local directory structure to the output file."""
     for root, dirs, files in os.walk(repo_root):
         rel_path = Path(root).relative_to(repo_root)
@@ -323,7 +323,7 @@ def _write_directory_structure(repo_root: Path, outfile) -> None:
                 if not file.startswith('.') and "test" not in file.lower():
                     outfile.write(f"{'  ' * level}└── {file}\n")
 
-def _process_repository_files(repo_root: Path, outfile: Path, stats: dict, repo: Optional[Repo]) -> None:
+def _process_repository_files(repo_root: Path, outfile: TextIO, stats: Dict[str, int], repo: Optional[Repo]) -> None:
     """Process all repository files and update statistics."""
     files_to_process = [
         f for f in repo_root.rglob('*')
@@ -375,7 +375,7 @@ def _process_repository_files(repo_root: Path, outfile: Path, stats: dict, repo:
             logger.debug(f"Skipped binary file: {file_path}")
             stats['skipped_files'] += 1
 
-def _write_summary(outfile, stats: dict) -> None:
+def _write_summary(outfile: TextIO, stats: Dict[str, int]) -> None:
     """Write export statistics summary to the output file."""
     outfile.write("\nFile Statistics:\n")
     outfile.write("--------------\n")
