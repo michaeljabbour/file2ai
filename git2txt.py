@@ -8,6 +8,7 @@ Clones a GitHub repository or exports text files from a local directory to a sin
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import logging
 import mimetypes
 import os
@@ -157,11 +158,24 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    parser.add_argument("--repo-url", help="GitHub URL (e.g., https://github.com/owner/repo.git).")
-    parser.add_argument("--local-dir", help="Local directory path to export.")
+    # Repository source group (mutually exclusive)
+    source_group = parser.add_mutually_exclusive_group()
+    source_group.add_argument(
+        "--repo-url",
+        help="GitHub repository URL (e.g., https://github.com/owner/repo)",
+    )
+    source_group.add_argument(
+        "--repo-url-sub",
+        help="GitHub repository URL with subdirectory to process",
+    )
+    source_group.add_argument(
+        "--local-dir",
+        help="Local directory path to export",
+    )
 
+    # Optional arguments that must come before the URL
     parser.add_argument("--branch", help="Branch or commit to checkout (optional)")
-
+    parser.add_argument("--subdir", help="Optional subdirectory to export (defaults to repo root)")
     parser.add_argument("--token", help="GitHub Personal Access Token for private repos")
 
     parser.add_argument(
@@ -183,20 +197,27 @@ def parse_args() -> argparse.Namespace:
 
     args = parser.parse_args()
 
-    # If both provided, that's invalid
-    if args.repo_url and args.local_dir:
-        logger.error("Please specify either --repo-url OR --local-dir, not both.")
-        sys.exit(1)
+    # Initialize attributes
+    if not hasattr(args, 'repo_url'):
+        args.repo_url = None
+    if not hasattr(args, 'local_dir'):
+        args.local_dir = None
+    if not hasattr(args, 'repo_url_sub'):
+        args.repo_url_sub = False
 
-    # If local-dir is provided, use it directly (no prompting)
+    # Process command-line arguments if provided
     if args.local_dir:
+        args.repo_url_sub = False
         return args
-
-    # If repo-url is provided, use it directly (no prompting)
     if args.repo_url:
+        args.repo_url_sub = False
+        return args
+    if args.repo_url_sub:
+        args.repo_url = args.repo_url_sub
+        args.repo_url_sub = True
         return args
 
-    # If neither is provided, then prompt
+    # Only prompt if no source arguments were provided
     tmp_url = input(
         "Enter the GitHub repository URL (or press Enter to export local directory): "
     ).strip()
@@ -217,43 +238,63 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def parse_github_url(url: str) -> Tuple[str, Optional[str]]:
+def parse_github_url(url: str, use_subdirectory: bool = False) -> Tuple[str, Optional[str], Optional[str]]:
     """
-    Parse a GitHub URL and extract repository information.
+    Extract information from a GitHub repository URL, ignoring subdirectories unless use_subdirectory is True.
+    Also extracts base repository URL from deep URLs like /pulls, /issues, etc.
 
     Args:
         url: The GitHub repository URL to parse.
+        use_subdirectory: If True, extract subdirectory information from deep URLs.
 
     Returns:
-        Tuple containing the base repository URL and optional branch name.
+        Tuple of (base_repo_url, branch, subdirectory).
+        - base_repo_url: The base GitHub repository URL ending with .git
+        - branch: Branch name if specified in URL, None otherwise
+        - subdirectory: Subdirectory path if specified and use_subdirectory=True, None otherwise
+
+    Raises:
+        SystemExit: If the URL is not a valid GitHub repository URL.
     """
-    # First check for branch indicators
-    tree_pattern = r"/tree/([^/]+)"
-    hash_pattern = r"#([^/]+)"
-
-    tree_match = re.search(tree_pattern, url)
-    hash_match = re.search(hash_pattern, url)
-
-    # Get branch from either pattern
-    branch = None
-    base_url = url
-
-    if tree_match:
-        branch = tree_match.group(1)
-        base_url = url.split("/tree/")[0]  # Remove /tree/ and branch
-    elif hash_match:
-        branch = hash_match.group(1)
-        base_url = url.split("#")[0]  # Remove # and branch
-
-    # Extract base URL
-    base_pattern = r"^https?://github\.com/([^/]+/[^/]+)(?:\.git)?$"
-    base_match = re.match(base_pattern, base_url)
-
+    # Step 1: Extract base repository URL first
+    base_match = re.match(r"^(https?://github\.com/[^/]+/[^/]+)", url)
     if not base_match:
-        return url, None
+        logger.error(f"Invalid GitHub URL: {url}")
+        sys.exit(1)
+    
+    base_repo = base_match.group(1)
+    remaining_path = url[len(base_repo):]
 
-    # Keep original format (with or without .git)
-    return base_url, branch
+    # Step 2: Check for URL suffixes that could be subdirectories
+    special_suffixes = ["/pulls", "/issues", "/actions", "/wiki"]
+    subdir = None
+    for suffix in special_suffixes:
+        if remaining_path.startswith(suffix):
+            if use_subdirectory:
+                # These are GitHub virtual paths, warn user they don't exist in repo
+                logger.warning(
+                    f"{suffix} is a GitHub virtual path and doesn't exist in the repository. "
+                    "Exporting from repository root instead."
+                )
+            else:
+                # Otherwise just remove it and continue with base URL
+                logger.warning(f"Removing suffix {suffix} from URL: {url}")
+            remaining_path = remaining_path[len(suffix):]
+            break
+
+    # Step 3: Check for tree/<branch>/<path> pattern
+    tree_match = re.search(r"/tree/([^/]+)(?:/(.+))?$", url)
+    branch = tree_match.group(1) if tree_match else None
+    
+    # If we already have a subdir from special suffixes, don't override it
+    if not subdir:
+        subdir = tree_match.group(2) if tree_match and use_subdirectory else None
+
+    # Step 4: Append .git if missing
+    if not base_repo.endswith(".git"):
+        base_repo += ".git"
+
+    return base_repo, branch, subdir
 
 
 def build_auth_url(base_url: str, token: str) -> str:
@@ -314,6 +355,40 @@ def is_text_file(file_path: Path) -> bool:
     return True
 
 
+def _sequential_filename(output_path: Path) -> Path:
+    """
+    Append (1), (2), etc. to the output file if it already exists to avoid overwriting.
+    Ensures sequential numbering by checking all existing files first.
+    """
+    if not output_path.exists():
+        return output_path
+
+    base = output_path.stem
+    suffix = output_path.suffix
+    parent = output_path.parent
+
+    # Find all existing sequential files
+    existing_files = list(parent.glob(f"{base}(*){suffix}"))
+    counter = 1
+
+    if existing_files:
+        # Extract numbers from existing files and find the highest
+        numbers = []
+        for f in existing_files:
+            try:
+                num = int(f.stem[len(base)+1:-1])  # Extract number between parentheses
+                numbers.append(num)
+            except (ValueError, IndexError):
+                continue
+        if numbers:
+            counter = max(numbers) + 1
+
+    # Create new filename with next available number
+    output_path = parent / f"{base}({counter}){suffix}"
+    logger.debug(f"Using sequential filename: {output_path}")
+    return output_path
+
+
 def prepare_exports_dir() -> Path:
     """
     Create and configure the exports directory.
@@ -324,6 +399,99 @@ def prepare_exports_dir() -> Path:
     exports_dir = Path("exports")
     exports_dir.mkdir(exist_ok=True)
     return exports_dir
+
+def load_gitignore_patterns(repo_root: Path) -> Tuple[Set[str], Set[str]]:
+    """
+    Load .gitignore patterns from the repository root.
+    Implements blanket ignore by default with "*" pattern.
+    Supports pattern overrides with "!" prefix.
+    
+    Args:
+        repo_root: Path to the repository root directory.
+    
+    Returns:
+        Tuple of (ignore_patterns, override_patterns).
+        - ignore_patterns: Set of patterns to ignore
+        - override_patterns: Set of patterns to explicitly include
+    """
+    # Default patterns to ignore common unwanted files
+    ignore_patterns = {
+        "__pycache__/*", "*.pyc", "*.pyo", "*.pyd",
+        "*.so", "*.dll", "*.dylib",
+        "*.exe", "*.bin",
+        "*.jpg", "*.jpeg", "*.png", "*.gif",
+        "*.pdf", "*.zip", "*.tar.gz",
+        ".git/*", ".svn/*", ".hg/*",
+        "node_modules/*", "venv/*", ".env/*"
+    }
+    override_patterns = set()
+    gitignore_path = repo_root / ".gitignore"
+    
+    if gitignore_path.is_file():
+        try:
+            with gitignore_path.open(encoding=DEFAULT_ENCODING) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                        
+                    if line.startswith('!'):
+                        pattern = line[1:]  # Remove the ! prefix
+                        override_patterns.add(pattern)
+                        logger.debug(f"Added override pattern: {pattern}")
+                    else:
+                        ignore_patterns.add(line)
+                        
+            logger.debug(f"Loaded {len(ignore_patterns)} ignore patterns and {len(override_patterns)} override patterns")
+        except Exception as e:
+            logger.warning(f"Error reading .gitignore: {e}")
+    else:
+        logger.debug("No .gitignore found, using default blanket ignore")
+    
+    return ignore_patterns, override_patterns
+
+def should_ignore(path: Path, patterns: Tuple[Set[str], Set[str]], repo_root: Path) -> bool:
+    """
+    Check if a path should be ignored based on .gitignore patterns.
+    Supports blanket ignore with pattern overrides.
+    
+    Args:
+        path: Path to check.
+        patterns: Tuple of (ignore_patterns, override_patterns) from load_gitignore_patterns.
+        repo_root: Repository root path for relative path calculation.
+    
+    Returns:
+        True if the path should be ignored, False otherwise.
+    """
+    # Always check if it's a binary file first
+    if not is_text_file(path):
+        logger.info(f"Skipped binary file: {path}")
+        return True
+
+    ignore_patterns, override_patterns = patterns
+    if not ignore_patterns and not override_patterns:
+        return False
+        
+    try:
+        rel_path = str(path.relative_to(repo_root))
+        
+        # First check if path matches any override patterns
+        for pattern in override_patterns:
+            if fnmatch.fnmatch(rel_path, pattern):
+                logger.debug(f"Including {rel_path} (matches override pattern {pattern})")
+                return False
+                
+        # Then check if path matches any ignore patterns
+        for pattern in ignore_patterns:
+            if fnmatch.fnmatch(rel_path, pattern):
+                logger.debug(f"Ignoring {rel_path} (matches ignore pattern {pattern})")
+                return True
+                
+    except Exception as e:
+        logger.warning(f"Error checking ignore pattern for {path}: {e}")
+        return True  # Default to ignore on error
+        
+    return False  # Default to include if no patterns match
 
 
 def export_files_to_single_file(
@@ -361,6 +529,7 @@ def export_files_to_single_file(
         # Write header
         outfile.write("Generated by git2txt\n")
         outfile.write("=" * 80 + "\n\n")
+        outfile.write(f"Repository: {repo_name}\n\n")
 
         # Directory structure
         outfile.write("Directory Structure:\n")
@@ -404,10 +573,15 @@ def export_files_to_json(
     }
 
     data: List[FileEntry] = []
+    ignore_patterns = load_gitignore_patterns(repo_root)
+    
     files_to_process = [
         f
         for f in repo_root.rglob("*")
-        if f.is_file() and not f.name.startswith(".") and ".git" not in str(f)
+        if f.is_file()
+        and not f.name.startswith(".")
+        and ".git" not in str(f)
+        and not should_ignore(f, ignore_patterns, repo_root)
     ]
     total_files = len(files_to_process)
 
@@ -465,27 +639,50 @@ def export_files_to_json(
 
 def _write_directory_structure(repo_root: Path, outfile: TextIO) -> None:
     """Write the repository/local directory structure to the output file."""
+    ignore_patterns = load_gitignore_patterns(repo_root)
+    
     for root, dirs, files in os.walk(repo_root):
         rel_path = Path(root).relative_to(repo_root)
+        
+        # Skip .git directory
+        if ".git" in str(rel_path):
+            continue
+            
+        # Check if directory should be ignored
+        if should_ignore(Path(root), ignore_patterns, repo_root):
+            logger.debug(f"Skipping ignored directory: {rel_path}")
+            dirs.clear()  # Skip processing subdirectories
+            continue
+            
         level = len(rel_path.parts)
-
-        if ".git" not in str(rel_path):
-            # Omit the top-level "." from printing
-            if str(rel_path) != ".":
-                outfile.write(f"{'  ' * (level-1)}└── {rel_path.name}/\n")
-            for file in sorted(files):
-                if not file.startswith(".") and "test" not in file.lower():
+        
+        # Print directory name (except root)
+        if str(rel_path) != ".":
+            outfile.write(f"{'  ' * (level-1)}└── {rel_path.name}/\n")
+            
+        # Process files
+        for file in sorted(files):
+            file_path = Path(root) / file
+            if not file.startswith(".") and "test" not in file.lower():
+                if not should_ignore(file_path, ignore_patterns, repo_root):
                     outfile.write(f"{'  ' * level}└── {file}\n")
+                else:
+                    logger.debug(f"Skipping ignored file: {file_path}")
 
 
 def _process_repository_files(
     repo_root: Path, outfile: TextIO, stats: Dict[str, int], repo: Optional[Repo]
 ) -> None:
     """Process all repository files and update statistics."""
+    ignore_patterns = load_gitignore_patterns(repo_root)
+    
     files_to_process = [
         f
         for f in repo_root.rglob("*")
-        if f.is_file() and not f.name.startswith(".") and ".git" not in str(f)
+        if f.is_file() 
+        and not f.name.startswith(".")
+        and ".git" not in str(f)
+        and not should_ignore(f, ignore_patterns, repo_root)
     ]
     total_files = len(files_to_process)
 
@@ -507,7 +704,7 @@ def _process_repository_files(
                         last_commit = next(repo.iter_commits(paths=str(rel_path), max_count=1))
                         commit_msg = last_commit.message.strip()
                         author = last_commit.author.name
-                        commit_date = last_commit.committed_datetime
+                        commit_date = last_commit.committed_datetime.isoformat()[:10]  # Get YYYY-MM-DD part
                         outfile.write(f"Last Commit: {commit_msg} by {author} on {commit_date}\n\n")
                     except StopIteration:
                         outfile.write("Last Commit: No commits found\n\n")
@@ -566,23 +763,26 @@ def clone_and_export(args: argparse.Namespace) -> None:
     logger.info(f"Starting export of repository: {args.repo_url}")
     exports_dir = Path(EXPORTS_DIR)
     exports_dir.mkdir(parents=True, exist_ok=True)
-    base_url, branch = parse_github_url(args.repo_url)
 
-    final_branch = args.branch or branch
-    logger.info(f"Using branch: {final_branch if final_branch else 'default'}")
+    # Parse URL and extract components based on --repo-url-sub flag
+    clone_url, url_branch, url_subdir = parse_github_url(
+        args.repo_url,
+        use_subdirectory=args.repo_url_sub
+    )
 
+    # Use token if provided
     if args.token:
         masked_token = (
             f"{args.token[:3]}...{args.token[-3:]}" if len(args.token) > 6 else "REDACTED"
         )
         logger.info(f"Using token: {masked_token}")
-        clone_url = build_auth_url(base_url, args.token)
-    else:
-        clone_url = base_url
+        clone_url = build_auth_url(clone_url, args.token)
 
     repo_name = clone_url.rstrip("/").split("/")[-1].replace(".git", "")
     extension = ".json" if args.format == "json" else ".txt"
     output_path = exports_dir / (args.output_file or f"{repo_name}_export{extension}")
+    output_path = _sequential_filename(output_path.resolve())
+    logger.debug(f"Using output path: {output_path}")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         clone_path = Path(temp_dir) / repo_name
@@ -607,18 +807,34 @@ def clone_and_export(args: argparse.Namespace) -> None:
             logger.error(f"Failed to initialize repository: {e}")
             sys.exit(1)
 
-        if final_branch:
+        # Determine branch: explicit --branch flag takes precedence over URL
+        branch = args.branch or url_branch
+        if branch:
             try:
-                repo.git.checkout(final_branch)
-                logger.info(f"Checked out branch: {final_branch}")
+                repo.git.checkout(branch)
+                logger.info(f"Checked out branch: {branch}")
             except exc.GitCommandError as e:
-                logger.error(f"Failed to checkout {final_branch}: {e}")
+                logger.error(f"Failed to checkout {branch}: {e}")
                 sys.exit(1)
+        else:
+            logger.info("Using default branch")
+
+        # Determine subdirectory: explicit --subdir flag takes precedence over URL
+        subdir = args.subdir or url_subdir
+        if subdir:
+            export_target = clone_path / subdir
+            if not export_target.is_dir():
+                logger.error(f"Subdirectory {subdir} does not exist in the repository")
+                sys.exit(1)
+            logger.info(f"Exporting from subdirectory: {subdir}")
+        else:
+            export_target = clone_path
+            logger.info("Exporting from repository root")
 
         if args.format == "json":
-            export_files_to_json(repo, repo_name, clone_path, output_path)
+            export_files_to_json(repo, repo_name, export_target, output_path)
         else:
-            export_files_to_single_file(repo, repo_name, clone_path, output_path)
+            export_files_to_single_file(repo, repo_name, export_target, output_path)
         logger.info(f"Repository exported to {output_path}")
 
         if not args.skip_remove:
@@ -643,6 +859,7 @@ def local_export(args: argparse.Namespace) -> None:
     output_file = args.output_file or f"{repo_name}_export{extension}"
     output_path = Path(EXPORTS_DIR) / output_file
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = _sequential_filename(output_path.resolve())
     logger.debug(f"Using output path: {output_path}")
     logger.debug(f"Exports directory: {EXPORTS_DIR}")
 
