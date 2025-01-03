@@ -23,3 +23,8 @@ test = ["pytest", "pytest-mock"]
 
 [project.urls]
 "Source Code" = "https://github.com/michaeljabbour/git2txt"
+
+[tool.black]
+line-length = 100
+target-version = ['py37']
+include = '\.pyi?$'

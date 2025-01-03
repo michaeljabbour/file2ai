@@ -106,4 +106,18 @@ This places the file in `exports/my_export.txt`.
 
 After cloning, you can edit `git2txt.py` or the supporting modules. We recommend using a virtual environment and the pytest library for testing.
 
+### Code Style
+
+We use Black for code formatting to maintain consistent style. To format the code:
+
+```bash
+# Install Black (if not already installed)
+pip install black
+
+# Format all Python files
+black .
+```
+
+The project is configured with Black settings in `pyproject.toml`, including a line length of 100 characters and Python 3.7+ compatibility.
+
 For help, please check the GitHub issues page or open a new issue.
