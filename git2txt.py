@@ -344,6 +344,40 @@ def is_text_file(file_path: Path) -> bool:
     return True
 
 
+def _sequential_filename(output_path: Path) -> Path:
+    """
+    Append (1), (2), etc. to the output file if it already exists to avoid overwriting.
+    Ensures sequential numbering by checking all existing files first.
+    """
+    if not output_path.exists():
+        return output_path
+
+    base = output_path.stem
+    suffix = output_path.suffix
+    parent = output_path.parent
+
+    # Find all existing sequential files
+    existing_files = list(parent.glob(f"{base}(*){suffix}"))
+    counter = 1
+
+    if existing_files:
+        # Extract numbers from existing files and find the highest
+        numbers = []
+        for f in existing_files:
+            try:
+                num = int(f.stem[len(base)+1:-1])  # Extract number between parentheses
+                numbers.append(num)
+            except (ValueError, IndexError):
+                continue
+        if numbers:
+            counter = max(numbers) + 1
+
+    # Create new filename with next available number
+    output_path = parent / f"{base}({counter}){suffix}"
+    logger.debug(f"Using sequential filename: {output_path}")
+    return output_path
+
+
 def prepare_exports_dir() -> Path:
     """
     Create and configure the exports directory.
@@ -355,17 +389,31 @@ def prepare_exports_dir() -> Path:
     exports_dir.mkdir(exist_ok=True)
     return exports_dir
 
-def load_gitignore_patterns(repo_root: Path) -> Set[str]:
+def load_gitignore_patterns(repo_root: Path) -> Tuple[Set[str], Set[str]]:
     """
     Load .gitignore patterns from the repository root.
+    Implements blanket ignore by default with "*" pattern.
+    Supports pattern overrides with "!" prefix.
     
     Args:
         repo_root: Path to the repository root directory.
     
     Returns:
-        Set of patterns to ignore.
+        Tuple of (ignore_patterns, override_patterns).
+        - ignore_patterns: Set of patterns to ignore
+        - override_patterns: Set of patterns to explicitly include
     """
-    patterns = set()
+    # Default patterns to ignore common unwanted files
+    ignore_patterns = {
+        "__pycache__/*", "*.pyc", "*.pyo", "*.pyd",
+        "*.so", "*.dll", "*.dylib",
+        "*.exe", "*.bin",
+        "*.jpg", "*.jpeg", "*.png", "*.gif",
+        "*.pdf", "*.zip", "*.tar.gz",
+        ".git/*", ".svn/*", ".hg/*",
+        "node_modules/*", "venv/*", ".env/*"
+    }
+    override_patterns = set()
     gitignore_path = repo_root / ".gitignore"
     
     if gitignore_path.is_file():
@@ -373,39 +421,66 @@ def load_gitignore_patterns(repo_root: Path) -> Set[str]:
             with gitignore_path.open(encoding=DEFAULT_ENCODING) as f:
                 for line in f:
                     line = line.strip()
-                    if line and not line.startswith('#'):
-                        patterns.add(line)
-            logger.debug(f"Loaded {len(patterns)} patterns from .gitignore")
+                    if not line or line.startswith('#'):
+                        continue
+                        
+                    if line.startswith('!'):
+                        pattern = line[1:]  # Remove the ! prefix
+                        override_patterns.add(pattern)
+                        logger.debug(f"Added override pattern: {pattern}")
+                    else:
+                        ignore_patterns.add(line)
+                        
+            logger.debug(f"Loaded {len(ignore_patterns)} ignore patterns and {len(override_patterns)} override patterns")
         except Exception as e:
             logger.warning(f"Error reading .gitignore: {e}")
+    else:
+        logger.debug("No .gitignore found, using default blanket ignore")
     
-    return patterns
+    return ignore_patterns, override_patterns
 
-def should_ignore(path: Path, patterns: Set[str], repo_root: Path) -> bool:
+def should_ignore(path: Path, patterns: Tuple[Set[str], Set[str]], repo_root: Path) -> bool:
     """
     Check if a path should be ignored based on .gitignore patterns.
+    Supports blanket ignore with pattern overrides.
     
     Args:
         path: Path to check.
-        patterns: Set of .gitignore patterns.
+        patterns: Tuple of (ignore_patterns, override_patterns) from load_gitignore_patterns.
         repo_root: Repository root path for relative path calculation.
     
     Returns:
         True if the path should be ignored, False otherwise.
     """
-    if not patterns:
+    # Always check if it's a binary file first
+    if not is_text_file(path):
+        logger.debug(f"Ignoring {path.name}")
+        return True
+
+    ignore_patterns, override_patterns = patterns
+    if not ignore_patterns and not override_patterns:
         return False
         
     try:
         rel_path = str(path.relative_to(repo_root))
-        for pattern in patterns:
+        
+        # First check if path matches any override patterns
+        for pattern in override_patterns:
             if fnmatch.fnmatch(rel_path, pattern):
-                logger.debug(f"Ignoring {rel_path} (matches pattern {pattern})")
+                logger.debug(f"Including {rel_path} (matches override pattern {pattern})")
+                return False
+                
+        # Then check if path matches any ignore patterns
+        for pattern in ignore_patterns:
+            if fnmatch.fnmatch(rel_path, pattern):
+                logger.debug(f"Ignoring {rel_path} (matches ignore pattern {pattern})")
                 return True
+                
     except Exception as e:
         logger.warning(f"Error checking ignore pattern for {path}: {e}")
+        return True  # Default to ignore on error
         
-    return False
+    return False  # Default to include if no patterns match
 
 
 def export_files_to_single_file(
@@ -443,6 +518,7 @@ def export_files_to_single_file(
         # Write header
         outfile.write("Generated by git2txt\n")
         outfile.write("=" * 80 + "\n\n")
+        outfile.write(f"Repository: {repo_name}\n\n")
 
         # Directory structure
         outfile.write("Directory Structure:\n")
@@ -617,7 +693,7 @@ def _process_repository_files(
                         last_commit = next(repo.iter_commits(paths=str(rel_path), max_count=1))
                         commit_msg = last_commit.message.strip()
                         author = last_commit.author.name
-                        commit_date = last_commit.committed_datetime
+                        commit_date = last_commit.committed_datetime.isoformat()[:10]  # Get YYYY-MM-DD part
                         outfile.write(f"Last Commit: {commit_msg} by {author} on {commit_date}\n\n")
                     except StopIteration:
                         outfile.write("Last Commit: No commits found\n\n")
@@ -694,6 +770,8 @@ def clone_and_export(args: argparse.Namespace) -> None:
     repo_name = clone_url.rstrip("/").split("/")[-1].replace(".git", "")
     extension = ".json" if args.format == "json" else ".txt"
     output_path = exports_dir / (args.output_file or f"{repo_name}_export{extension}")
+    output_path = _sequential_filename(output_path.resolve())
+    logger.debug(f"Using output path: {output_path}")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         clone_path = Path(temp_dir) / repo_name
@@ -770,6 +848,7 @@ def local_export(args: argparse.Namespace) -> None:
     output_file = args.output_file or f"{repo_name}_export{extension}"
     output_path = Path(EXPORTS_DIR) / output_file
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = _sequential_filename(output_path.resolve())
     logger.debug(f"Using output path: {output_path}")
     logger.debug(f"Exports directory: {EXPORTS_DIR}")
 
