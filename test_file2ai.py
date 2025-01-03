@@ -1,9 +1,11 @@
 import json
 import pytest
 import shutil
+import subprocess
+import importlib.util
 from pathlib import Path
 import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, Mock
 from file2ai import (
     parse_args,
     is_text_file,
@@ -15,6 +17,10 @@ from file2ai import (
     prepare_exports_dir,
     clone_and_export,
     local_export,
+    check_docx_support,
+    install_docx_support,
+    convert_document,
+    setup_logging,
 )
 
 
@@ -645,3 +651,123 @@ def test_logging_setup(tmp_path, caplog):
 
     # Check if message was logged
     assert any(record.message == test_message for record in caplog.records)
+
+
+def test_docx_dependency_management(monkeypatch, caplog):
+    """Test python-docx dependency checking and installation."""
+    import logging
+    from importlib.util import find_spec
+
+    # Mock importlib.util.find_spec to simulate missing docx
+    def mock_find_spec(name):
+        return None if name == "docx" else find_spec(name)
+    
+    monkeypatch.setattr(importlib.util, "find_spec", mock_find_spec)
+    
+    # Mock successful pip install
+    def mock_check_call(*args, **kwargs):
+        return 0
+    monkeypatch.setattr(subprocess, "check_call", mock_check_call)
+    
+    # Test dependency checking
+    assert check_docx_support() is False
+    
+    # Test installation
+    assert install_docx_support() is True
+
+
+def test_word_to_text_conversion(tmp_path, caplog, monkeypatch):
+    """Test Word document to text conversion."""
+    import logging
+
+    # Mock Document class
+    class MockDocument:
+        def __init__(self, file_path=None):
+            self.paragraphs = [
+                Mock(text="Hello, World!"),
+                Mock(text="This is a test document."),
+            ]
+            self.tables = [Mock()]
+            self.tables[0].rows = [
+                Mock(cells=[Mock(text="Cell 1"), Mock(text="Cell 2")]),
+                Mock(cells=[Mock(text="Cell 3"), Mock(text="Cell 4")])
+            ]
+        
+        def save(self, path):
+            path.write_text("Mock DOCX content")
+
+    monkeypatch.setattr("docx.Document", MockDocument)
+    setup_logging()
+    caplog.set_level(logging.INFO)
+
+    # Create a test Word document using our mock
+    test_doc = tmp_path / "test.docx"
+    mock_doc = MockDocument()
+    mock_doc.save(test_doc)
+    
+    # Set up arguments for conversion
+    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_doc), '--format', 'text']):
+        args = parse_args()
+        convert_document(args)
+    
+    # Check output file
+    exports_dir = Path("exports")
+    output_files = list(exports_dir.glob("test*.text"))
+    assert len(output_files) == 1
+    output_content = output_files[0].read_text()
+    
+    # Verify content
+    assert "Hello, World!" in output_content
+    assert "This is a test document." in output_content
+    assert "Cell 1 | Cell 2" in output_content
+    assert "Cell 3 | Cell 4" in output_content
+    
+    # Clean up
+    shutil.rmtree(exports_dir)
+
+
+
+
+def test_word_conversion_errors(tmp_path, caplog, monkeypatch):
+    """Test error handling in Word document conversion."""
+    import logging
+
+    # Mock Document class
+    class MockDocument:
+        def __init__(self, file_path=None):
+            self.paragraphs = []
+            self.tables = []
+        
+        def save(self, path):
+            path.write_text("Mock DOCX content")
+    
+    monkeypatch.setattr("docx.Document", MockDocument)
+    setup_logging()
+    caplog.set_level(logging.ERROR)
+    
+    # Test non-existent file
+    with patch('sys.argv', ['file2ai.py', 'convert', '--input', 'nonexistent.docx', '--format', 'text']):
+        args = parse_args()
+        with pytest.raises(SystemExit):
+            convert_document(args)
+        assert "Input file not found" in caplog.text
+    
+    # Test unsupported output format
+    test_doc = tmp_path / "test.docx"
+    MockDocument().save(test_doc)
+    
+    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_doc), '--format', 'pdf']):
+        args = parse_args()
+        with pytest.raises(SystemExit):
+            convert_document(args)
+        assert "PDF conversion not yet implemented" in caplog.text
+    
+    # Test unsupported input format
+    test_txt = tmp_path / "test.txt"
+    test_txt.write_text("Hello")
+    
+    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_txt), '--format', 'text']):
+        args = parse_args()
+        with pytest.raises(SystemExit):
+            convert_document(args)
+        assert "Unsupported input format" in caplog.text
