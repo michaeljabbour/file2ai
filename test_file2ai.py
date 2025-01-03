@@ -23,6 +23,8 @@ from file2ai import (
     install_excel_support,
     check_pptx_support,
     install_pptx_support,
+    check_html_support,
+    install_html_support,
     convert_document,
     setup_logging,
 )
@@ -1127,3 +1129,254 @@ def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
                 convert_document(args)
     
     assert "PDF conversion requires additional system dependencies" in caplog.text
+
+def test_html_dependency_management(monkeypatch, caplog):
+    """Test beautifulsoup4 dependency checking and installation."""
+    import logging
+    from importlib.util import find_spec
+    
+    # Mock importlib.util.find_spec to simulate missing bs4
+    def mock_find_spec(name):
+        return None if name == "bs4" else find_spec(name)
+    
+    monkeypatch.setattr(importlib.util, "find_spec", mock_find_spec)
+    
+    # Mock successful pip install
+    def mock_check_call(*args, **kwargs):
+        return 0
+    monkeypatch.setattr(subprocess, "check_call", mock_check_call)
+    
+    # Test dependency checking
+    assert check_html_support() is False
+    
+    # Test installation
+    assert install_html_support() is True
+
+def test_html_to_text_conversion(tmp_path, caplog):
+    """Test HTML to text conversion."""
+    import logging
+    
+    # Create a test HTML file
+    test_html = """<!DOCTYPE html>
+<html>
+<head><title>Test Document</title></head>
+<body>
+    <h1>Test Heading</h1>
+    <p>Test paragraph</p>
+    <ul><li>List item</li></ul>
+    <table><tr><td>Cell</td></tr></table>
+</body>
+</html>"""
+    
+    test_file = tmp_path / "test.html"
+    test_file.write_text(test_html)
+    
+    # Set up arguments for conversion
+    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'text']):
+        args = parse_args()
+        convert_document(args)
+    
+    # Check output file
+    exports_dir = Path("exports")
+    output_files = list(exports_dir.glob("test*.text"))
+    assert len(output_files) == 1
+    output_content = output_files[0].read_text()
+    
+    # Verify content structure is preserved
+    assert "Test Document" in output_content
+    assert "Test Heading" in output_content
+    assert "Test paragraph" in output_content
+    assert "List item" in output_content
+    assert "Cell" in output_content
+    
+    # Clean up
+    shutil.rmtree(exports_dir)
+
+def test_html_to_pdf_conversion(tmp_path, caplog):
+    """Test HTML to PDF conversion."""
+    import logging
+    
+    # Create a test HTML file with an image
+    test_html = """<!DOCTYPE html>
+<html>
+<head><title>Test Document</title></head>
+<body>
+    <h1>Test Heading</h1>
+    <img src="test.png" alt="Test Image">
+</body>
+</html>"""
+    
+    test_file = tmp_path / "test.html"
+    test_file.write_text(test_html)
+    
+    # Create a test image
+    test_image = tmp_path / "test.png"
+    from PIL import Image
+    img = Image.new('RGB', (100, 100), color='red')
+    img.save(test_image)
+    
+    # Mock weasyprint for PDF generation
+    mock_pdf = b"%PDF-1.4 test pdf content"
+    mock_weasyprint = MagicMock()
+    mock_weasyprint.HTML.return_value.write_pdf.return_value = mock_pdf
+    mock_weasyprint.__spec__ = MagicMock(name='weasyprint.__spec__')
+    
+    # Create PIL mock with Image attribute and spec
+    mock_pil = MagicMock()
+    mock_pil.Image = MagicMock()
+    mock_pil.__spec__ = MagicMock(name='PIL.__spec__')
+    
+    with patch.dict('sys.modules', {
+            'weasyprint': mock_weasyprint,
+            'PIL': mock_pil
+        }):
+        with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'pdf']):
+            args = parse_args()
+            convert_document(args)
+    
+    # Check output file
+    exports_dir = Path("exports")
+    output_files = list(exports_dir.glob("test*.pdf"))
+    assert len(output_files) == 1
+    assert output_files[0].read_bytes() == mock_pdf
+    
+    # Clean up
+    shutil.rmtree(exports_dir)
+
+def test_html_to_image_conversion(tmp_path, caplog):
+    """Test HTML to image conversion."""
+    import logging
+    
+    # Create a test HTML file
+    test_html = """<!DOCTYPE html>
+<html>
+<head><title>Test Document</title></head>
+<body><h1>Test Heading</h1></body>
+</html>"""
+    
+    test_file = tmp_path / "test.html"
+    test_file.write_text(test_html)
+    
+    # Mock PDF generation
+    mock_pdf = b"%PDF-1.4 test pdf content"
+    mock_weasyprint = MagicMock()
+    mock_weasyprint.HTML.return_value.write_pdf.return_value = mock_pdf
+    mock_weasyprint.__spec__ = MagicMock(name='weasyprint.__spec__')
+    
+    # Mock PyMuPDF document
+    mock_doc = MagicMock()
+    mock_doc.__len__.return_value = 2  # Two pages
+    mock_fitz = MagicMock()
+    mock_fitz.open.return_value = mock_doc
+    mock_fitz.__spec__ = MagicMock(name='fitz.__spec__')
+    
+    # Create PIL mock with Image attribute and spec
+    mock_pil = MagicMock()
+    mock_pil.Image = MagicMock()
+    mock_pil.__spec__ = MagicMock(name='PIL.__spec__')
+    
+    with patch.dict('sys.modules', {
+            'weasyprint': mock_weasyprint,
+            'fitz': mock_fitz,
+            'PIL': mock_pil
+        }):
+        with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'image']):
+            args = parse_args()
+            convert_document(args)
+    
+    # Check output files
+    exports_dir = Path("exports")
+    images_dir = exports_dir / "images"
+    
+    # Verify image files exist
+    assert (images_dir / "test_page_1.png").exists()
+    assert (images_dir / "test_page_2.png").exists()
+    
+    # Verify the list file exists and contains correct paths
+    list_files = list(exports_dir.glob("test*.image"))
+    assert len(list_files) == 1
+    content = list_files[0].read_text()
+    assert "exports/images/test_page_1.png" in content
+    assert "exports/images/test_page_2.png" in content
+    
+    # Clean up
+    shutil.rmtree(exports_dir)
+
+def test_mhtml_conversion(tmp_path, caplog):
+    """Test MHTML file conversion."""
+    import logging
+    
+    # Create a test MHTML file
+    mhtml_content = """From: <Saved by file2ai>
+Subject: Test MHTML Document
+Date: Thu, 01 Jan 2024 00:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/related;
+    boundary="----=_NextPart_000"
+
+------=_NextPart_000
+Content-Type: text/html; charset="utf-8"
+
+<!DOCTYPE html>
+<html>
+<head><title>MHTML Test</title></head>
+<body><h1>Test Content</h1></body>
+</html>
+------=_NextPart_000--"""
+    
+    test_file = tmp_path / "test.mhtml"
+    test_file.write_text(mhtml_content)
+    
+    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'text']):
+        args = parse_args()
+        convert_document(args)
+    
+    # Check output file
+    exports_dir = Path("exports")
+    output_files = list(exports_dir.glob("test*.text"))
+    assert len(output_files) == 1
+    content = output_files[0].read_text()
+    
+    # Verify content
+    assert "MHTML Test" in content
+    assert "Test Content" in content
+    
+    # Clean up
+    shutil.rmtree(exports_dir)
+
+def test_html_conversion_errors(tmp_path, caplog):
+    """Test HTML conversion error handling."""
+    import logging
+    
+    # Create a test HTML file
+    test_file = tmp_path / "test.html"
+    test_file.write_text("<html><body>Test</body></html>")
+    
+    # Test missing beautifulsoup4
+    with patch("file2ai.check_html_support", return_value=False), \
+         patch("file2ai.install_html_support", return_value=False), \
+         pytest.raises(SystemExit), \
+         patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'text']):
+        args = parse_args()
+        convert_document(args)
+    assert "Failed to install HTML document support" in caplog.text
+    
+    # Test missing weasyprint for PDF
+    with patch("file2ai.check_html_support", return_value=True), \
+         patch("file2ai.check_package_support", return_value=False), \
+         patch("file2ai.install_package_support", return_value=False), \
+         pytest.raises(SystemExit), \
+         patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'pdf']):
+        args = parse_args()
+        convert_document(args)
+    assert "Failed to install PDF conversion support" in caplog.text
+    
+    # Test missing PyMuPDF for image conversion
+    with patch("file2ai.check_html_support", return_value=True), \
+         patch("file2ai.check_package_support", side_effect=[True, False]), \
+         patch("file2ai.install_package_support", return_value=False), \
+         pytest.raises(SystemExit), \
+         patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'image']):
+        args = parse_args()
+        convert_document(args)
+    assert "Failed to install PDF conversion support" in caplog.text

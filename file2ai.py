@@ -263,7 +263,7 @@ def parse_args() -> argparse.Namespace:
     convert_parser.add_argument(
         "--format",
         required=True,
-        choices=["pdf", "text", "image", "docx", "csv"],
+        choices=["pdf", "text", "image", "docx", "csv", "html"],
         help="Output format for the conversion",
     )
     convert_parser.add_argument(
@@ -993,6 +993,22 @@ def load_config() -> dict:
     return {}
 
 
+def check_html_support() -> bool:
+    """Check if beautifulsoup4 is available for HTML document support."""
+    return check_package_support("bs4")
+
+def install_html_support() -> bool:
+    """Install beautifulsoup4 package for HTML document support."""
+    return install_package_support("beautifulsoup4")
+
+def check_pymupdf_support() -> bool:
+    """Check if PyMuPDF is available for PDF-to-image conversion."""
+    return check_package_support("fitz")
+
+def install_pymupdf_support() -> bool:
+    """Install PyMuPDF package for PDF-to-image conversion."""
+    return install_package_support("PyMuPDF")
+
 def convert_document(args: argparse.Namespace) -> None:
     """
     Convert a document to the specified format.
@@ -1000,7 +1016,7 @@ def convert_document(args: argparse.Namespace) -> None:
     Args:
         args: Command line arguments containing:
             - input: Path to input file
-            - format: Desired output format (pdf, text, image, docx)
+            - format: Desired output format (pdf, text, image, docx, csv)
             - output: Optional output path
     """
     input_path = Path(args.input)
@@ -1141,6 +1157,188 @@ def convert_document(args: argparse.Namespace) -> None:
         
         except Exception as e:
             logger.error(f"Error converting Word document: {e}")
+            sys.exit(1)
+    
+    elif input_extension in [".html", ".mhtml", ".htm"]:
+        if not check_html_support():
+            logger.info("Installing HTML document support...")
+            if not install_html_support():
+                logger.error("Failed to install HTML document support")
+                sys.exit(1)
+            logger.info("HTML document support installed successfully")
+        
+        try:
+            from bs4 import BeautifulSoup
+            import re
+        except ImportError:
+            logger.error("Failed to import beautifulsoup4")
+            sys.exit(1)
+
+        try:
+            with open(input_path, 'r', encoding='utf-8') as f:
+                soup = BeautifulSoup(f, 'html.parser')
+            
+            if output_format == "text":
+                # Extract text content while preserving some structure
+                text_parts = []
+                
+                # Get title
+                if soup.title and soup.title.string:
+                    text_parts.append(f"Title: {soup.title.string.strip()}\n")
+                
+                # Process headings and paragraphs
+                for tag in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p']):
+                    # Add proper spacing for headings
+                    if tag.name.startswith('h'):
+                        text_parts.append(f"\n{tag.get_text().strip()}\n{'='*40}\n")
+                    else:
+                        text_parts.append(tag.get_text().strip())
+                
+                # Handle lists
+                for ul in soup.find_all(['ul', 'ol']):
+                    for li in ul.find_all('li'):
+                        text_parts.append(f"• {li.get_text().strip()}")
+                
+                # Extract text from tables
+                for table in soup.find_all('table'):
+                    text_parts.append("\nTable:")
+                    for row in table.find_all('tr'):
+                        cells = [cell.get_text().strip() for cell in row.find_all(['td', 'th'])]
+                        if cells:
+                            text_parts.append(" | ".join(cells))
+                
+                # Write the extracted text
+                output_path.write_text("\n".join(text_parts))
+                logger.info(f"Successfully converted HTML document to text: {output_path}")
+            
+            elif output_format == "pdf":
+                # For PDF output, we need both weasyprint and Pillow
+                if not check_package_support("weasyprint"):
+                    logger.info("Installing PDF conversion support...")
+                    if not install_package_support("weasyprint"):
+                        logger.error("Failed to install PDF conversion support")
+                        sys.exit(1)
+                    logger.info("PDF conversion support installed successfully")
+                
+                try:
+                    import weasyprint
+                except ImportError:
+                    logger.error("Failed to import weasyprint")
+                    sys.exit(1)
+                
+                # Handle local images
+                base_dir = input_path.parent
+                for img in soup.find_all('img'):
+                    src = img.get('src', '')
+                    if src and not src.startswith(('http://', 'https://', 'data:')):
+                        # Convert relative path to absolute
+                        abs_path = base_dir / src
+                        if abs_path.exists():
+                            img['src'] = abs_path.absolute().as_uri()
+                
+                # Convert to PDF
+                html_content = str(soup)
+                pdf = weasyprint.HTML(string=html_content, base_url=str(base_dir)).write_pdf()
+                output_path.write_bytes(pdf)
+                logger.info(f"Successfully converted HTML document to PDF: {output_path}")
+            
+            elif output_format == "image":
+                # For image output, we need Pillow
+                if not check_package_support("PIL"):
+                    logger.info("Installing image support...")
+                    if not install_package_support("Pillow"):
+                        logger.error("Failed to install image support")
+                        sys.exit(1)
+                    logger.info("Image support installed successfully")
+                
+                try:
+                    from PIL import Image
+                except ImportError:
+                    logger.error("Failed to import Pillow")
+                    sys.exit(1)
+                
+                # Create images directory inside exports
+                images_dir = exports_dir / "images"
+                images_dir.mkdir(exist_ok=True)
+                
+                try:
+                    # Convert HTML to image using Pillow
+                    # First convert to PDF, then to image
+                    if not check_package_support("weasyprint"):
+                        logger.info("Installing PDF conversion support...")
+                        if not install_package_support("weasyprint"):
+                            logger.error("Failed to install PDF conversion support")
+                            sys.exit(1)
+                        logger.info("PDF conversion support installed successfully")
+                    
+                    try:
+                        import weasyprint
+                    except ImportError:
+                        logger.error("Failed to import weasyprint")
+                        sys.exit(1)
+                    
+                    # Handle local images
+                    base_dir = input_path.parent
+                    for img in soup.find_all('img'):
+                        src = img.get('src', '')
+                        if src and not src.startswith(('http://', 'https://', 'data:')):
+                            # Convert relative path to absolute
+                            abs_path = base_dir / src
+                            if abs_path.exists():
+                                img['src'] = abs_path.absolute().as_uri()
+                    
+                    # Convert to PDF first
+                    html_content = str(soup)
+                    pdf_bytes = weasyprint.HTML(string=html_content, base_url=str(base_dir)).write_pdf()
+                    
+                    # Check and install PyMuPDF support
+                    if not check_pymupdf_support():
+                        logger.info("Installing PDF-to-image conversion support...")
+                        if not install_pymupdf_support():
+                            logger.error("Failed to install PDF-to-image conversion support")
+                            sys.exit(1)
+                        logger.info("PDF-to-image conversion support installed successfully")
+                    
+                    try:
+                        import fitz  # PyMuPDF
+                    except ImportError:
+                        logger.error("Failed to import PyMuPDF")
+                        sys.exit(1)
+                    
+                    # Save PDF to temporary file
+                    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_pdf:
+                        tmp_pdf.write(pdf_bytes)
+                        tmp_pdf_path = tmp_pdf.name
+                    
+                    try:
+                        # Open PDF and convert pages to images
+                        pdf_doc = fitz.open(tmp_pdf_path)
+                        for page_num in range(len(pdf_doc)):
+                            page = pdf_doc[page_num]
+                            pix = page.get_pixmap()
+                            image_path = images_dir / f"{input_path.stem}_page_{page_num + 1}.png"
+                            pix.save(str(image_path))
+                            logger.info(f"Created image for page {page_num + 1}: {image_path}")
+                        
+                        # Create a combined output file listing all image paths
+                        image_list = [str(p) for p in sorted(images_dir.glob(f"{input_path.stem}_page_*.png"))]
+                        output_path.write_text("\n".join(image_list))
+                        
+                        logger.info(f"Successfully converted HTML to images in {images_dir}")
+                    finally:
+                        # Clean up temporary PDF file
+                        os.unlink(tmp_pdf_path)
+                
+                except Exception as e:
+                    logger.error(f"Error creating HTML images: {e}")
+                    sys.exit(1)
+            
+            else:
+                logger.error(f"Unsupported output format for HTML documents: {output_format}")
+                sys.exit(1)
+        
+        except Exception as e:
+            logger.error(f"Error converting HTML document: {e}")
             sys.exit(1)
     
     elif input_extension in [".ppt", ".pptx"]:
