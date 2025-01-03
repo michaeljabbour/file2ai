@@ -21,6 +21,8 @@ from file2ai import (
     install_docx_support,
     check_excel_support,
     install_excel_support,
+    check_pptx_support,
+    install_pptx_support,
     convert_document,
     setup_logging,
 )
@@ -935,3 +937,177 @@ def test_excel_conversion_errors(tmp_path, caplog, monkeypatch):
             convert_document(args)
 
     assert "Input file not found" in caplog.text
+
+
+def test_pptx_dependency_management(monkeypatch, caplog):
+    """Test python-pptx dependency checking and installation."""
+    import logging
+    from importlib.util import find_spec
+
+    # Mock importlib.util.find_spec to simulate missing pptx
+    def mock_find_spec(name):
+        return None if name == "pptx" else find_spec(name)
+    
+    monkeypatch.setattr(importlib.util, "find_spec", mock_find_spec)
+    
+    # Mock successful pip install
+    def mock_check_call(*args, **kwargs):
+        return 0
+    monkeypatch.setattr(subprocess, "check_call", mock_check_call)
+    
+    # Test dependency checking
+    assert check_pptx_support() is False
+    
+    # Test installation
+    assert install_pptx_support() is True
+
+
+def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
+    """Test PowerPoint document to text conversion."""
+    import logging
+    from unittest.mock import Mock, patch
+
+    # Mock Presentation class
+    class MockShape:
+        def __init__(self, text=""):
+            self.text = text
+
+    class MockSlide:
+        def __init__(self, texts):
+            self.shapes = [MockShape(text) for text in texts]
+
+    class MockPresentation:
+        def __init__(self):
+            self.slides = [
+                MockSlide(["Title Slide", "Subtitle Text"]),
+                MockSlide(["Content Slide", "• Bullet Point 1", "• Bullet Point 2"]),
+                MockSlide(["Final Slide", "Thank You!"])
+            ]
+
+    monkeypatch.setattr("pptx.Presentation", lambda _: MockPresentation())
+    setup_logging()
+    caplog.set_level(logging.INFO)
+
+    # Create a test PowerPoint document
+    test_ppt = tmp_path / "test.pptx"
+    test_ppt.write_bytes(b"Mock PPT content")
+    
+    # Convert the document
+    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_ppt), '--format', 'text']):
+        args = parse_args()
+        convert_document(args)
+    
+    # Check output file
+    exports_dir = Path("exports")
+    output_files = list(exports_dir.glob("test*.text"))
+    assert len(output_files) == 1
+    output_content = output_files[0].read_text()
+    
+    # Verify content
+    assert "Slide 1:" in output_content
+    assert "Title Slide" in output_content
+    assert "Subtitle Text" in output_content
+    assert "Slide 2:" in output_content
+    assert "Content Slide" in output_content
+    assert "Bullet Point 1" in output_content
+    assert "Bullet Point 2" in output_content
+    assert "Slide 3:" in output_content
+    assert "Final Slide" in output_content
+    assert "Thank You!" in output_content
+    
+    # Clean up
+    shutil.rmtree(exports_dir)
+
+
+def test_ppt_to_image_conversion(tmp_path, caplog, monkeypatch):
+    """Test PowerPoint document to image conversion."""
+    import logging
+    from unittest.mock import Mock, patch, MagicMock
+
+    # Mock Presentation and Pillow
+    class MockShape:
+        def __init__(self, text=""):
+            self.text = text
+
+    class MockSlide:
+        def __init__(self, texts):
+            self.shapes = [MockShape(text) for text in texts]
+
+    class MockPresentation:
+        def __init__(self):
+            self.slides = [
+                MockSlide(["Title"]),
+                MockSlide(["Content"])
+            ]
+
+    mock_image = MagicMock()
+    mock_draw = MagicMock()
+
+    monkeypatch.setattr("pptx.Presentation", lambda _: MockPresentation())
+    setup_logging()
+    caplog.set_level(logging.INFO)
+
+    # Create a test PowerPoint document
+    test_ppt = tmp_path / "test.pptx"
+    test_ppt.write_bytes(b"Mock PPT content")
+    
+    # Convert the document
+    with patch("PIL.Image.new", return_value=mock_image), \
+         patch("PIL.ImageDraw.Draw", return_value=mock_draw), \
+         patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_ppt), '--format', 'image']):
+        args = parse_args()
+        convert_document(args)
+    
+    # Check that image operations were called
+    assert mock_image.save.called
+    assert mock_draw.text.called
+    assert "Successfully converted PowerPoint to images" in caplog.text
+
+    # Clean up
+    shutil.rmtree(Path("exports"))
+
+
+
+
+def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
+    """Test error handling in PowerPoint document conversion."""
+    import logging
+    from unittest.mock import patch
+
+    setup_logging()
+    caplog.set_level(logging.ERROR)
+
+    # Create a test PowerPoint document
+    test_ppt = tmp_path / "test.pptx"
+    test_ppt.write_bytes(b"Mock PPT content")
+
+    # Test missing pptx dependency
+    with patch("file2ai.check_pptx_support", return_value=False), \
+         patch("file2ai.install_pptx_support", return_value=False):
+        with pytest.raises(SystemExit):
+            with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_ppt), '--format', 'text']):
+                args = parse_args()
+                convert_document(args)
+    
+    assert "Failed to install PowerPoint document support" in caplog.text
+    caplog.clear()
+
+    # Test missing Pillow for image conversion
+    with patch("file2ai.check_pptx_support", return_value=True), \
+         patch("file2ai.check_package_support", return_value=False):
+        with pytest.raises(SystemExit):
+            with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_ppt), '--format', 'image']):
+                args = parse_args()
+                convert_document(args)
+    
+    assert "Failed to install image support" in caplog.text
+    caplog.clear()
+
+    # Test unsupported format
+    with patch("file2ai.check_pptx_support", return_value=True):
+        with pytest.raises(SystemExit):
+            with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_ppt), '--format', 'pdf']):
+                args = parse_args()
+                convert_document(args)
+    
+    assert "PDF conversion not supported" in caplog.text
