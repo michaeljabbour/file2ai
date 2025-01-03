@@ -8,6 +8,7 @@ Clones a GitHub repository or exports text files from a local directory to a sin
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import logging
 import mimetypes
 import os
@@ -239,7 +240,8 @@ def parse_args() -> argparse.Namespace:
 
 def parse_github_url(url: str, use_subdirectory: bool = False) -> Tuple[str, Optional[str], Optional[str]]:
     """
-    Extract information from a GitHub repository URL.
+    Extract information from a GitHub repository URL, ignoring subdirectories unless use_subdirectory is True.
+    Also extracts base repository URL from deep URLs like /pulls, /issues, etc.
 
     Args:
         url: The GitHub repository URL to parse.
@@ -252,31 +254,27 @@ def parse_github_url(url: str, use_subdirectory: bool = False) -> Tuple[str, Opt
         - subdirectory: Subdirectory path if specified and use_subdirectory=True, None otherwise
 
     Raises:
-        SystemExit: If the URL is not a valid GitHub repository URL.
+        SystemExit: If the URL is not a valid GitHub repository URL or contains invalid suffixes.
     """
-    # Step 1: Check for invalid URL patterns
-    invalid_patterns = ["/pulls", "/issues", "/actions", "/wiki"]
-    for pattern in invalid_patterns:
-        if pattern in url:
-            logger.error(f"Invalid URL endpoint detected ({pattern}): {url}")
+    # Step 1: Check for invalid URL suffixes
+    invalid_suffixes = ["/pulls", "/issues", "/actions", "/wiki"]
+    for suffix in invalid_suffixes:
+        if url.endswith(suffix):
+            logger.error(f"Invalid GitHub URL: {url} (contains invalid suffix {suffix})")
             sys.exit(1)
 
-    # Step 2: Remove fragments and trailing slash
-    clean_url = url.split("#")[0].rstrip("/")
-
-    # Step 3: Extract components using regex
-    # Match groups: (base_url, branch, subdir)
-    match = re.match(
-        r"^(https?://github\.com/[^/]+/[^/]+)(?:/tree/([^/]+)(?:/(.+))?)?$",
-        clean_url
-    )
-    if not match:
+    # Step 2: Extract base repository URL
+    base_match = re.match(r"^(https?://github\.com/[^/]+/[^/]+)", url)
+    if not base_match:
         logger.error(f"Invalid GitHub URL: {url}")
         sys.exit(1)
+    
+    base_repo = base_match.group(1)
 
-    base_repo = match.group(1)
-    branch = match.group(2)
-    subdir = match.group(3) if use_subdirectory else None
+    # Step 3: Check for tree/<branch>/<path> pattern
+    tree_match = re.search(r"/tree/([^/]+)(?:/(.+))?$", url)
+    branch = tree_match.group(1) if tree_match else None
+    subdir = tree_match.group(2) if tree_match and use_subdirectory else None
 
     # Step 4: Append .git if missing
     if not base_repo.endswith(".git"):
@@ -353,6 +351,58 @@ def prepare_exports_dir() -> Path:
     exports_dir = Path("exports")
     exports_dir.mkdir(exist_ok=True)
     return exports_dir
+
+def load_gitignore_patterns(repo_root: Path) -> Set[str]:
+    """
+    Load .gitignore patterns from the repository root.
+    
+    Args:
+        repo_root: Path to the repository root directory.
+    
+    Returns:
+        Set of patterns to ignore.
+    """
+    patterns = set()
+    gitignore_path = repo_root / ".gitignore"
+    
+    if gitignore_path.is_file():
+        try:
+            with gitignore_path.open(encoding=DEFAULT_ENCODING) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        patterns.add(line)
+            logger.debug(f"Loaded {len(patterns)} patterns from .gitignore")
+        except Exception as e:
+            logger.warning(f"Error reading .gitignore: {e}")
+    
+    return patterns
+
+def should_ignore(path: Path, patterns: Set[str], repo_root: Path) -> bool:
+    """
+    Check if a path should be ignored based on .gitignore patterns.
+    
+    Args:
+        path: Path to check.
+        patterns: Set of .gitignore patterns.
+        repo_root: Repository root path for relative path calculation.
+    
+    Returns:
+        True if the path should be ignored, False otherwise.
+    """
+    if not patterns:
+        return False
+        
+    try:
+        rel_path = str(path.relative_to(repo_root))
+        for pattern in patterns:
+            if fnmatch.fnmatch(rel_path, pattern):
+                logger.debug(f"Ignoring {rel_path} (matches pattern {pattern})")
+                return True
+    except Exception as e:
+        logger.warning(f"Error checking ignore pattern for {path}: {e}")
+        
+    return False
 
 
 def export_files_to_single_file(
@@ -433,10 +483,15 @@ def export_files_to_json(
     }
 
     data: List[FileEntry] = []
+    ignore_patterns = load_gitignore_patterns(repo_root)
+    
     files_to_process = [
         f
         for f in repo_root.rglob("*")
-        if f.is_file() and not f.name.startswith(".") and ".git" not in str(f)
+        if f.is_file()
+        and not f.name.startswith(".")
+        and ".git" not in str(f)
+        and not should_ignore(f, ignore_patterns, repo_root)
     ]
     total_files = len(files_to_process)
 
@@ -494,27 +549,50 @@ def export_files_to_json(
 
 def _write_directory_structure(repo_root: Path, outfile: TextIO) -> None:
     """Write the repository/local directory structure to the output file."""
+    ignore_patterns = load_gitignore_patterns(repo_root)
+    
     for root, dirs, files in os.walk(repo_root):
         rel_path = Path(root).relative_to(repo_root)
+        
+        # Skip .git directory
+        if ".git" in str(rel_path):
+            continue
+            
+        # Check if directory should be ignored
+        if should_ignore(Path(root), ignore_patterns, repo_root):
+            logger.debug(f"Skipping ignored directory: {rel_path}")
+            dirs.clear()  # Skip processing subdirectories
+            continue
+            
         level = len(rel_path.parts)
-
-        if ".git" not in str(rel_path):
-            # Omit the top-level "." from printing
-            if str(rel_path) != ".":
-                outfile.write(f"{'  ' * (level-1)}└── {rel_path.name}/\n")
-            for file in sorted(files):
-                if not file.startswith(".") and "test" not in file.lower():
+        
+        # Print directory name (except root)
+        if str(rel_path) != ".":
+            outfile.write(f"{'  ' * (level-1)}└── {rel_path.name}/\n")
+            
+        # Process files
+        for file in sorted(files):
+            file_path = Path(root) / file
+            if not file.startswith(".") and "test" not in file.lower():
+                if not should_ignore(file_path, ignore_patterns, repo_root):
                     outfile.write(f"{'  ' * level}└── {file}\n")
+                else:
+                    logger.debug(f"Skipping ignored file: {file_path}")
 
 
 def _process_repository_files(
     repo_root: Path, outfile: TextIO, stats: Dict[str, int], repo: Optional[Repo]
 ) -> None:
     """Process all repository files and update statistics."""
+    ignore_patterns = load_gitignore_patterns(repo_root)
+    
     files_to_process = [
         f
         for f in repo_root.rglob("*")
-        if f.is_file() and not f.name.startswith(".") and ".git" not in str(f)
+        if f.is_file() 
+        and not f.name.startswith(".")
+        and ".git" not in str(f)
+        and not should_ignore(f, ignore_patterns, repo_root)
     ]
     total_files = len(files_to_process)
 

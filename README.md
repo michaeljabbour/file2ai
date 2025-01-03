@@ -90,7 +90,11 @@ Last Commit: ...
 
 ## Installation
 
-1. Clone the repository (for development or personal usage):
+There are two ways to install and use git2txt:
+
+### Option A: Development Installation
+
+1. Clone the repository:
 ```bash
 git clone https://github.com/michaeljabbour/git2txt.git
 cd git2txt
@@ -101,6 +105,23 @@ cd git2txt
 python -m venv venv
 source venv/bin/activate  # or .\venv\Scripts\activate on Windows
 ```
+
+3. Install in development mode:
+```bash
+pip install -e .
+```
+This installs git2txt as a package and includes development dependencies.
+
+### Option B: Direct Script Usage
+
+Simply clone and run:
+```bash
+git clone https://github.com/michaeljabbour/git2txt.git
+cd git2txt
+python git2txt.py --repo-url https://github.com/owner/repo.git
+```
+
+Note: The script will automatically install GitPython if it's not already available.
 
 ## Quick Start Usage
 
