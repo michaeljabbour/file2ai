@@ -22,6 +22,38 @@ from pathlib import Path
 from typing import Optional, Tuple, Set, NoReturn, TextIO, Dict, List, TypedDict, Union
 import json
 
+try:
+    from PIL import Image, ImageEnhance
+    HAS_PIL = True
+    HAS_PIL_ENHANCE = hasattr(Image, 'frombytes') and ImageEnhance is not None
+except ImportError:
+    Image = None
+    ImageEnhance = None
+    HAS_PIL = False
+    HAS_PIL_ENHANCE = False
+
+def check_image_support() -> bool:
+    """Check if PIL/Pillow is available for image processing."""
+    return HAS_PIL
+
+def check_image_enhance_support() -> bool:
+    """Check if PIL/Pillow enhancement features are available."""
+    return HAS_PIL_ENHANCE
+
+def install_image_support() -> bool:
+    """Install Pillow package for image processing."""
+    success = install_package_support("Pillow")
+    if success:
+        global Image, ImageEnhance, HAS_PIL, HAS_PIL_ENHANCE
+        try:
+            from PIL import Image, ImageEnhance
+            HAS_PIL = True
+            HAS_PIL_ENHANCE = hasattr(Image, 'frombytes') and ImageEnhance is not None
+        except ImportError:
+            HAS_PIL = False
+            HAS_PIL_ENHANCE = False
+    return success
+
 
 def check_package_support(package: str) -> bool:
     """Check if a Python package is available.
@@ -269,6 +301,38 @@ def parse_args() -> argparse.Namespace:
     convert_parser.add_argument(
         "--output",
         help="Output file path (default: input filename with new extension)",
+    )
+    
+    # Advanced conversion options
+    convert_parser.add_argument(
+        "--brightness",
+        type=float,
+        default=1.0,
+        help="Brightness adjustment factor (default: 1.0, range: 0.0-2.0)",
+    )
+    convert_parser.add_argument(
+        "--contrast",
+        type=float,
+        default=1.0,
+        help="Contrast adjustment factor (default: 1.0, range: 0.0-2.0)",
+    )
+    convert_parser.add_argument(
+        "--pages",
+        help="Page range to process (e.g., '1-5' or '1,3,5' or '1-3,7-9')",
+    )
+    convert_parser.add_argument(
+        "--resolution",
+        type=int,
+        default=300,
+        help="Output resolution in DPI for image conversion (default: 300)",
+    )
+    convert_parser.add_argument(
+        "--quality",
+        type=int,
+        choices=range(1, 101),
+        default=95,
+        metavar="[1-100]",
+        help="Output quality for image conversion (1-100, default: 95)",
     )
 
     args = parser.parse_args()
@@ -985,6 +1049,35 @@ def local_export(args: argparse.Namespace) -> None:
     logger.debug(f"Output path (absolute): {output_path}")
 
 
+def parse_page_range(page_range: str) -> List[int]:
+    """Parse a page range string into a list of page numbers.
+    
+    Args:
+        page_range: String in format like "1-5" or "1,3,5" or "1-3,7-9"
+        
+    Returns:
+        List of page numbers
+    
+    Examples:
+        >>> parse_page_range("1-5")
+        [1, 2, 3, 4, 5]
+        >>> parse_page_range("1,3,5")
+        [1, 3, 5]
+        >>> parse_page_range("1-3,7-9")
+        [1, 2, 3, 7, 8, 9]
+    """
+    if not page_range:
+        return []
+        
+    pages = set()
+    for part in page_range.split(','):
+        if '-' in part:
+            start, end = map(int, part.split('-'))
+            pages.update(range(start, end + 1))
+        else:
+            pages.add(int(part))
+    return sorted(list(pages))
+
 def load_config() -> dict:
     """Load configuration from file2ai.conf if it exists."""
     config_path = Path("file2ai.conf")
@@ -1313,12 +1406,69 @@ def convert_document(args: argparse.Namespace) -> None:
                     try:
                         # Open PDF and convert pages to images
                         pdf_doc = fitz.open(tmp_pdf_path)
-                        for page_num in range(len(pdf_doc)):
-                            page = pdf_doc[page_num]
-                            pix = page.get_pixmap()
-                            image_path = images_dir / f"{input_path.stem}_page_{page_num + 1}.png"
-                            pix.save(str(image_path))
-                            logger.info(f"Created image for page {page_num + 1}: {image_path}")
+                        
+                        # Parse page range if specified
+                        if args.pages:
+                            pages_to_process = parse_page_range(args.pages)
+                            # Validate page numbers
+                            max_page = len(pdf_doc)
+                            pages_to_process = [p for p in pages_to_process if 1 <= p <= max_page]
+                            if not pages_to_process:
+                                logger.error(f"No valid pages in range: {args.pages} (document has {max_page} pages)")
+                                sys.exit(1)
+                        else:
+                            pages_to_process = range(1, len(pdf_doc) + 1)
+                        
+                        for page_num in pages_to_process:
+                            # PyMuPDF uses 0-based indexing
+                            page = pdf_doc[page_num - 1]
+                            # Set resolution for the pixmap
+                            zoom = args.resolution / 72.0  # Convert DPI to zoom factor
+                            matrix = fitz.Matrix(zoom, zoom)
+                            pix = page.get_pixmap(matrix=matrix)
+                            
+                            # Convert to PIL Image for enhancement if PIL is available
+                            img_data = pix.samples
+                            image_path = images_dir / f"{input_path.stem}_page_{page_num}.png"
+                            
+                            if check_image_enhance_support():
+                                try:
+                                    img = Image.frombytes("RGB", (pix.width, pix.height), img_data)
+                                    
+                                    try:
+                                        from PIL import ImageEnhance
+                                        # Apply brightness adjustment with validation
+                                        if args.brightness != 1.0:
+                                            brightness = max(0.0, min(2.0, args.brightness))
+                                            enhancer = ImageEnhance.Brightness(img)
+                                            img = enhancer.enhance(brightness)
+                                            if brightness != args.brightness:
+                                                logger.warning(f"Brightness value clamped to valid range: {brightness}")
+                                        
+                                        # Apply contrast adjustment with validation
+                                        if args.contrast != 1.0:
+                                            contrast = max(0.0, min(2.0, args.contrast))
+                                            enhancer = ImageEnhance.Contrast(img)
+                                            img = enhancer.enhance(contrast)
+                                            if contrast != args.contrast:
+                                                logger.warning(f"Contrast value clamped to valid range: {contrast}")
+                                        
+                                        # Save with quality setting
+                                        img.save(str(image_path), quality=args.quality)
+                                        logger.info("Applied image enhancements (brightness: %.2f, contrast: %.2f)", 
+                                                  args.brightness, args.contrast)
+                                    except (ImportError, AttributeError) as e:
+                                        logger.warning(f"Failed to apply image enhancements: {e}")
+                                        img.save(str(image_path))
+                                except Exception as e:
+                                    logger.warning(f"Failed to create PIL image: {e}")
+                                    # Fallback to direct save
+                                    pix.save(str(image_path))
+                            else:
+                                # Fallback to direct pixmap save if PIL enhancements not available
+                                pix.save(str(image_path))
+                            
+                            logger.info(f"Created image for page {page_num}: {image_path}")
                         
                         # Create a combined output file listing all image paths
                         image_list = [str(p) for p in sorted(images_dir.glob(f"{input_path.stem}_page_*.png"))]
@@ -1370,11 +1520,26 @@ def convert_document(args: argparse.Namespace) -> None:
             if output_format == "text":
                 # Extract text from PowerPoint document
                 full_text = []
-                for slide_number, slide in enumerate(prs.slides, 1):
+                
+                # Parse page range if specified
+                if args.pages:
+                    pages_to_process = parse_page_range(args.pages)
+                    # Validate slide numbers
+                    max_slide = len(prs.slides)
+                    pages_to_process = [p for p in pages_to_process if 1 <= p <= max_slide]
+                    if not pages_to_process:
+                        logger.error(f"No valid slides in range: {args.pages} (presentation has {max_slide} slides)")
+                        sys.exit(1)
+                else:
+                    pages_to_process = range(1, len(prs.slides) + 1)
+                
+                for slide_number in pages_to_process:
+                    # PowerPoint uses 0-based indexing for slides
+                    slide = prs.slides[slide_number - 1]
                     full_text.append(f"Slide {slide_number}:\n")
                     
                     # Extract text from shapes
-                    for shape in slide.shapes:
+                    for shape in slide.shapes: 
                         if hasattr(shape, "text") and shape.text.strip():
                             full_text.append(shape.text.strip())
                     
@@ -1397,25 +1562,74 @@ def convert_document(args: argparse.Namespace) -> None:
                 images_dir.mkdir(exist_ok=True)
                 
                 try:
-                    # Create an image for each slide
-                    for i, slide in enumerate(prs.slides, 1):
+                    # Parse page range if specified
+                    if args.pages:
+                        pages_to_process = parse_page_range(args.pages)
+                        # Validate slide numbers
+                        max_slide = len(prs.slides)
+                        pages_to_process = [p for p in pages_to_process if 1 <= p <= max_slide]
+                        if not pages_to_process:
+                            logger.error(f"No valid slides in range: {args.pages} (presentation has {max_slide} slides)")
+                            sys.exit(1)
+                    else:
+                        pages_to_process = range(1, len(prs.slides) + 1)
+                    
+                    # Calculate resolution
+                    width = int(1920 * (args.resolution / 300))  # Scale width based on resolution
+                    height = int(1080 * (args.resolution / 300))  # Scale height based on resolution
+                    
+                    # Create an image for each selected slide
+                    for i in pages_to_process:
+                        # PowerPoint uses 0-based indexing for slides
+                        slide = prs.slides[i - 1]
+                        
                         # Create a blank image
-                        img = Image.new('RGB', (1920, 1080), 'white')
+                        img = Image.new('RGB', (width, height), 'white')
                         draw = ImageDraw.Draw(img)
                         
                         # Extract and draw text from shapes
-                        y_offset = 50
-                        draw.text((50, y_offset), f"Slide {i}", fill='black')
-                        y_offset += 50
+                        y_offset = int(50 * (args.resolution / 300))
+                        draw.text((int(50 * (args.resolution / 300)), y_offset), f"Slide {i}", fill='black')
+                        y_offset += int(50 * (args.resolution / 300))
                         
                         for shape in slide.shapes:
                             if hasattr(shape, "text") and shape.text.strip():
-                                draw.text((50, y_offset), shape.text.strip(), fill='black')
-                                y_offset += 30
+                                draw.text((int(50 * (args.resolution / 300)), y_offset), shape.text.strip(), fill='black')
+                                y_offset += int(30 * (args.resolution / 300))
                         
-                        # Save the image
                         slide_path = images_dir / f"{input_path.stem}_slide_{i}.png"
-                        img.save(str(slide_path))
+                        
+                        if check_image_enhance_support():
+                            try:
+                                from PIL import ImageEnhance
+                                # Apply brightness adjustment with validation
+                                if args.brightness != 1.0:
+                                    brightness = max(0.0, min(2.0, args.brightness))
+                                    enhancer = ImageEnhance.Brightness(img)
+                                    img = enhancer.enhance(brightness)
+                                    if brightness != args.brightness:
+                                        logger.warning(f"Brightness value clamped to valid range: {brightness}")
+                                
+                                # Apply contrast adjustment with validation
+                                if args.contrast != 1.0:
+                                    contrast = max(0.0, min(2.0, args.contrast))
+                                    enhancer = ImageEnhance.Contrast(img)
+                                    img = enhancer.enhance(contrast)
+                                    if contrast != args.contrast:
+                                        logger.warning(f"Contrast value clamped to valid range: {contrast}")
+                                
+                                # Save with quality setting
+                                img.save(str(slide_path), quality=args.quality)
+                                logger.info("Applied image enhancements (brightness: %.2f, contrast: %.2f)", 
+                                          args.brightness, args.contrast)
+                            except (ImportError, AttributeError) as e:
+                                logger.warning(f"Failed to apply image enhancements: {e}")
+                                # Fallback to basic save
+                                img.save(str(slide_path))
+                        else:
+                            # Basic save without enhancements if PIL features not available
+                            img.save(str(slide_path))
+                        
                         logger.info(f"Created image for slide {i}: {slide_path}")
                     
                     # Create a combined output file listing all image paths
