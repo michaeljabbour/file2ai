@@ -965,9 +965,10 @@ def test_pptx_dependency_management(monkeypatch, caplog):
 def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
     """Test PowerPoint document to text conversion."""
     import logging
-    from unittest.mock import Mock, patch
+    import sys
+    from unittest.mock import Mock, patch, MagicMock
 
-    # Mock Presentation class
+    # Mock Presentation class and pptx module
     class MockShape:
         def __init__(self, text=""):
             self.text = text
@@ -984,7 +985,11 @@ def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
                 MockSlide(["Final Slide", "Thank You!"])
             ]
 
-    monkeypatch.setattr("pptx.Presentation", lambda _: MockPresentation())
+    # Mock the pptx module
+    mock_pptx = Mock()
+    mock_pptx.Presentation = lambda _: MockPresentation()
+    monkeypatch.setattr("sys.modules", {"pptx": mock_pptx, **sys.modules})
+    
     setup_logging()
     caplog.set_level(logging.INFO)
 
@@ -1022,9 +1027,10 @@ def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
 def test_ppt_to_image_conversion(tmp_path, caplog, monkeypatch):
     """Test PowerPoint document to image conversion."""
     import logging
+    import sys
     from unittest.mock import Mock, patch, MagicMock
 
-    # Mock Presentation and Pillow
+    # Mock Presentation, Pillow, and pptx module
     class MockShape:
         def __init__(self, text=""):
             self.text = text
@@ -1043,7 +1049,11 @@ def test_ppt_to_image_conversion(tmp_path, caplog, monkeypatch):
     mock_image = MagicMock()
     mock_draw = MagicMock()
 
-    monkeypatch.setattr("pptx.Presentation", lambda _: MockPresentation())
+    # Mock the pptx module
+    mock_pptx = Mock()
+    mock_pptx.Presentation = lambda _: MockPresentation()
+    monkeypatch.setattr("sys.modules", {"pptx": mock_pptx, **sys.modules})
+    
     setup_logging()
     caplog.set_level(logging.INFO)
 
@@ -1072,7 +1082,8 @@ def test_ppt_to_image_conversion(tmp_path, caplog, monkeypatch):
 def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
     """Test error handling in PowerPoint document conversion."""
     import logging
-    from unittest.mock import patch
+    import sys
+    from unittest.mock import Mock, patch, MagicMock
 
     setup_logging()
     caplog.set_level(logging.ERROR)
