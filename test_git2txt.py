@@ -25,6 +25,7 @@ def test_parse_args_local(monkeypatch):
 def test_parse_args_interactive(mocker):
     """Test argument parsing with interactive input."""
     mocker.patch("builtins.input", side_effect=["https://github.com/owner/repo.git", ""])
+    mocker.patch("sys.argv", ["git2txt.py"])  # Mock command line arguments
     args = parse_args()
     assert args.repo_url == "https://github.com/owner/repo.git"
     assert args.local_dir is None

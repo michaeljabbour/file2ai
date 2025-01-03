@@ -9,17 +9,21 @@ description = "A Python script to export text from repos or local dirs"
 authors = [
     { name = "Michael Jabbour", email = "michael@jabbour.dev" }
 ]
-license = "MIT"
+license = { file = "LICENSE" }
+dependencies = ["gitpython"]
 keywords = ["git", "export", "text"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent"
 ]
-dependencies = ["gitpython"]
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-mock"]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-mock"
+]
 
 [project.urls]
 "Source Code" = "https://github.com/michaeljabbour/git2txt"
