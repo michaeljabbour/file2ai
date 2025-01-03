@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "git2txt"
+version = "1.0.1"
+description = "A Python script to export text from repos or local dirs"
+authors = [
+    { name = "Michael Jabbour", email = "michael@jabbour.dev" }
+]
+license = "MIT"
+keywords = ["git", "export", "text"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
+dependencies = ["gitpython"]
+
+[project.urls]
+"Source Code" = "https://github.com/michaeljabbour/git2txt"
