@@ -265,19 +265,30 @@ def parse_github_url(url: str, use_subdirectory: bool = False) -> Tuple[str, Opt
     base_repo = base_match.group(1)
     remaining_path = url[len(base_repo):]
 
-    # Step 2: Check for invalid URL suffixes in the remaining path
-    invalid_suffixes = ["/pulls", "/issues", "/actions", "/wiki"]
-    for suffix in invalid_suffixes:
+    # Step 2: Check for URL suffixes that could be subdirectories
+    special_suffixes = ["/pulls", "/issues", "/actions", "/wiki"]
+    subdir = None
+    for suffix in special_suffixes:
         if remaining_path.startswith(suffix):
-            # Just log a warning and continue with the base URL
-            logger.warning(f"Removing invalid suffix {suffix} from URL: {url}")
+            if use_subdirectory:
+                # These are GitHub virtual paths, warn user they don't exist in repo
+                logger.warning(
+                    f"{suffix} is a GitHub virtual path and doesn't exist in the repository. "
+                    "Exporting from repository root instead."
+                )
+            else:
+                # Otherwise just remove it and continue with base URL
+                logger.warning(f"Removing suffix {suffix} from URL: {url}")
             remaining_path = remaining_path[len(suffix):]
             break
 
     # Step 3: Check for tree/<branch>/<path> pattern
     tree_match = re.search(r"/tree/([^/]+)(?:/(.+))?$", url)
     branch = tree_match.group(1) if tree_match else None
-    subdir = tree_match.group(2) if tree_match and use_subdirectory else None
+    
+    # If we already have a subdir from special suffixes, don't override it
+    if not subdir:
+        subdir = tree_match.group(2) if tree_match and use_subdirectory else None
 
     # Step 4: Append .git if missing
     if not base_repo.endswith(".git"):
@@ -454,7 +465,7 @@ def should_ignore(path: Path, patterns: Tuple[Set[str], Set[str]], repo_root: Pa
     """
     # Always check if it's a binary file first
     if not is_text_file(path):
-        logger.debug(f"Ignoring {path.name}")
+        logger.info(f"Skipped binary file: {path}")
         return True
 
     ignore_patterns, override_patterns = patterns

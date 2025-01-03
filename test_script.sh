@@ -52,9 +52,21 @@ log_error() { echo -e "${RED}✗ $1${NC}"; exit 1; }
 log_warn() { echo -e "${YELLOW}! $1${NC}"; }
 log_info() { echo -e "➜ $1"; }
 
-# 1) Clean up old artifacts
-log_info "Cleaning up old artifacts..."
-rm -rf venv logs exports launchers
+# Check if sudo is available
+if ! command -v sudo &> /dev/null; then
+    log_warn "sudo not found - cleanup may fail if files are owned by root"
+    if ! rm -rf venv logs exports launchers 2>/dev/null; then
+        log_error "Permission denied. Please run with sudo or manually remove: venv logs exports launchers"
+    fi
+else
+    # 1) Clean up old artifacts
+    log_info "Cleaning up old artifacts..."
+    # Use sudo only if regular rm fails
+    if ! rm -rf venv logs exports launchers 2>/dev/null; then
+        log_warn "Permission denied, trying with sudo..."
+        sudo rm -rf venv logs exports launchers || log_error "Failed to remove directories even with sudo"
+    fi
+fi
 log_success "Cleanup complete"
 
 # 2) Create & activate virtual environment
