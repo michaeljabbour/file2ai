@@ -780,7 +780,7 @@ def clone_and_export(args: argparse.Namespace) -> None:
 
     repo_name = clone_url.rstrip("/").split("/")[-1].replace(".git", "")
     extension = ".json" if args.format == "json" else ".txt"
-    output_path = exports_dir / (args.output_file or f"{repo_name}_export{extension}")
+    output_path = exports_dir / (args.output_file or f"file2ai_export{extension}")
     output_path = _sequential_filename(output_path.resolve())
     logger.debug(f"Using output path: {output_path}")
 
@@ -856,7 +856,7 @@ def local_export(args: argparse.Namespace) -> None:
     local_dir = Path(args.local_dir)
     repo_name = local_dir.name or "local-export"
     extension = ".json" if args.format == "json" else ".txt"
-    output_file = args.output_file or f"{repo_name}_export{extension}"
+    output_file = args.output_file or f"file2ai_export{extension}"
     output_path = Path(EXPORTS_DIR) / output_file
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path = _sequential_filename(output_path.resolve())
