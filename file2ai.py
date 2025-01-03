@@ -148,17 +148,17 @@ def parse_args() -> argparse.Namespace:
     """
     Parse and validate command-line arguments.
 
-    Logic:
-        - If --local-dir is provided, use that directly
-        - If --repo-url is provided, use that directly
-        - If neither is provided, prompt user for input
+    Commands:
+        export  - Export text files from a repository or local directory (default)
+        convert - Convert documents between different formats
     """
     parser = argparse.ArgumentParser(
-        description="Clone a GitHub repo or export text files from a local directory to a single file.",
+        description="Export text files and convert documents between formats.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
 
-    # Repository source group (mutually exclusive)
+    # Add top-level arguments for export (default command)
     source_group = parser.add_mutually_exclusive_group()
     source_group.add_argument(
         "--repo-url",
@@ -173,19 +173,16 @@ def parse_args() -> argparse.Namespace:
         help="Local directory path to export",
     )
 
-    # Optional arguments that must come before the URL
+    # Optional arguments for export
     parser.add_argument("--branch", help="Branch or commit to checkout (optional)")
     parser.add_argument("--subdir", help="Optional subdirectory to export (defaults to repo root)")
     parser.add_argument("--token", help="GitHub Personal Access Token for private repos")
-
     parser.add_argument(
         "--output-file", help="Custom output filename (default: <repo_name>_export.txt)"
     )
-
     parser.add_argument(
         "--skip-remove", action="store_true", help="Skip removal of cloned repository after export"
     )
-
     parser.add_argument(
         "--format",
         choices=["text", "json"],
@@ -193,47 +190,75 @@ def parse_args() -> argparse.Namespace:
         help="Choose the output format (text or json). Default is text.",
     )
 
-    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
+    # Create subparsers for different commands
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Convert subcommand
+    convert_parser = subparsers.add_parser(
+        "convert",
+        help="Convert documents between different formats",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    convert_parser.add_argument(
+        "--input",
+        required=True,
+        help="Input file path",
+    )
+    convert_parser.add_argument(
+        "--format",
+        required=True,
+        choices=["pdf", "text", "image"],
+        help="Output format for the conversion",
+    )
+    convert_parser.add_argument(
+        "--output",
+        help="Output file path (default: input filename with new extension)",
+    )
 
     args = parser.parse_args()
 
-    # Initialize attributes
-    if not hasattr(args, 'repo_url'):
-        args.repo_url = None
-    if not hasattr(args, 'local_dir'):
-        args.local_dir = None
-    if not hasattr(args, 'repo_url_sub'):
-        args.repo_url_sub = False
+    # Set default command to export
+    if not args.command:
+        args.command = 'export'
 
-    # Process command-line arguments if provided
-    if args.local_dir:
-        args.repo_url_sub = False
-        return args
-    if args.repo_url:
-        args.repo_url_sub = False
-        return args
-    if args.repo_url_sub:
-        args.repo_url = args.repo_url_sub
-        args.repo_url_sub = True
-        return args
+    # Initialize attributes for export command
+    if args.command == 'export':
+        if not hasattr(args, 'repo_url'):
+            args.repo_url = None
+        if not hasattr(args, 'local_dir'):
+            args.local_dir = None
+        if not hasattr(args, 'repo_url_sub'):
+            args.repo_url_sub = None
 
-    # Only prompt if no source arguments were provided
-    tmp_url = input(
-        "Enter the GitHub repository URL (or press Enter to export local directory): "
-    ).strip()
-    if tmp_url:
-        args.repo_url = tmp_url
-    else:
-        tmp_dir = input(
-            "Enter a local directory path for export (or press Enter for current directory): "
+        # Process export command arguments if provided
+        if args.local_dir:
+            args.repo_url_sub = False
+            return args
+        if args.repo_url:
+            args.repo_url_sub = False
+            return args
+        if args.repo_url_sub:
+            args.repo_url = args.repo_url_sub
+            args.repo_url_sub = True
+            return args
+
+        # Only prompt if no source arguments were provided
+        tmp_url = input(
+            "Enter the GitHub repository URL (or press Enter to export local directory): "
         ).strip()
-        if tmp_dir:
-            args.local_dir = tmp_dir
+        if tmp_url:
+            args.repo_url = tmp_url
         else:
-            args.local_dir = os.getcwd()
-            logger.info(
-                f"No directory specified, defaulting to current directory: {args.local_dir}"
-            )
+            tmp_dir = input(
+                "Enter a local directory path for export (or press Enter for current directory): "
+            ).strip()
+            if tmp_dir:
+                args.local_dir = tmp_dir
+            else:
+                args.local_dir = os.getcwd()
+                logger.info(
+                    f"No directory specified, defaulting to current directory: {args.local_dir}"
+                )
 
     return args
 
@@ -912,18 +937,60 @@ def load_config() -> dict:
     return {}
 
 
+def convert_document(args: argparse.Namespace) -> None:
+    """
+    Convert a document to the specified format.
+    This is currently a placeholder that logs the conversion request.
+
+    Args:
+        args: Command line arguments containing:
+            - input: Path to input file
+            - format: Desired output format (pdf, text, image)
+            - output: Optional output path
+    """
+    input_path = Path(args.input)
+    if not input_path.exists():
+        logger.error(f"Input file not found: {input_path}")
+        sys.exit(1)
+
+    # Determine output path
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        # Use input filename with new extension
+        output_path = input_path.with_suffix(f".{args.format}")
+
+    # Ensure exports directory exists
+    exports_dir = Path(EXPORTS_DIR)
+    exports_dir.mkdir(exist_ok=True)
+
+    # Move output to exports directory if not already there
+    if exports_dir not in output_path.parents:
+        output_path = exports_dir / output_path.name
+
+    # Ensure we don't overwrite existing files
+    output_path = _sequential_filename(output_path)
+
+    logger.info(f"Converting {input_path} to {args.format} format")
+    logger.info(f"Output will be saved to: {output_path}")
+    logger.info("Document conversion feature coming soon!")
+
+
 def main() -> NoReturn:
     """Main entry point."""
     setup_logging()
     logger.info(f"Starting file2ai version {VERSION}")
     args = parse_args()
 
-    if args.local_dir:
-        # Export from local directory
-        local_export(args)
-    else:
-        # Clone from remote repo and export
-        clone_and_export(args)
+    if args.command == "export":
+        if args.local_dir:
+            # Export from local directory
+            local_export(args)
+        else:
+            # Clone from remote repo and export
+            clone_and_export(args)
+    elif args.command == "convert":
+        convert_document(args)
 
     logger.info("file2ai completed successfully")
     sys.exit(0)

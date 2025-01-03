@@ -177,43 +177,32 @@ python file2ai.py --output-file my_export.txt https://github.com/owner/repo.git
 
 This places the file in `exports/my_export.txt`.
 
-### 4. Multi-Format Document Conversion
+### 4. Document Conversion
 
-The `convert` subcommand enables conversion between various document formats:
+The `convert` subcommand enables basic document format conversion:
 
 ```bash
-# Convert Word document to PDF
-python file2ai.py convert --input doc.docx --format pdf
+# Convert a file to PDF format
+python file2ai.py convert --input document.txt --format pdf
 
-# Convert PowerPoint to images (one per slide)
-python file2ai.py convert --input pres.pptx --format image
+# Convert a file to plain text
+python file2ai.py convert --input document.pdf --format text
 
-# Convert Excel to text (CSV)
-python file2ai.py convert --input sheet.xlsx --format text
-
-# Convert PDF to text with custom options
-python file2ai.py convert --input doc.pdf --format text --brightness 1.2 --contrast 1.1
+# Convert a document to image format
+python file2ai.py convert --input document.pdf --format image
 ```
 
-Supported input formats:
-- Microsoft Word (DOC, DOCX)
-- Microsoft PowerPoint (PPT, PPTX)
-- Microsoft Excel (XLS, XLSX)
-- PDF documents
-- HTML/MHTML web pages
-
-Output format options:
-- Text (TXT, CSV)
+Currently supported output formats:
+- Text (TXT)
 - PDF
-- Images (PNG, JPEG)
-- MHTML
+- Image
 
-Additional options:
-- `--brightness`: Adjust image brightness (0.5-2.0)
-- `--contrast`: Adjust image contrast (0.5-2.0)
-- `--resolution`: Set output resolution for images (DPI)
-- `--pages`: Specify page range (e.g., "1-5,7,9-12")
-- `--pdf-compliance`: Set PDF compliance level (e.g., PDF/A)
+You can specify a custom output path using the `--output` option:
+```bash
+python file2ai.py convert --input document.txt --format pdf --output custom_name.pdf
+```
+
+Note: By default, converted files are saved in the `exports/` directory with an automatically generated filename based on the input file and chosen format.
 
 ## Development
 
