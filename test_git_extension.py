@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from git2txt import parse_github_url
+from file2ai import parse_github_url
 
 def test_git_extension():
     # Test 1: Basic URL without .git
