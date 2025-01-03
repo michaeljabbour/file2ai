@@ -16,10 +16,28 @@ import re
 import subprocess
 import sys
 import tempfile
+import importlib.util
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, Set, NoReturn, TextIO, Dict, List, TypedDict, Union
 import json
+
+
+def check_docx_support() -> bool:
+    """Check if python-docx is available for Word document support."""
+    return importlib.util.find_spec("docx") is not None
+
+def install_docx_support() -> bool:
+    """Install python-docx package for Word document support."""
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "python-docx"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
 
 
 class CommitInfo(TypedDict, total=False):
@@ -207,7 +225,7 @@ def parse_args() -> argparse.Namespace:
     convert_parser.add_argument(
         "--format",
         required=True,
-        choices=["pdf", "text", "image"],
+        choices=["pdf", "text", "image", "docx"],
         help="Output format for the conversion",
     )
     convert_parser.add_argument(
@@ -940,12 +958,11 @@ def load_config() -> dict:
 def convert_document(args: argparse.Namespace) -> None:
     """
     Convert a document to the specified format.
-    This is currently a placeholder that logs the conversion request.
 
     Args:
         args: Command line arguments containing:
             - input: Path to input file
-            - format: Desired output format (pdf, text, image)
+            - format: Desired output format (pdf, text, image, docx)
             - output: Optional output path
     """
     input_path = Path(args.input)
@@ -971,9 +988,64 @@ def convert_document(args: argparse.Namespace) -> None:
     # Ensure we don't overwrite existing files
     output_path = _sequential_filename(output_path)
 
-    logger.info(f"Converting {input_path} to {args.format} format")
-    logger.info(f"Output will be saved to: {output_path}")
-    logger.info("Document conversion feature coming soon!")
+    input_extension = input_path.suffix.lower()
+    output_format = args.format.lower()
+
+    # Handle Word documents (DOC/DOCX)
+    if input_extension in [".doc", ".docx"]:
+        if not check_docx_support():
+            logger.info("Installing Word document support...")
+            if not install_docx_support():
+                logger.error("Failed to install Word document support")
+                sys.exit(1)
+            logger.info("Word document support installed successfully")
+        
+        try:
+            from docx import Document
+        except ImportError:
+            logger.error("Failed to import python-docx")
+            sys.exit(1)
+
+        try:
+            doc = Document(input_path)
+            
+            if output_format == "text":
+                # Extract text from Word document
+                full_text = []
+                for paragraph in doc.paragraphs:
+                    if paragraph.text.strip():  # Skip empty paragraphs
+                        full_text.append(paragraph.text)
+                
+                # Add text from tables
+                for table in doc.tables:
+                    for row in table.rows:
+                        row_text = []
+                        for cell in row.cells:
+                            if cell.text.strip():
+                                row_text.append(cell.text.strip())
+                        if row_text:
+                            full_text.append(" | ".join(row_text))
+                
+                output_path.write_text("\n".join(full_text))
+                logger.info(f"Successfully converted Word document to text: {output_path}")
+            
+            elif output_format == "pdf":
+                logger.error("PDF conversion not yet implemented")
+                sys.exit(1)
+            
+            else:
+                logger.error(f"Unsupported output format for Word documents: {output_format}")
+                sys.exit(1)
+        
+        except Exception as e:
+            logger.error(f"Error converting Word document: {e}")
+            sys.exit(1)
+    
+    else: 
+        logger.error(f"Unsupported input format: {input_extension}")
+        sys.exit(1)
+
+    logger.info(f"Successfully converted {input_path} to {output_path}")
 
 
 def main() -> NoReturn:
