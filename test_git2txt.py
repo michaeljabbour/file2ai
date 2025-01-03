@@ -182,13 +182,35 @@ def test_json_export_with_git(tmp_path, caplog):
 
 def test_parse_github_url():
     """Test GitHub URL parsing and validation."""
-    # Test basic URL
-    url = parse_github_url("https://github.com/owner/repo.git")
-    assert url == "https://github.com/owner/repo.git"
+    # Test basic URL without subdirectory processing
+    base_url, branch, subdir = parse_github_url("https://github.com/owner/repo.git", use_subdirectory=False)
+    assert base_url == "https://github.com/owner/repo.git"
+    assert branch is None
+    assert subdir is None
 
     # Test URL without .git (should add it)
-    url = parse_github_url("https://github.com/owner/repo")
-    assert url == "https://github.com/owner/repo.git"
+    base_url, branch, subdir = parse_github_url("https://github.com/owner/repo", use_subdirectory=False)
+    assert base_url == "https://github.com/owner/repo.git"
+    assert branch is None
+    assert subdir is None
+
+    # Test deep URL with branch and path, without subdirectory processing
+    base_url, branch, subdir = parse_github_url(
+        "https://github.com/owner/repo/tree/main/path/to/dir",
+        use_subdirectory=False
+    )
+    assert base_url == "https://github.com/owner/repo.git"
+    assert branch == "main"
+    assert subdir is None
+
+    # Test deep URL with branch and path, with subdirectory processing
+    base_url, branch, subdir = parse_github_url(
+        "https://github.com/owner/repo/tree/feature/nested/path",
+        use_subdirectory=True
+    )
+    assert base_url == "https://github.com/owner/repo.git"
+    assert branch == "feature"
+    assert subdir == "nested/path"
 
     # Test invalid URLs
     with pytest.raises(SystemExit):
@@ -198,10 +220,41 @@ def test_parse_github_url():
         parse_github_url("https://github.com/owner/repo/issues")
     
     with pytest.raises(SystemExit):
-        parse_github_url("https://github.com/owner/repo/tree/main")
-    
-    with pytest.raises(SystemExit):
         parse_github_url("not_a_url")
+
+def test_deep_url_handling():
+    """Test handling of deep GitHub URLs with subdirectories."""
+    # Test deep URL with subdirectory flag before URL
+    with patch('sys.argv', [
+        'git2txt.py',
+        '--repo-url-sub',
+        'https://github.com/owner/repo/tree/main/path/to/dir'
+    ]):
+        args = parse_args()
+        assert args.repo_url == "https://github.com/owner/repo/tree/main/path/to/dir"
+        assert args.repo_url_sub is True
+
+    # Test deep URL without subdirectory flag
+    with patch('sys.argv', [
+        'git2txt.py',
+        '--repo-url',
+        'https://github.com/owner/repo/tree/main/path/to/dir'
+    ]):
+        args = parse_args()
+        assert args.repo_url == "https://github.com/owner/repo/tree/main/path/to/dir"
+        assert args.repo_url_sub is False
+
+    # Test with multiple flags before URL
+    with patch('sys.argv', [
+        'git2txt.py',
+        '--branch', 'dev',
+        '--repo-url-sub',
+        'https://github.com/owner/repo/tree/main/path/to/dir'
+    ]):
+        args = parse_args()
+        assert args.repo_url == "https://github.com/owner/repo/tree/main/path/to/dir"
+        assert args.repo_url_sub is True
+        assert args.branch == 'dev'
 
 
 def test_build_auth_url():
@@ -437,27 +490,41 @@ def test_branch_handling(tmp_path, caplog):
     
     
     with patch("subprocess.run", side_effect=mock_clone):
-        # Test default branch
-        args = Namespace(
-            repo_url="https://github.com/owner/repo.git",
-            branch=None,
-            token=None,
-            output_file=str(tmp_path / "output.txt"),
-            skip_remove=False,
-            format="text",
-            subdir=None,
-            repo_url_sub=None
-        )
+        # Test default branch with URL only
+        with patch('sys.argv', [
+            'git2txt.py',
+            '--repo-url',
+            'https://github.com/owner/repo.git'
+        ]):
+            args = parse_args()
+            with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+                clone_and_export(args)
+                assert "Using default branch" in caplog.text
         
-        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
-            clone_and_export(args)
-            assert "Using default branch" in caplog.text
+        # Test with branch flag before URL
+        with patch('sys.argv', [
+            'git2txt.py',
+            '--branch', 'test-branch',
+            '--repo-url',
+            'https://github.com/owner/repo.git'
+        ]):
+            args = parse_args()
+            with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+                clone_and_export(args)
+                assert "Checked out branch: test-branch" in caplog.text
         
-        # Test explicit branch
-        args.branch = "test-branch"
-        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
-            clone_and_export(args)
-            assert f"Checked out branch: {args.branch}" in caplog.text
+        # Test with multiple flags before URL
+        with patch('sys.argv', [
+            'git2txt.py',
+            '--branch', 'test-branch',
+            '--skip-remove',
+            '--repo-url',
+            'https://github.com/owner/repo.git'
+        ]):
+            args = parse_args()
+            with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+                clone_and_export(args)
+                assert "Checked out branch: test-branch" in caplog.text
 
 
 def test_subdirectory_handling(tmp_path, caplog):
@@ -503,34 +570,53 @@ def test_subdirectory_handling(tmp_path, caplog):
         return MagicMock(returncode=0)
     
     with patch("subprocess.run", side_effect=mock_clone):
-        # Test with valid subdirectory
-        args = Namespace(
-            repo_url="https://github.com/owner/repo.git",  # Use GitHub URL to pass validation
-            branch=None,
-            token=None,
-            output_file=str(tmp_path / "output.txt"),
-            skip_remove=False,
-            format="text",
-            subdir="subdir",
-            repo_url_sub=None
-        )
-        
-        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
-            clone_and_export(args)
-            assert "Exporting from subdirectory: subdir" in caplog.text
+        # Test with --repo-url-sub flag before deep URL
+        with patch('sys.argv', [
+            'git2txt.py',
+            '--repo-url-sub',
+            'https://github.com/owner/repo/tree/main/subdir'
+        ]):
+            args = parse_args()
+            with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+                clone_and_export(args)
+                assert "Exporting from subdirectory: subdir" in caplog.text
         
         # Test with invalid subdirectory
-        args.subdir = "nonexistent"
-        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
-            with pytest.raises(SystemExit):
-                clone_and_export(args)
-            assert "Subdirectory nonexistent does not exist" in caplog.text
+        with patch('sys.argv', [
+            'git2txt.py',
+            '--repo-url-sub',
+            'https://github.com/owner/repo/tree/main/nonexistent'
+        ]):
+            args = parse_args()
+            with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+                with pytest.raises(SystemExit):
+                    clone_and_export(args)
+                assert "Subdirectory nonexistent does not exist" in caplog.text
         
-        # Test without subdirectory
-        args.subdir = None
-        with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
-            clone_and_export(args)
-            assert "Exporting from repository root" in caplog.text
+        # Test without subdirectory flag (should export from root)
+        with patch('sys.argv', [
+            'git2txt.py',
+            '--repo-url',
+            'https://github.com/owner/repo/tree/main/subdir'
+        ]):
+            args = parse_args()
+            with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+                clone_and_export(args)
+                assert "Exporting from repository root" in caplog.text
+        
+        # Test with multiple flags before URL
+        with patch('sys.argv', [
+            'git2txt.py',
+            '--branch', 'main',
+            '--skip-remove',
+            '--repo-url-sub',
+            'https://github.com/owner/repo/tree/main/subdir'
+        ]):
+            args = parse_args()
+            with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
+                clone_and_export(args)
+                assert "Exporting from subdirectory: subdir" in caplog.text
+                assert "Checked out branch: main" in caplog.text
 
 
 def test_logging_setup(tmp_path, caplog):

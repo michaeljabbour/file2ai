@@ -157,13 +157,24 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    parser.add_argument("--repo-url", help="GitHub URL (e.g., https://github.com/owner/repo.git).")
-    parser.add_argument("--local-dir", help="Local directory path to export.")
+    # Repository source group (mutually exclusive)
+    source_group = parser.add_mutually_exclusive_group()
+    source_group.add_argument(
+        "--repo-url",
+        help="GitHub repository URL (e.g., https://github.com/owner/repo)",
+    )
+    source_group.add_argument(
+        "--repo-url-sub",
+        help="GitHub repository URL with subdirectory to process",
+    )
+    source_group.add_argument(
+        "--local-dir",
+        help="Local directory path to export",
+    )
 
+    # Optional arguments that must come before the URL
     parser.add_argument("--branch", help="Branch or commit to checkout (optional)")
     parser.add_argument("--subdir", help="Optional subdirectory to export (defaults to repo root)")
-    parser.add_argument("--repo-url-sub", help="Automatically derived subdirectory if your GitHub URL is deep, or manually specify")
-
     parser.add_argument("--token", help="GitHub Personal Access Token for private repos")
 
     parser.add_argument(
@@ -185,20 +196,27 @@ def parse_args() -> argparse.Namespace:
 
     args = parser.parse_args()
 
-    # If both provided, that's invalid
-    if args.repo_url and args.local_dir:
-        logger.error("Please specify either --repo-url OR --local-dir, not both.")
-        sys.exit(1)
+    # Initialize attributes
+    if not hasattr(args, 'repo_url'):
+        args.repo_url = None
+    if not hasattr(args, 'local_dir'):
+        args.local_dir = None
+    if not hasattr(args, 'repo_url_sub'):
+        args.repo_url_sub = False
 
-    # If local-dir is provided, use it directly (no prompting)
+    # Process command-line arguments if provided
     if args.local_dir:
+        args.repo_url_sub = False
         return args
-
-    # If repo-url is provided, use it directly (no prompting)
     if args.repo_url:
+        args.repo_url_sub = False
+        return args
+    if args.repo_url_sub:
+        args.repo_url = args.repo_url_sub
+        args.repo_url_sub = True
         return args
 
-    # If neither is provided, then prompt
+    # Only prompt if no source arguments were provided
     tmp_url = input(
         "Enter the GitHub repository URL (or press Enter to export local directory): "
     ).strip()
@@ -219,22 +237,25 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def parse_github_url(url: str) -> str:
+def parse_github_url(url: str, use_subdirectory: bool = False) -> Tuple[str, Optional[str], Optional[str]]:
     """
-    Extract the base GitHub repository URL from a potentially deep URL.
-    Handles URLs with suffixes like /pulls, /issues, /tree, etc. by extracting the base repo.
+    Extract information from a GitHub repository URL.
 
     Args:
         url: The GitHub repository URL to parse.
+        use_subdirectory: If True, extract subdirectory information from deep URLs.
 
     Returns:
-        Base GitHub repository URL ending with .git.
+        Tuple of (base_repo_url, branch, subdirectory).
+        - base_repo_url: The base GitHub repository URL ending with .git
+        - branch: Branch name if specified in URL, None otherwise
+        - subdirectory: Subdirectory path if specified and use_subdirectory=True, None otherwise
 
     Raises:
         SystemExit: If the URL is not a valid GitHub repository URL.
     """
     # Step 1: Check for invalid URL patterns
-    invalid_patterns = ["/pulls", "/issues", "/actions", "/wiki", "/tree"]
+    invalid_patterns = ["/pulls", "/issues", "/actions", "/wiki"]
     for pattern in invalid_patterns:
         if pattern in url:
             logger.error(f"Invalid URL endpoint detected ({pattern}): {url}")
@@ -243,19 +264,25 @@ def parse_github_url(url: str) -> str:
     # Step 2: Remove fragments and trailing slash
     clean_url = url.split("#")[0].rstrip("/")
 
-    # Step 3: Extract base portion (owner/repo)
-    # e.g., https://github.com/owner/repo/pulls -> https://github.com/owner/repo
-    match = re.match(r"^(https?://github\.com/[^/]+/[^/]+)", clean_url)
+    # Step 3: Extract components using regex
+    # Match groups: (base_url, branch, subdir)
+    match = re.match(
+        r"^(https?://github\.com/[^/]+/[^/]+)(?:/tree/([^/]+)(?:/(.+))?)?$",
+        clean_url
+    )
     if not match:
         logger.error(f"Invalid GitHub URL: {url}")
         sys.exit(1)
+
     base_repo = match.group(1)
+    branch = match.group(2)
+    subdir = match.group(3) if use_subdirectory else None
 
     # Step 4: Append .git if missing
     if not base_repo.endswith(".git"):
         base_repo += ".git"
 
-    return base_repo
+    return base_repo, branch, subdir
 
 
 def build_auth_url(base_url: str, token: str) -> str:
@@ -568,8 +595,14 @@ def clone_and_export(args: argparse.Namespace) -> None:
     logger.info(f"Starting export of repository: {args.repo_url}")
     exports_dir = Path(EXPORTS_DIR)
     exports_dir.mkdir(parents=True, exist_ok=True)
-    clone_url = parse_github_url(args.repo_url)
 
+    # Parse URL and extract components based on --repo-url-sub flag
+    clone_url, url_branch, url_subdir = parse_github_url(
+        args.repo_url,
+        use_subdirectory=args.repo_url_sub
+    )
+
+    # Use token if provided
     if args.token:
         masked_token = (
             f"{args.token[:3]}...{args.token[-3:]}" if len(args.token) > 6 else "REDACTED"
@@ -604,24 +637,26 @@ def clone_and_export(args: argparse.Namespace) -> None:
             logger.error(f"Failed to initialize repository: {e}")
             sys.exit(1)
 
-        if args.branch:
+        # Determine branch: explicit --branch flag takes precedence over URL
+        branch = args.branch or url_branch
+        if branch:
             try:
-                repo.git.checkout(args.branch)
-                logger.info(f"Checked out branch: {args.branch}")
+                repo.git.checkout(branch)
+                logger.info(f"Checked out branch: {branch}")
             except exc.GitCommandError as e:
-                logger.error(f"Failed to checkout {args.branch}: {e}")
+                logger.error(f"Failed to checkout {branch}: {e}")
                 sys.exit(1)
         else:
             logger.info("Using default branch")
 
-        # Handle subdirectory (--repo-url-sub takes priority over --subdir)
-        subdir_arg = args.repo_url_sub if args.repo_url_sub else args.subdir
-        if subdir_arg:
-            export_target = clone_path / subdir_arg
+        # Determine subdirectory: explicit --subdir flag takes precedence over URL
+        subdir = args.subdir or url_subdir
+        if subdir:
+            export_target = clone_path / subdir
             if not export_target.is_dir():
-                logger.error(f"Subdirectory {subdir_arg} does not exist in the repository")
+                logger.error(f"Subdirectory {subdir} does not exist in the repository")
                 sys.exit(1)
-            logger.info(f"Exporting from subdirectory: {subdir_arg}")
+            logger.info(f"Exporting from subdirectory: {subdir}")
         else:
             export_target = clone_path
             logger.info("Exporting from repository root")

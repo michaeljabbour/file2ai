@@ -84,7 +84,8 @@ Last Commit: ...
   - Git URLs (`https://github.com/owner/repo.git`)
   - Deep URLs (`https://github.com/owner/repo/tree/main/docs`, `/pulls`, `/issues`)
 - Automatically extracts base repository URL from deep URLs
-- Supports explicit subdirectory specification with --repo-url-sub flag
+- Supports subdirectory processing with --repo-url-sub flag (must come before URL)
+- All flags must be specified before the repository URL
 - Run `python git2txt.py --help` to see all available options
 
 ## Installation
@@ -112,30 +113,30 @@ Basic usage:
 python git2txt.py --repo-url https://github.com/owner/repo.git
 ```
 
-Deep URL handling (automatically extracts base repository):
+Deep URL handling:
 ```bash
-# These all work and export from the repository root:
-python git2txt.py --repo-url https://github.com/owner/repo/pulls
-python git2txt.py --repo-url https://github.com/owner/repo/tree/main/docs
-python git2txt.py --repo-url https://github.com/owner/repo/issues
+# Export from repository root (automatically extracts base repository):
+python git2txt.py https://github.com/owner/repo/pulls
+python git2txt.py https://github.com/owner/repo/tree/main/docs
+python git2txt.py https://github.com/owner/repo/issues
 
-# To export from a specific subdirectory:
-python git2txt.py --repo-url https://github.com/owner/repo/tree/main/docs --repo-url-sub docs
+# Export from specific subdirectory (use --repo-url-sub flag):
+python git2txt.py --repo-url-sub https://github.com/owner/repo/tree/main/docs
 ```
 
-Optional: Specify a branch or commit:
+Optional: Specify a branch or commit (flags must come before URL):
 ```bash
-python git2txt.py --repo-url https://github.com/owner/repo.git --branch dev
+python git2txt.py --branch dev https://github.com/owner/repo.git
 ```
 
-Private Repos: Provide your Personal Access Token:
+Private Repos: Provide your Personal Access Token (flags must come before URL):
 ```bash
-python git2txt.py --repo-url https://github.com/owner/private-repo.git --token YOUR_TOKEN
+python git2txt.py --token YOUR_TOKEN https://github.com/owner/private-repo.git
 ```
 
 Skip Removing the Clone: Keep the cloned repo after export (for debugging):
 ```bash
-python git2txt.py --repo-url https://github.com/owner/repo.git --skip-remove
+python git2txt.py --skip-remove https://github.com/owner/repo.git
 ```
 
 ### 2. Export From a Local Directory
@@ -150,7 +151,7 @@ python git2txt.py --local-dir /path/to/local/project
 ### 3. Custom Output Filename
 
 ```bash
-python git2txt.py --repo-url https://github.com/owner/repo.git --output-file my_export.txt
+python git2txt.py --output-file my_export.txt https://github.com/owner/repo.git
 ```
 
 This places the file in `exports/my_export.txt`.
