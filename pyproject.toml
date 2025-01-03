@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "git2txt"
+version = "1.0.1"
+description = "A Python script to export text from repos or local dirs"
+authors = [
+    { name = "Michael Jabbour", email = "michael@jabbour.dev" }
+]
+license = { file = "LICENSE" }
+keywords = ["git", "export", "text"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
+dependencies = [
+    "gitpython"
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-mock"
+]
+
+[project.urls]
+"Source Code" = "https://github.com/michaeljabbour/git2txt"
+
+[tool.setuptools]
+# We only have a single Python module called 'git2txt.py'
+py-modules = ["git2txt"]
+
+[tool.black]
+line-length = 100
+target-version = ['py37']
+include = '\.pyi?$'
