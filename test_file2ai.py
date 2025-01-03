@@ -1092,7 +1092,7 @@ def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
     test_ppt = tmp_path / "test.pptx"
     test_ppt.write_bytes(b"Mock PPT content")
 
-    # Mock the pptx module for dependency checks only
+    # Mock the pptx module
     mock_pptx = Mock()
     monkeypatch.setattr("sys.modules", {"pptx": mock_pptx, **sys.modules})
 
@@ -1109,8 +1109,8 @@ def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
 
     # Test missing Pillow for image conversion
     with patch("file2ai.check_pptx_support", return_value=True), \
-         patch("file2ai.check_package_support", side_effect=lambda pkg: False if pkg == "Pillow" else True), \
-         patch("file2ai.install_package_support", side_effect=lambda pkg: False if pkg == "Pillow" else True):
+         patch("file2ai.check_package_support", return_value=False), \
+         patch("file2ai.install_package_support", return_value=False):
         with pytest.raises(SystemExit):
             with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_ppt), '--format', 'image']):
                 args = parse_args()
@@ -1126,4 +1126,4 @@ def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
                 args = parse_args()
                 convert_document(args)
     
-    assert "PDF conversion not supported" in caplog.text
+    assert "PDF conversion requires additional system dependencies" in caplog.text
