@@ -18,5 +18,8 @@ classifiers = [
 ]
 dependencies = ["gitpython"]
 
+[project.optional-dependencies]
+test = ["pytest", "pytest-mock"]
+
 [project.urls]
 "Source Code" = "https://github.com/michaeljabbour/git2txt"
