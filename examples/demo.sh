@@ -6,10 +6,10 @@ echo "1. Export from local directory"
 python ../file2ai.py --local-dir sample_project
 
 echo -e "\n2. Export from a public GitHub repository"
-python ../file2ai.py --repo-url https://github.com/pallets/flask
+python ../file2ai.py --repo-url https://github.com/pallets/flask.git
 
 echo -e "\n3. Export from a specific branch of a repository"
-python ../file2ai.py --repo-url https://github.com/pallets/flask --branch main
+python ../file2ai.py --repo-url https://github.com/pallets/flask.git --branch main
 
 echo -e "\n4. Export from a private repository (requires token)"
 echo "python ../file2ai.py --repo-url https://github.com/your-org/private-repo --token YOUR_TOKEN"
