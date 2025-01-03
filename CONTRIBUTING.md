@@ -2,9 +2,6 @@
 
 Thank you for your interest in contributing to file2ai! This document provides guidelines and instructions for contributing to the project.
 
-### Deprecation Notice
-The `git2txt` command is deprecated and will be removed in a future version. Please use `file2ai` instead. A compatibility layer is currently maintained for backward compatibility, but will be removed in version 2.0.0.
-
 ## Development Setup
 
 1. Clone the repository:
