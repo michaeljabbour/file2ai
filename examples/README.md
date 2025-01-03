@@ -1,6 +1,6 @@
-## git2txt Examples
+## file2ai Examples
 
-This directory contains example usage scenarios for git2txt.
+This directory contains example usage scenarios for file2ai.
 
 ### Sample Project Structure
 
@@ -10,7 +10,7 @@ The `sample_project/` directory contains a simple Python project with:
 
 ### Usage Examples
 
-The `demo.sh` script demonstrates different ways to use git2txt:
+The `demo.sh` script demonstrates different ways to use file2ai:
 1. Export from a local directory
 2. Export from a public GitHub repository
 3. Export from a specific branch

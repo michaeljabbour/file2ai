@@ -3,9 +3,9 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "git2txt"
+name = "file2ai"
 version = "1.0.1"
-description = "A Python script to export text from repos or local dirs"
+description = "A comprehensive tool for file conversion, text extraction, and AI processing"
 authors = [
     { name = "Michael Jabbour", email = "michael@jabbour.dev" }
 ]
@@ -28,11 +28,11 @@ test = [
 ]
 
 [project.urls]
-"Source Code" = "https://github.com/michaeljabbour/git2txt"
+"Source Code" = "https://github.com/michaeljabbour/file2ai"
 
 [tool.setuptools]
-# We only have a single Python module called 'git2txt.py'
-py-modules = ["git2txt"]
+# We only have a single Python module called 'file2ai.py'
+py-modules = ["file2ai"]
 
 [tool.black]
 line-length = 100
