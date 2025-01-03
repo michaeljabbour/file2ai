@@ -10,12 +10,14 @@ authors = [
     { name = "Michael Jabbour", email = "michael@jabbour.dev" }
 ]
 license = { file = "LICENSE" }
-dependencies = ["gitpython"]
 keywords = ["git", "export", "text"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent"
+]
+dependencies = [
+    "gitpython"
 ]
 
 [project.optional-dependencies]
@@ -29,9 +31,8 @@ test = [
 "Source Code" = "https://github.com/michaeljabbour/git2txt"
 
 [tool.setuptools]
+# We only have a single Python module called 'git2txt.py'
 py-modules = ["git2txt"]
-packages = []
-exclude = ["logs*", "exports*", "launchers*", "examples*"]
 
 [tool.black]
 line-length = 100

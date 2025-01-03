@@ -275,29 +275,43 @@ def build_auth_url(base_url: str, token: str) -> str:
 
 def is_text_file(file_path: Path) -> bool:
     """
-    Determine if a file is text-based.
-
-    Args:
-        file_path: Path to the file to check.
-
-    Returns:
-        True if the file is likely text-based, False otherwise.
+    Determine if a file is text-based by:
+      1) Checking if its suffix is in a known binary or text set
+      2) Checking MIME type (if available)
+      3) Scanning first 1KB for null bytes as a fallback
     """
     suffix = file_path.suffix.lower()
+
+    # 1) Immediate check against known binary or text extensions
     if suffix in BINARY_EXTENSIONS:
         return False
     if suffix in TEXT_EXTENSIONS:
         return True
 
+    # 2) MIME type guess
     mime_type, _ = mimetypes.guess_type(str(file_path))
     if mime_type:
-        return "text/" in mime_type or "application/json" in mime_type
+        # If MIME starts with "text/", or is specifically "application/json", "application/xml", etc.
+        # treat it as text
+        if mime_type.startswith("text/"):
+            return True
+        if mime_type in ("application/json", "application/xml"):
+            return True
+        # If we get something like application/octet-stream, it's probably binary
+        return False
 
+    # 3) Read first 1KB; if we see a null byte, consider it binary
     try:
         with file_path.open("rb") as f:
-            return b"\x00" not in f.read(1024)
+            chunk = f.read(1024)
+            if b"\x00" in chunk:
+                return False
     except IOError:
         return False
+
+    # If we pass all the above checks without finding a reason to skip,
+    # assume it is text-ish
+    return True
 
 
 def prepare_exports_dir() -> Path:
