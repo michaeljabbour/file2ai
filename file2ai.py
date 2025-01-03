@@ -1043,8 +1043,8 @@ def convert_document(args: argparse.Namespace) -> None:
                 # Extract text from Excel workbook
                 full_text = []
                 for sheet in workbook.worksheets:
-                    full_text.append(f"Sheet: {sheet.title}")
-                    for row in sheet.rows:
+                    full_text.append(f"Sheet: {sheet.title}\n")
+                    for row in sheet.iter_rows():
                         row_text = []
                         for cell in row:
                             if cell.value is not None:
