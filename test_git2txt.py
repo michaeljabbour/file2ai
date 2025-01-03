@@ -305,6 +305,7 @@ def test_clone_and_export_basic(tmp_path, caplog):
         args.output_file = "test_export.txt"
         args.skip_remove = False
         args.subdir = None  # Explicitly set subdir to None
+        args.repo_url_sub = None  # Explicitly set repo_url_sub to None
 
         # Test with default branch
         with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
@@ -444,7 +445,8 @@ def test_branch_handling(tmp_path, caplog):
             output_file=str(tmp_path / "output.txt"),
             skip_remove=False,
             format="text",
-            subdir=None
+            subdir=None,
+            repo_url_sub=None
         )
         
         with patch("git2txt.EXPORTS_DIR", str(exports_dir)):
@@ -509,7 +511,8 @@ def test_subdirectory_handling(tmp_path, caplog):
             output_file=str(tmp_path / "output.txt"),
             skip_remove=False,
             format="text",
-            subdir="subdir"
+            subdir="subdir",
+            repo_url_sub=None
         )
         
         with patch("git2txt.EXPORTS_DIR", str(exports_dir)):

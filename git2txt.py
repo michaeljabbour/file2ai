@@ -162,6 +162,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--branch", help="Branch or commit to checkout (optional)")
     parser.add_argument("--subdir", help="Optional subdirectory to export (defaults to repo root)")
+    parser.add_argument("--repo-url-sub", help="Automatically derived subdirectory if your GitHub URL is deep, or manually specify")
 
     parser.add_argument("--token", help="GitHub Personal Access Token for private repos")
 
@@ -220,37 +221,41 @@ def parse_args() -> argparse.Namespace:
 
 def parse_github_url(url: str) -> str:
     """
-    Ensure url is a valid GitHub repository clone URL.
-    If invalid, log error and exit. Otherwise, return sanitized URL.
+    Extract the base GitHub repository URL from a potentially deep URL.
+    Handles URLs with suffixes like /pulls, /issues, /tree, etc. by extracting the base repo.
 
     Args:
         url: The GitHub repository URL to parse.
 
     Returns:
-        Sanitized GitHub repository URL ending with .git.
+        Base GitHub repository URL ending with .git.
 
     Raises:
-        SystemExit: If the URL is invalid or points to a non-repository endpoint.
+        SystemExit: If the URL is not a valid GitHub repository URL.
     """
-    if not re.match(r"^https?://github\.com/[^/]+/[^/]+", url):
-        logger.error(f"Invalid GitHub URL: {url}")
-        sys.exit(1)
-
-    # Check for and reject invalid URL suffixes
-    disallowed_suffixes = ("/pulls", "/issues", "/actions", "/wiki", "/tree")
-    for suffix in disallowed_suffixes:
-        if suffix in url:
-            logger.error(f"Invalid URL endpoint detected ({suffix}): {url}")
+    # Step 1: Check for invalid URL patterns
+    invalid_patterns = ["/pulls", "/issues", "/actions", "/wiki", "/tree"]
+    for pattern in invalid_patterns:
+        if pattern in url:
+            logger.error(f"Invalid URL endpoint detected ({pattern}): {url}")
             sys.exit(1)
 
-    # Remove any trailing slashes and fragments
+    # Step 2: Remove fragments and trailing slash
     clean_url = url.split("#")[0].rstrip("/")
 
-    # Ensure URL ends with .git
-    if not clean_url.endswith(".git"):
-        clean_url += ".git"
+    # Step 3: Extract base portion (owner/repo)
+    # e.g., https://github.com/owner/repo/pulls -> https://github.com/owner/repo
+    match = re.match(r"^(https?://github\.com/[^/]+/[^/]+)", clean_url)
+    if not match:
+        logger.error(f"Invalid GitHub URL: {url}")
+        sys.exit(1)
+    base_repo = match.group(1)
 
-    return clean_url
+    # Step 4: Append .git if missing
+    if not base_repo.endswith(".git"):
+        base_repo += ".git"
+
+    return base_repo
 
 
 def build_auth_url(base_url: str, token: str) -> str:
@@ -609,13 +614,14 @@ def clone_and_export(args: argparse.Namespace) -> None:
         else:
             logger.info("Using default branch")
 
-        # Handle subdirectory if specified
-        if args.subdir:
-            export_target = clone_path / args.subdir
+        # Handle subdirectory (--repo-url-sub takes priority over --subdir)
+        subdir_arg = args.repo_url_sub if args.repo_url_sub else args.subdir
+        if subdir_arg:
+            export_target = clone_path / subdir_arg
             if not export_target.is_dir():
-                logger.error(f"Subdirectory {args.subdir} does not exist in the repository")
+                logger.error(f"Subdirectory {subdir_arg} does not exist in the repository")
                 sys.exit(1)
-            logger.info(f"Exporting from subdirectory: {args.subdir}")
+            logger.info(f"Exporting from subdirectory: {subdir_arg}")
         else:
             export_target = clone_path
             logger.info("Exporting from repository root")

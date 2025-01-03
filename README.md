@@ -79,11 +79,13 @@ Last Commit: ...
 - Local directories (non-Git)
 
 ### Smart URL Parsing
-- Handles various GitHub URL formats:
+- Intelligently handles various GitHub URL formats:
   - Basic repository URLs (`https://github.com/owner/repo`)
   - Git URLs (`https://github.com/owner/repo.git`)
-  - Tree URLs (`https://github.com/owner/repo/tree/branch`)
-- Automatically extracts branch information from tree URLs
+  - Deep URLs (`https://github.com/owner/repo/tree/main/docs`, `/pulls`, `/issues`)
+- Automatically extracts base repository URL from deep URLs
+- Supports explicit subdirectory specification with --repo-url-sub flag
+- Run `python git2txt.py --help` to see all available options
 
 ## Installation
 
@@ -108,6 +110,17 @@ You can run `git2txt.py` directly without installing anything else, as the scrip
 Basic usage:
 ```bash
 python git2txt.py --repo-url https://github.com/owner/repo.git
+```
+
+Deep URL handling (automatically extracts base repository):
+```bash
+# These all work and export from the repository root:
+python git2txt.py --repo-url https://github.com/owner/repo/pulls
+python git2txt.py --repo-url https://github.com/owner/repo/tree/main/docs
+python git2txt.py --repo-url https://github.com/owner/repo/issues
+
+# To export from a specific subdirectory:
+python git2txt.py --repo-url https://github.com/owner/repo/tree/main/docs --repo-url-sub docs
 ```
 
 Optional: Specify a branch or commit:
