@@ -72,21 +72,6 @@ def setup_logging() -> None:
     logs_dir = Path(LOGS_DIR)
     logs_dir.mkdir(exist_ok=True)
 
-    # Setup gitignore
-    gitignore_path = Path(".gitignore")
-    gitignore_entries = {f"{LOGS_DIR}/", "exports/"}
-    
-    if not gitignore_path.exists():
-        gitignore_path.write_text("\n".join(gitignore_entries) + "\n", encoding=DEFAULT_ENCODING)
-    else:
-        current_content = gitignore_path.read_text(encoding=DEFAULT_ENCODING).splitlines()
-        new_entries = gitignore_entries - set(current_content)
-        if new_entries:
-            with gitignore_path.open("a", encoding=DEFAULT_ENCODING) as f:
-                if not current_content or not current_content[-1].endswith("\n"):
-                    f.write("\n")
-                f.write("\n".join(new_entries) + "\n")
-
     # Configure logging handlers
     log_file = logs_dir / f"git2txt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     logging.basicConfig(
