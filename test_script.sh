@@ -93,11 +93,11 @@ python file2ai.py --local-dir . || log_error "Local export failed!"
 
 # 6) Test normal remote repo export
 log_info "Testing normal remote repo export..."
-python file2ai.py --repo-url https://github.com/michaeljabbour/git2txt || log_error "Remote repo export failed!"
+python file2ai.py --repo-url https://github.com/michaeljabbour/file2ai || log_error "Remote repo export failed!"
 
 # 7) Test subdir/extra path export
 log_info "Testing subdir/extra path export..."
-python file2ai.py --repo-url-sub https://github.com/michaeljabbour/git2txt/pulls || log_error "Subdir export failed!"
+python file2ai.py --repo-url-sub https://github.com/michaeljabbour/file2ai/pulls || log_error "Subdir export failed!"
 
 # 8) Validate outputs
 log_info "Validating output files..."
