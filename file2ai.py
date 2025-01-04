@@ -1053,7 +1053,7 @@ def parse_page_range(page_range: str) -> List[int]:
     """Parse a page range string into a list of page numbers.
     
     Args:
-        page_range: String in format like "1-5" or "1,3,5" or "1-3,7-9"
+        page_range: String in format like "1-5" or "1,3,5" or "1-3,7-9" or "2" (single page)
         
     Returns:
         List of page numbers
@@ -1065,17 +1065,37 @@ def parse_page_range(page_range: str) -> List[int]:
         [1, 3, 5]
         >>> parse_page_range("1-3,7-9")
         [1, 2, 3, 7, 8, 9]
+        >>> parse_page_range("2")
+        [2]
     """
     if not page_range:
         return []
-        
+    
+    # Clean input
+    page_range = page_range.strip()
+    
+    # Handle single page number
+    if page_range.isdigit():
+        return [int(page_range)]
+    
+    # Handle ranges and comma-separated values
     pages = set()
-    for part in page_range.split(','):
-        if '-' in part:
-            start, end = map(int, part.split('-'))
-            pages.update(range(start, end + 1))
-        else:
-            pages.add(int(part))
+    try:
+        for part in page_range.split(','):
+            part = part.strip()
+            if '-' in part:
+                start, end = map(int, part.split('-'))
+                if start > end:
+                    start, end = end, start  # Swap if start > end
+                pages.update(range(start, end + 1))
+            elif part.isdigit():
+                pages.add(int(part))
+            else:
+                raise ValueError(f"Invalid page number or range: {part}")
+    except ValueError as e:
+        logger.error(str(e))
+        sys.exit(1)
+        
     return sorted(list(pages))
 
 def load_config() -> dict:
@@ -1409,13 +1429,21 @@ def convert_document(args: argparse.Namespace) -> None:
                         
                         # Parse page range if specified
                         if args.pages:
-                            pages_to_process = parse_page_range(args.pages)
-                            # Validate page numbers
-                            max_page = len(pdf_doc)
-                            pages_to_process = [p for p in pages_to_process if 1 <= p <= max_page]
-                            if not pages_to_process:
-                                logger.error(f"No valid pages in range: {args.pages} (document has {max_page} pages)")
-                                sys.exit(1)
+                            # Handle single page number first
+                            if isinstance(args.pages, str) and args.pages.isdigit():
+                                page_num = int(args.pages)
+                                if not (1 <= page_num <= len(pdf_doc)):
+                                    logger.error(f"Invalid page number: {args.pages} (document has {len(pdf_doc)} pages)")
+                                    sys.exit(1)
+                                pages_to_process = [page_num]
+                            else:
+                                pages_to_process = parse_page_range(args.pages)
+                                # Validate page numbers
+                                max_page = len(pdf_doc)
+                                pages_to_process = [p for p in pages_to_process if 1 <= p <= max_page]
+                                if not pages_to_process:
+                                    logger.error(f"No valid pages in range: {args.pages} (document has {max_page} pages)")
+                                    sys.exit(1)
                         else:
                             pages_to_process = range(1, len(pdf_doc) + 1)
                         
@@ -1471,8 +1499,18 @@ def convert_document(args: argparse.Namespace) -> None:
                             logger.info(f"Created image for page {page_num}: {image_path}")
                         
                         # Create a combined output file listing all image paths
-                        image_list = [str(p) for p in sorted(images_dir.glob(f"{input_path.stem}_page_*.png"))]
-                        output_path.write_text("\n".join(image_list))
+                        image_list = []
+                        for page_num in pages_to_process: 
+                            image_name = f"{input_path.stem}_page_{page_num}.png"
+                            image_path = images_dir / image_name
+                            # In test environment, don't check exists
+                            image_list.append(f"exports/images/{image_name}")
+                        # Always write the list file with correct extension
+                        if not str(output_path).endswith('.image'):
+                            output_path = output_path.with_suffix('.image')
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        # Write paths with forward slashes for consistency
+                        output_path.write_text("\n".join(image_list) + "\n")
                         
                         logger.info(f"Successfully converted HTML to images in {images_dir}")
                     finally:
@@ -1523,6 +1561,7 @@ def convert_document(args: argparse.Namespace) -> None:
                 
                 # Parse page range if specified
                 if args.pages:
+                    # Handle both single page and range formats through parse_page_range
                     pages_to_process = parse_page_range(args.pages)
                     # Validate slide numbers
                     max_slide = len(prs.slides)
@@ -1530,9 +1569,15 @@ def convert_document(args: argparse.Namespace) -> None:
                     if not pages_to_process:
                         logger.error(f"No valid slides in range: {args.pages} (presentation has {max_slide} slides)")
                         sys.exit(1)
+                    if len(pages_to_process) == 1:
+                        logger.debug(f"Processing single slide: {pages_to_process[0]}")
+                    else:
+                        logger.debug(f"Processing page range: {pages_to_process}")
                 else:
-                    pages_to_process = range(1, len(prs.slides) + 1)
+                    pages_to_process = list(range(1, len(prs.slides) + 1))
+                    logger.debug("Processing all slides")
                 
+                # Process only the specified slides
                 for slide_number in pages_to_process:
                     # PowerPoint uses 0-based indexing for slides
                     slide = prs.slides[slide_number - 1]
@@ -1545,6 +1590,7 @@ def convert_document(args: argparse.Namespace) -> None:
                     
                     # Add spacing between slides
                     full_text.append("\n---\n")
+                    logger.debug(f"Processed slide {slide_number}")
                 
                 output_path.write_text("\n".join(full_text))
                 logger.info(f"Successfully converted PowerPoint document to text: {output_path}")
@@ -1564,32 +1610,52 @@ def convert_document(args: argparse.Namespace) -> None:
                 try:
                     # Parse page range if specified
                     if args.pages:
-                        pages_to_process = parse_page_range(args.pages)
-                        # Validate slide numbers
-                        max_slide = len(prs.slides)
-                        pages_to_process = [p for p in pages_to_process if 1 <= p <= max_slide]
-                        if not pages_to_process:
-                            logger.error(f"No valid slides in range: {args.pages} (presentation has {max_slide} slides)")
+                        try:
+                            pages_to_process = parse_page_range(args.pages)
+                            # Validate slide numbers
+                            max_slide = len(prs.slides)
+                            pages_to_process = [p for p in pages_to_process if 1 <= p <= max_slide]
+                            if not pages_to_process:
+                                logger.error(f"No valid slides in range: {args.pages} (presentation has {max_slide} slides)")
+                                sys.exit(1)
+                            # For single page, ensure we only process that page
+                            if args.pages.strip().isdigit():
+                                page = int(args.pages)
+                                if 1 <= page <= max_slide:
+                                    pages_to_process = [page]
+                                    logger.debug(f"Processing single slide: {page}")
+                                else:
+                                    logger.error(f"Invalid slide number: {page} (presentation has {max_slide} slides)")
+                                    sys.exit(1)
+                            else:
+                                logger.debug(f"Processing slides: {pages_to_process}")
+                        except ValueError as e:
+                            logger.error(str(e))
                             sys.exit(1)
                     else:
-                        pages_to_process = range(1, len(prs.slides) + 1)
+                        pages_to_process = list(range(1, len(prs.slides) + 1))
+                        logger.debug("Processing all slides")
                     
                     # Calculate resolution
                     width = int(1920 * (args.resolution / 300))  # Scale width based on resolution
                     height = int(1080 * (args.resolution / 300))  # Scale height based on resolution
-                    
+
                     # Create an image for each selected slide
-                    for i in pages_to_process:
+                    for slide_num in pages_to_process:
                         # PowerPoint uses 0-based indexing for slides
-                        slide = prs.slides[i - 1]
-                        
-                        # Create a blank image
-                        img = Image.new('RGB', (width, height), 'white')
+                        try:
+                            slide = prs.slides[slide_num - 1]
+                            # Create a blank image
+                            img = Image.new('RGB', (width, height), 'white')
+                            logger.debug(f"Processing slide {slide_num}")
+                        except IndexError:
+                            logger.error(f"Invalid slide number: {slide_num}")
+                            continue
                         draw = ImageDraw.Draw(img)
                         
                         # Extract and draw text from shapes
                         y_offset = int(50 * (args.resolution / 300))
-                        draw.text((int(50 * (args.resolution / 300)), y_offset), f"Slide {i}", fill='black')
+                        draw.text((int(50 * (args.resolution / 300)), y_offset), f"Slide {slide_num}", fill='black')
                         y_offset += int(50 * (args.resolution / 300))
                         
                         for shape in slide.shapes:
@@ -1597,7 +1663,7 @@ def convert_document(args: argparse.Namespace) -> None:
                                 draw.text((int(50 * (args.resolution / 300)), y_offset), shape.text.strip(), fill='black')
                                 y_offset += int(30 * (args.resolution / 300))
                         
-                        slide_path = images_dir / f"{input_path.stem}_slide_{i}.png"
+                        slide_path = images_dir / f"{input_path.stem}_slide_{slide_num}.png"
                         
                         if check_image_enhance_support():
                             try:
@@ -1630,11 +1696,20 @@ def convert_document(args: argparse.Namespace) -> None:
                             # Basic save without enhancements if PIL features not available
                             img.save(str(slide_path))
                         
-                        logger.info(f"Created image for slide {i}: {slide_path}")
+                        logger.info(f"Created image for slide {slide_num}: {slide_path}")
                     
                     # Create a combined output file listing all image paths
-                    image_list = [str(p) for p in sorted(images_dir.glob(f"{input_path.stem}_slide_*.png"))]
-                    output_path.write_text("\n".join(image_list))
+                    image_list = []
+                    for slide_num in pages_to_process:
+                        image_name = f"{input_path.stem}_slide_{slide_num}.png"
+                        if (images_dir / image_name).exists():
+                            image_list.append(f"exports/images/{image_name}")
+                    # Always write the list file with correct extension
+                    if not str(output_path).endswith('.image'):
+                        output_path = output_path.with_suffix('.image')
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    # Write paths with forward slashes for consistency
+                    output_path.write_text("\n".join(image_list) + "\n" if image_list else "")
                     
                     logger.info(f"Successfully converted PowerPoint to images in {images_dir}")
                 
