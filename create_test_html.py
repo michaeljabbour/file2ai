@@ -1,4 +1,8 @@
-<!DOCTYPE html>
+#!/usr/bin/env python3
+import os
+
+def create_test_html():
+    html_content = """<!DOCTYPE html>
 <html>
 <head>
     <title>Test HTML Document</title>
@@ -18,4 +22,11 @@
         </table>
     </div>
 </body>
-</html>
+</html>"""
+
+    with open('test.html', 'w') as f:
+        f.write(html_content)
+    print("Test HTML file created successfully!")
+
+if __name__ == '__main__':
+    create_test_html()
