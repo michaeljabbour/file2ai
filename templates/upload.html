@@ -63,10 +63,10 @@
         {% endif %}
     {% endwith %}
 
-    <form method="post" enctype="multipart/form-data">
+    <form id="uploadForm" action="/" method="post" enctype="multipart/form-data">
         <div class="form-group">
-            <label for="file">Select File:</label>
-            <input type="file" id="file" name="file" required>
+            <label for="file">Select Files:</label>
+            <input type="file" id="file" name="file" multiple required>
         </div>
 
         <div class="form-group">
@@ -100,5 +100,87 @@
 
         <button type="submit">Convert</button>
     </form>
+
+    <div id="progress" style="display: none;">
+        <h3>Conversion Progress</h3>
+        <div class="progress-bar">
+            <div id="progress-value" style="width: 0%"></div>
+        </div>
+        <p id="status">Starting conversion...</p>
+        <button id="downloadBtn" style="display: none;">Download Files</button>
+    </div>
+
+    <style>
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        #progress-value {
+            height: 100%;
+            background-color: #4CAF50;
+            transition: width 0.3s ease-in-out;
+        }
+    </style>
+
+    <script>
+        document.getElementById('uploadForm').onsubmit = async function(e) {
+            e.preventDefault();
+            
+            
+            const formData = new FormData(this);
+            const progress = document.getElementById('progress');
+            const progressValue = document.getElementById('progress-value');
+            const status = document.getElementById('status');
+            const downloadBtn = document.getElementById('downloadBtn');
+            
+            progress.style.display = 'block';
+            downloadBtn.style.display = 'none';
+            
+            try {
+                // Start conversion
+                const response = await fetch('/', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                const jobId = data.job_id;
+                
+                // Poll for status
+                const pollStatus = async () => {
+                    const statusResponse = await fetch(`/status/${jobId}`);
+                    const statusData = await statusResponse.json();
+                    
+                    progressValue.style.width = `${statusData.progress}%`;
+                    status.textContent = `Status: ${statusData.status} (${Math.round(statusData.progress)}%)`;
+                    
+                    if (statusData.errors.length > 0) {
+                        status.textContent += `\nErrors: ${statusData.errors.join(', ')}`;
+                    }
+                    
+                    if (['completed', 'completed_with_errors'].includes(statusData.status)) {
+                        downloadBtn.style.display = 'block';
+                        downloadBtn.onclick = () => window.location.href = `/download/${jobId}`;
+                        return;
+                    }
+                    
+                    if (statusData.status === 'failed') {
+                        status.textContent = 'Conversion failed: ' + statusData.errors.join(', ');
+                        return;
+                    }
+                    
+                    setTimeout(pollStatus, 1000);
+                };
+                
+                pollStatus();
+                
+            } catch (error) {
+                status.textContent = `Error: ${error.message}`;
+            }
+        };
+    </script>
 </body>
 </html>
