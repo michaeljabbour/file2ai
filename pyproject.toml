@@ -28,6 +28,9 @@ test = [
     "pytest-cov>=4.0",
     "pytest-mock"
 ]
+web = [
+    "flask>=2.0.0"
+]
 
 [project.urls]
 "Source Code" = "https://github.com/michaeljabbour/file2ai"
