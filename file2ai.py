@@ -1261,8 +1261,46 @@ def convert_document(args: argparse.Namespace) -> None:
                 logger.info(f"Successfully converted Word document to text: {output_path}")
             
             elif output_format == "pdf":
-                logger.error("PDF conversion not yet implemented")
-                sys.exit(1)
+                # For PDF output, we need weasyprint
+                if not check_package_support("weasyprint"):
+                    logger.info("Installing PDF conversion support...")
+                    if not install_package_support("weasyprint"):
+                        logger.error("Failed to install PDF conversion support")
+                        sys.exit(1)
+                    logger.info("PDF conversion support installed successfully")
+                
+                try:
+                    import weasyprint
+                except ImportError:
+                    logger.error("Failed to import weasyprint")
+                    sys.exit(1)
+                
+                # Convert Word content to HTML
+                html_content = ["<html><body>"]
+                for paragraph in doc.paragraphs:
+                    if paragraph.text.strip():
+                        html_content.append(f"<p>{paragraph.text}</p>")
+                
+                # Add tables
+                for table in doc.tables:
+                    html_content.append("<table border='1'>")
+                    for row in table.rows:
+                        html_content.append("<tr>")
+                        for cell in row.cells:
+                            if cell.text.strip():
+                                html_content.append(f"<td>{cell.text}</td>")
+                            else:
+                                html_content.append("<td>&nbsp;</td>")
+                        html_content.append("</tr>")
+                    html_content.append("</table>")
+                
+                html_content.append("</body></html>")
+                html_str = "\n".join(html_content)
+                
+                # Convert HTML to PDF
+                pdf = weasyprint.HTML(string=html_str).write_pdf()
+                output_path.write_bytes(pdf)
+                logger.info(f"Successfully converted Word document to PDF: {output_path}")
             
             else:
                 logger.error(f"Unsupported output format for Word documents: {output_format}")
@@ -1471,7 +1509,7 @@ def convert_document(args: argparse.Namespace) -> None:
                                             enhancer = ImageEnhance.Brightness(img)
                                             img = enhancer.enhance(brightness)
                                             if brightness != args.brightness:
-                                                logger.warning(f"Brightness value clamped to valid range: {brightness}")
+                                                logger.debug(f"Brightness value clamped to valid range: {brightness}")
                                         
                                         # Apply contrast adjustment with validation
                                         if args.contrast != 1.0:
@@ -1479,7 +1517,7 @@ def convert_document(args: argparse.Namespace) -> None:
                                             enhancer = ImageEnhance.Contrast(img)
                                             img = enhancer.enhance(contrast)
                                             if contrast != args.contrast:
-                                                logger.warning(f"Contrast value clamped to valid range: {contrast}")
+                                                logger.debug(f"Contrast value clamped to valid range: {contrast}")
                                         
                                         # Save with quality setting
                                         img.save(str(image_path), quality=args.quality)
@@ -1674,7 +1712,7 @@ def convert_document(args: argparse.Namespace) -> None:
                                     enhancer = ImageEnhance.Brightness(img)
                                     img = enhancer.enhance(brightness)
                                     if brightness != args.brightness:
-                                        logger.warning(f"Brightness value clamped to valid range: {brightness}")
+                                        logger.debug(f"Brightness value clamped to valid range: {brightness}")
                                 
                                 # Apply contrast adjustment with validation
                                 if args.contrast != 1.0:
@@ -1682,7 +1720,7 @@ def convert_document(args: argparse.Namespace) -> None:
                                     enhancer = ImageEnhance.Contrast(img)
                                     img = enhancer.enhance(contrast)
                                     if contrast != args.contrast:
-                                        logger.warning(f"Contrast value clamped to valid range: {contrast}")
+                                        logger.debug(f"Contrast value clamped to valid range: {contrast}")
                                 
                                 # Save with quality setting
                                 img.save(str(slide_path), quality=args.quality)
