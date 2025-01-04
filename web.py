@@ -32,6 +32,22 @@ def process_conversion(job_id, files, options):
         job['progress'] = 0
         total_files = len(files)
         
+        # Validate format
+        valid_formats = ['text', 'pdf', 'html', 'docx', 'xlsx', 'pptx']
+        output_format = options.get('format', 'text')
+        if output_format not in valid_formats:
+            raise ValueError(f"Invalid format: {output_format}. Valid formats are: {', '.join(valid_formats)}")
+        
+        # Validate numeric parameters
+        try:
+            brightness = float(options.get('brightness', 1.0))
+            contrast = float(options.get('contrast', 1.0))
+            resolution = int(options.get('resolution', 300))
+            if not (0.1 <= brightness <= 2.0 and 0.1 <= contrast <= 2.0 and 72 <= resolution <= 1200):
+                raise ValueError("Invalid parameter values. Brightness and contrast must be between 0.1 and 2.0, resolution between 72 and 1200.")
+        except ValueError as e:
+            raise ValueError(f"Invalid conversion parameters: {str(e)}")
+        
         # Create a zip file for multiple files
         output_files = []
         
@@ -42,7 +58,6 @@ def process_conversion(job_id, files, options):
                 file_data.save(str(input_path))
                 
                 # Create output path
-                output_format = options['format']
                 output_path = EXPORTS_FOLDER / f"{filename}.{output_format}"
                 
                 # Create args namespace
@@ -52,9 +67,9 @@ def process_conversion(job_id, files, options):
                     output=str(output_path),
                     format=output_format,
                     pages=options.get('pages'),
-                    brightness=float(options.get('brightness', 1.0)),
-                    contrast=float(options.get('contrast', 1.0)),
-                    resolution=int(options.get('resolution', 300))
+                    brightness=brightness,
+                    contrast=contrast,
+                    resolution=resolution
                 )
                 
                 # Convert file
@@ -85,13 +100,11 @@ def process_conversion(job_id, files, options):
 def upload_file():
     if request.method == 'POST':
         if not request.files:
-            flash('No files selected')
-            return redirect(request.url)
+            return jsonify({'error': 'No files selected'}), 400
         
         files = {f.filename: f for f in request.files.getlist('file') if f.filename}
         if not files:
-            flash('No files selected')
-            return redirect(request.url)
+            return jsonify({'error': 'No files selected'}), 400
         
         # Create job
         job_id = str(uuid.uuid4())

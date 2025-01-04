@@ -103,10 +103,60 @@ fi
 
 # Test error handling
 log_info "Testing error handling..."
-RESPONSE=$(curl -s -F "file=@nonexistent.txt" http://localhost:5000/)
-if ! echo $RESPONSE | grep -q "No files selected"; then
-    log_error "Error handling test failed"
+
+# Test empty file upload
+log_info "Testing empty file upload..."
+RESPONSE=$(curl -s -F "file=" http://localhost:5000/)
+if ! echo $RESPONSE | python3 -c "import sys, json; error = json.load(sys.stdin).get('error'); sys.exit(0 if error == 'No files selected' else 1)"; then
+    log_error "Error handling test failed for empty file upload"
 fi
+
+# Test GET request returns HTML
+log_info "Testing GET request..."
+RESPONSE=$(curl -s http://localhost:5000/)
+if ! echo "$RESPONSE" | grep -q '<form.*action="/".*method="post".*enctype="multipart/form-data"'; then
+    log_error "Error handling test failed for GET request - missing upload form"
+fi
+
+# Test invalid format
+log_info "Testing invalid format..."
+RESPONSE=$(curl -s -F "file=@sample.docx" -F "format=invalid" http://localhost:5000/)
+JOB_ID=$(echo $RESPONSE | python3 -c "import sys, json; print(json.load(sys.stdin)['job_id'])")
+if [ -z "$JOB_ID" ]; then
+    log_error "Failed to get job ID for invalid format test"
+fi
+
+# Poll for completion and check for error
+for i in {1..10}; do
+    STATUS=$(curl -s http://localhost:5000/status/$JOB_ID)
+    if echo $STATUS | python3 -c "import sys, json; data = json.load(sys.stdin); sys.exit(0 if len(data.get('errors', [])) > 0 else 1)"; then
+        break
+    fi
+    if [ $i -eq 10 ]; then
+        log_error "Error handling test failed for invalid format - no error reported"
+    fi
+    sleep 1
+done
+
+# Test invalid parameters
+log_info "Testing invalid parameters..."
+RESPONSE=$(curl -s -F "file=@sample.docx" -F "format=pdf" -F "brightness=invalid" http://localhost:5000/)
+JOB_ID=$(echo $RESPONSE | python3 -c "import sys, json; print(json.load(sys.stdin)['job_id'])")
+if [ -z "$JOB_ID" ]; then
+    log_error "Failed to get job ID for invalid parameters test"
+fi
+
+# Poll for completion and check for error
+for i in {1..10}; do
+    STATUS=$(curl -s http://localhost:5000/status/$JOB_ID)
+    if echo $STATUS | python3 -c "import sys, json; data = json.load(sys.stdin); sys.exit(0 if len(data.get('errors', [])) > 0 else 1)"; then
+        break
+    fi
+    if [ $i -eq 10 ]; then
+        log_error "Error handling test failed for invalid parameters - no error reported"
+    fi
+    sleep 1
+done
 
 # Cleanup test files
 rm -f test_output.pdf converted_files.zip
