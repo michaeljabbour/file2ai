@@ -28,7 +28,14 @@ def create_test_presentation():
     p.text = "• Bullet point 2"
     
     # Save the presentation
-    output_path = os.path.join(os.path.dirname(__file__), "sample.pptx")
+    # Ensure we're using absolute paths from project root
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    exports_dir = os.path.join(project_root, "exports")
+    
+    # Create exports directory if it doesn't exist
+    os.makedirs(exports_dir, exist_ok=True)
+    
+    output_path = os.path.join(exports_dir, "test.pptx")
     prs.save(output_path)
     print(f"Created test presentation at: {output_path}")
 

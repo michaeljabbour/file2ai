@@ -14,5 +14,16 @@ table.cell(0, 1).text = "Header 2"
 table.cell(1, 0).text = "Value 1"
 table.cell(1, 1).text = "Value 2"
 
-doc.save("sample.docx")
-print("Test document created successfully!")
+if __name__ == "__main__":
+    import os
+    
+    # Ensure we're using absolute paths from project root
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    exports_dir = os.path.join(project_root, "exports")
+    
+    # Create exports directory if it doesn't exist
+    os.makedirs(exports_dir, exist_ok=True)
+    
+    output_path = os.path.join(exports_dir, "test.docx")
+    doc.save(output_path)
+    print(f"Test document created successfully at: {output_path}")

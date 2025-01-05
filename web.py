@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, send_file, flash, redirect, url_for, jsonify
 from pathlib import Path
 import os
+import sys
 import uuid
 import threading
 import queue
@@ -337,6 +338,17 @@ def cleanup_job(job_id):
 
 if __name__ == '__main__':
     setup_logging(operation="web", context="server")  # Set up logging for the web server
+    
     # Get port from environment variable or use default (8000)
     port = int(os.environ.get('FLASK_RUN_PORT', 8000))
-    app.run(debug=True, host='0.0.0.0', port=port)
+    
+    try:
+        app.run(debug=True, host='0.0.0.0', port=port)
+    except OSError as e:
+        if "Address already in use" in str(e):
+            logger.error(f"\nPort {port} is in use. Try one of the following:")
+            logger.error(f"1. Set a different port using: export FLASK_RUN_PORT=8080")
+            logger.error(f"2. On macOS, disable AirPlay Receiver in System Preferences -> General -> AirDrop & Handoff")
+            logger.error(f"3. Use an alternative port like 8080, 3000, or 8000\n")
+            sys.exit(1)
+        raise  # Re-raise other OSErrors

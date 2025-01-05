@@ -39,7 +39,16 @@ def create_test_excel():
             ws2.cell(row=row_idx, column=col_idx, value=value)
 
     # Save the workbook
-    output_path = Path("sample.xlsx")
+    import os
+    
+    # Ensure we're using absolute paths from project root
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    exports_dir = os.path.join(project_root, "exports")
+    
+    # Create exports directory if it doesn't exist
+    os.makedirs(exports_dir, exist_ok=True)
+    
+    output_path = os.path.join(exports_dir, "test.xlsx")
     wb.save(output_path)
     print(f"Created sample Excel file at: {output_path}")
 
