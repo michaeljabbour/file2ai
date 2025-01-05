@@ -8,6 +8,14 @@ env/
 .env/
 .venv/
 
+# Python package builds
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+.coverage
+
 # Logs and exports
 exports/
 logs/
