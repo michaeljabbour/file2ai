@@ -132,7 +132,7 @@ rm -f test_upload.txt
 
 # 4) Run tests with coverage
 log_info "Running tests with coverage..."
-pytest --cov=file2ai || log_error "Tests failed!"
+pytest --cov=file2ai tests/ || log_error "Tests failed!"
 log_success "Tests passed"
 
 # 5) Test local directory export

@@ -19,13 +19,22 @@ import tempfile
 import importlib.util
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, Set, NoReturn, TextIO, Dict, List, TypedDict, Union, TYPE_CHECKING, Any, Protocol
+from typing import Optional, Tuple, Set, NoReturn, TextIO, Dict, List, TypedDict, Union, Protocol
 import json
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from PIL.Image import Image
+    from PIL.Image import Image as PILImage
+    from PIL import ImageEnhance
+    import fitz
+    from fitz import Page as FitzPage
+    from fitz import Matrix as FitzMatrix
+    from fitz import Pixmap as FitzPixmap
+    from fitz import Document as FitzDocument
+    import openpyxl
+    from openpyxl.workbook import Workbook
+    from openpyxl.worksheet.worksheet import Worksheet
 
 try:
     from PIL import Image, ImageEnhance
@@ -212,12 +221,13 @@ ensure_gitpython()
 from git import Repo, exc  # noqa: E402
 
 
-def setup_logging(operation: str = "general") -> None:
+def setup_logging(operation: str = "general", context: Optional[str] = None) -> None:
     """
     Configure logging with file and console output.
     
     Args:
         operation: Type of operation being performed (e.g., 'export', 'convert')
+        context: Additional context (e.g., filename, directory name) to include in log name
     """
     logs_dir = Path(LOGS_DIR)
     logs_dir.mkdir(exist_ok=True)
@@ -225,8 +235,16 @@ def setup_logging(operation: str = "general") -> None:
     # Get current timestamp with improved readability
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     
-    # Configure logging handlers with operation context
-    log_file = logs_dir / f"file2ai_{operation}_{timestamp}.log"
+    # Build log filename with operation and context
+    log_name_parts = ["file2ai", operation]
+    if context:
+        # Clean context name for safe filename
+        safe_context = "".join(c if c.isalnum() or c in "-_" else "_" for c in context)
+        log_name_parts.append(safe_context)
+    log_name_parts.append(timestamp)
+    
+    # Configure logging handlers with full context
+    log_file = logs_dir / f"{'-'.join(log_name_parts)}.log"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
@@ -1167,7 +1185,7 @@ def install_pymupdf_support() -> bool:
     """Install PyMuPDF package for PDF-to-image conversion."""
     return install_package_support("PyMuPDF")
 
-def _enhance_and_save_image(img: Any, image_path: Path, args: argparse.Namespace, logger: logging.Logger) -> None:
+def _enhance_and_save_image(img: "PILImage", image_path: Path, args: argparse.Namespace, logger: logging.Logger) -> None:
     """
     Apply image enhancements (brightness/contrast) and save the image.
     
@@ -1203,7 +1221,7 @@ def _enhance_and_save_image(img: Any, image_path: Path, args: argparse.Namespace
         logger.warning(f"Failed to apply image enhancements: {e}")
         img.save(str(image_path))
 
-def _write_image_list(images_dir: Path, input_path: Path, pages_to_process: Union[List[int], range], output_path: Path, logger: logging.Logger) -> None:
+def _write_image_list(images_dir: Path, input_path: Path, pages_to_process: Union[List[int], range], output_path: Path, logger: logging.Logger) -> List[str]:
     """
     Write a list of generated image paths to an output file.
     
@@ -1213,9 +1231,12 @@ def _write_image_list(images_dir: Path, input_path: Path, pages_to_process: Unio
         pages_to_process: List of page numbers that were processed
         output_path: Path to write the image list
         logger: Logger instance for output
+        
+    Returns:
+        List[str]: List of image paths that were written to the file
     """
     # Create a combined output file listing all image paths
-    image_list = []
+    image_list: List[str] = []
     for page_num in pages_to_process:
         image_name = f"{input_path.stem}_page_{page_num}.png"
         image_list.append(f"exports/images/{image_name}")
@@ -1227,6 +1248,7 @@ def _write_image_list(images_dir: Path, input_path: Path, pages_to_process: Unio
     # Write paths with forward slashes for consistency
     output_path.write_text("\n".join(image_list) + "\n")
     logger.info(f"Created image list file: {output_path}")
+    return image_list
 
 def convert_document(args: argparse.Namespace) -> None:
     """
@@ -1284,15 +1306,15 @@ def convert_document(args: argparse.Namespace) -> None:
             sys.exit(1)
 
         try:
-            workbook = openpyxl.load_workbook(input_path, data_only=True)
+            workbook: "Workbook" = openpyxl.load_workbook(input_path, data_only=True)
             
             if output_format == "text":
                 # Extract text from Excel workbook
-                full_text = []
+                full_text: List[str] = []
                 for sheet in workbook.worksheets:
                     full_text.append(f"Sheet: {sheet.title}\n")
                     for row in sheet.iter_rows():
-                        row_text = []
+                        row_text: List[str] = []
                         for cell in row:
                             if cell.value is not None:
                                 row_text.append(str(cell.value).strip())
@@ -1362,7 +1384,7 @@ def convert_document(args: argparse.Namespace) -> None:
 
                 try:
                     # Open PDF document
-                    pdf_doc = fitz.open(pdf_path)
+                    pdf_doc: "FitzDocument" = fitz.open(pdf_path)
                     
                     # Parse page range if specified
                     if args.pages: 
@@ -1378,18 +1400,18 @@ def convert_document(args: argparse.Namespace) -> None:
                     
                     for page_num in pages_to_process:
                         # PyMuPDF uses 0-based indexing
-                        page = pdf_doc[page_num - 1]
+                        page: "FitzPage" = pdf_doc[page_num - 1]
                         # Set resolution for the pixmap
                         zoom = args.resolution / 72.0  # Convert DPI to zoom factor
-                        matrix = fitz.Matrix(zoom, zoom)
-                        pix = page.get_pixmap(matrix=matrix)
+                        matrix: "FitzMatrix" = fitz.Matrix(zoom, zoom)
+                        pix: "FitzPixmap" = page.get_pixmap(matrix=matrix)
                         
                         # Convert to PIL Image for enhancement
                         img_data = pix.samples
                         image_path = images_dir / f"{input_path.stem}_page_{page_num}.png"
                         
                         # Convert to PIL Image for enhancement
-                        img = Image.frombytes("RGB", (pix.width, pix.height), img_data)
+                        img: "PILImage" = Image.frombytes("RGB", (pix.width, pix.height), img_data)
                         
                         # Check for image enhancement support
                         if check_image_enhance_support():
@@ -1428,9 +1450,9 @@ def convert_document(args: argparse.Namespace) -> None:
                     image_output_path = output_path.with_suffix('.image')
                     image_files = sorted(Path(images_dir).glob('*.png'))
                     with open(image_output_path, 'w') as f:
-                        for img in image_files:
+                        for img_path in image_files:
                             # Ensure path is in the format "exports/images/filename.png"
-                            relative_path = f"exports/images/{img.name}"
+                            relative_path = f"exports/images/{img_path.name}"
                             f.write(f"{relative_path}\n")
                     logger.info(f"Successfully converted Excel to images in {images_dir}")
                     logger.info(f"Created image reference file with {len(image_files)} images: {image_output_path}")
@@ -1788,13 +1810,13 @@ def convert_document(args: argparse.Namespace) -> None:
                 
                 # Handle local images
                 base_dir = input_path.parent
-                for img in soup.find_all('img'):
-                    src = img.get('src', '')
+                for img_tag in soup.find_all('img'):
+                    src = img_tag.get('src', '')
                     if src and not src.startswith(('http://', 'https://', 'data:')):
                         # Convert relative path to absolute
                         abs_path = base_dir / src
                         if abs_path.exists():
-                            img['src'] = abs_path.absolute().as_uri()
+                            img_tag['src'] = abs_path.absolute().as_uri()
                 
                 # Convert to PDF
                 html_content = str(soup)
@@ -1839,13 +1861,13 @@ def convert_document(args: argparse.Namespace) -> None:
                     
                     # Handle local images
                     base_dir = input_path.parent
-                    for img in soup.find_all('img'):
-                        src = img.get('src', '')
+                    for img_tag in soup.find_all('img'):
+                        src = img_tag.get('src', '')
                         if src and not src.startswith(('http://', 'https://', 'data:')):
                             # Convert relative path to absolute
                             abs_path = base_dir / src
                             if abs_path.exists():
-                                img['src'] = abs_path.absolute().as_uri()
+                                img_tag['src'] = abs_path.absolute().as_uri()
                     
                     # Convert to PDF first
                     html_content = str(soup)
@@ -2345,8 +2367,25 @@ def main() -> NoReturn:
     """Main entry point."""
     args = parse_args()
     
-    # Set up logging with operation context
-    setup_logging(args.command)  # Will be either 'export' or 'convert'
+    # Set up logging with operation context and relevant filename/dirname
+    if args.command == "convert" and hasattr(args, 'input'):
+        # For convert command, use input filename as context
+        context = Path(args.input).name if args.input else None
+        setup_logging(args.command, context)
+    elif args.command == "export":
+        if args.local_dir:
+            # For local directory export, use directory name as context
+            context = Path(args.local_dir).name
+            setup_logging(args.command, context)
+        elif args.repo_url:
+            # For repository export, use repository name as context
+            repo_name = args.repo_url.rstrip("/").split("/")[-1].replace(".git", "")
+            setup_logging(args.command, repo_name)
+        else:
+            setup_logging(args.command)
+    else:
+        setup_logging(args.command)
+    
     logger.info(f"Starting file2ai version {VERSION}")
 
     if args.command == "export":

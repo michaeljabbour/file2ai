@@ -336,5 +336,5 @@ def cleanup_job(job_id):
     return jsonify({'status': 'cleaned'})
 
 if __name__ == '__main__':
-    setup_logging()  # Set up logging for the web server
+    setup_logging(operation="web", context="server")  # Set up logging for the web server
     app.run(debug=True, host='0.0.0.0', port=5000)
