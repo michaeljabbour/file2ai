@@ -883,14 +883,23 @@ def _process_repository_files(
     """Process all repository files and update statistics."""
     ignore_patterns = load_gitignore_patterns(repo_root)
     
-    files_to_process = [
-        f
-        for f in repo_root.rglob("*")
-        if f.is_file() 
-        and not f.name.startswith(".")
-        and ".git" not in str(f)
-        and not should_ignore(f, ignore_patterns, repo_root)
-    ]
+    # Define directories to skip early in the process
+    skip_dirs = {
+        'node_modules', 'venv', '.venv', 'env', '.env',
+        'dist', 'build', '.next', '__pycache__',
+        '.git', '.pytest_cache', '.coverage', '.idea', '.vscode'
+    }
+    
+    files_to_process = []
+    for f in repo_root.rglob("*"):
+        if f.is_file():
+            # Skip files in excluded directories early
+            if any(skip_dir in str(f.parent) for skip_dir in skip_dirs):
+                continue
+            # Apply remaining filters
+            if not f.name.startswith(".") and not should_ignore(f, ignore_patterns, repo_root):
+                files_to_process.append(f)
+    
     total_files = len(files_to_process)
 
     for i, file_path in enumerate(files_to_process, 1):

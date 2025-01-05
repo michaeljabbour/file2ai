@@ -6,6 +6,8 @@ openpyxl
 pytest>=7.0
 pytest-cov>=4.0
 pytest-mock
+fpdf>=1.7.2
+python-pptx>=0.6.21
 
 [web]
 flask>=2.0.0
