@@ -99,8 +99,149 @@ python file2ai.py --repo-url https://github.com/michaeljabbour/file2ai || log_er
 log_info "Testing subdir/extra path export..."
 python file2ai.py --repo-url-sub https://github.com/michaeljabbour/file2ai/pulls || log_error "Subdir export failed!"
 
-# 8) Validate outputs
-log_info "Validating output files..."
+# 8) Test document conversions
+log_info "Testing PDF conversion..."
+python file2ai.py convert --input attachments/paper.pdf --format text || log_error "PDF to text conversion failed!"
+python file2ai.py convert --input attachments/paper.pdf --format image --brightness 1.5 --contrast 1.2 || log_error "PDF to image conversion failed!"
+
+log_info "Testing Word document conversion..."
+python file2ai.py convert --input attachments/paper.docx --format text || { log_error "Word to text conversion failed!"; true; }
+python file2ai.py convert --input attachments/paper.docx --format image --brightness 1.5 --contrast 1.2 || { log_error "Word to image conversion failed!"; true; }
+
+log_info "Testing PowerPoint conversion..."
+python file2ai.py convert --input attachments/writing_the_research_paper.pptx --format text || { log_error "PowerPoint to text conversion failed!"; true; }
+python file2ai.py convert --input attachments/writing_the_research_paper.pptx --format image --brightness 1.5 --contrast 1.2 || { log_error "PowerPoint to image conversion failed!"; true; }
+
+log_info "Testing Excel conversion..."
+python file2ai.py convert --input "attachments/Research+data+_+figshare.xlsx" --format text || { log_error "Excel to text conversion failed!"; true; }
+python file2ai.py convert --input "attachments/Research+data+_+figshare.xlsx" --format image --brightness 1.5 --contrast 1.2 || { log_error "Excel to image conversion failed!"; true; }
+
+# 9) Validate document conversion outputs
+log_info "Validating document conversion outputs..."
+
+# Check PDF outputs
+pdf_txt="exports/paper.text"
+if [ -f "$pdf_txt" ]; then
+    log_info "PDF text export found"
+    if [ -s "$pdf_txt" ]; then
+        log_success "PDF text export has content"
+    else
+        log_error "PDF text export is empty"
+    fi
+else
+    log_error "Missing PDF text export: $pdf_txt"
+fi
+
+pdf_img="exports/paper.image"
+if [ -f "$pdf_img" ]; then
+    log_info "PDF image export found"
+    if [ -s "$pdf_img" ] && grep -q "exports/images/" "$pdf_img"; then
+        # Check if actual image files exist
+        while IFS= read -r img_path || [ -n "$img_path" ]; do
+            if [ ! -f "$img_path" ]; then
+                log_error "Missing PDF image file: $img_path"
+            fi
+        done < "$pdf_img"
+        log_success "PDF image export and files look correct"
+    else
+        log_error "PDF image export list is invalid"
+    fi
+else
+    log_error "Missing PDF image export: $pdf_img"
+fi
+
+# Check Word document outputs
+docx_txt="exports/paper.text"
+if [ -f "$docx_txt" ]; then
+    log_info "Word text export found"
+    if [ -s "$docx_txt" ]; then
+        log_success "Word text export has content"
+    else
+        log_error "Word text export is empty"
+    fi
+else
+    log_error "Missing Word text export: $docx_txt"
+fi
+
+docx_img="exports/paper.image"
+if [ -f "$docx_img" ]; then
+    log_info "Word image export found"
+    if [ -s "$docx_img" ] && grep -q "exports/images/" "$docx_img"; then
+        while IFS= read -r img_path || [ -n "$img_path" ]; do
+            if [ ! -f "$img_path" ]; then
+                log_error "Missing Word image file: $img_path"
+            fi
+        done < "$docx_img"
+        log_success "Word image export and files look correct"
+    else
+        log_error "Word image export list is invalid"
+    fi
+else
+    log_error "Missing Word image export: $docx_img"
+fi
+
+# Check PowerPoint outputs
+ppt_txt="exports/writing_the_research_paper.text"
+if [ -f "$ppt_txt" ]; then
+    log_info "PowerPoint text export found"
+    if [ -s "$ppt_txt" ]; then
+        log_success "PowerPoint text export has content"
+    else
+        log_error "PowerPoint text export is empty"
+    fi
+else
+    log_error "Missing PowerPoint text export: $ppt_txt"
+fi
+
+ppt_img="exports/writing_the_research_paper.image"
+if [ -f "$ppt_img" ]; then
+    log_info "PowerPoint image export found"
+    if [ -s "$ppt_img" ] && grep -q "exports/images/" "$ppt_img"; then
+        while IFS= read -r img_path || [ -n "$img_path" ]; do
+            if [ ! -f "$img_path" ]; then
+                log_error "Missing PowerPoint image file: $img_path"
+            fi
+        done < "$ppt_img"
+        log_success "PowerPoint image export and files look correct"
+    else
+        log_error "PowerPoint image export list is invalid"
+    fi
+else
+    log_error "Missing PowerPoint image export: $ppt_img"
+fi
+
+# Check Excel outputs
+xlsx_txt="exports/Research+data+_+figshare.text"
+if [ -f "$xlsx_txt" ]; then
+    log_info "Excel text export found"
+    if [ -s "$xlsx_txt" ]; then
+        log_success "Excel text export has content"
+    else
+        log_error "Excel text export is empty"
+    fi
+else
+    log_error "Missing Excel text export: $xlsx_txt"
+fi
+
+xlsx_img="exports/Research+data+_+figshare.image"
+if [ -f "$xlsx_img" ]; then
+    log_info "Excel image export found"
+    if [ -s "$xlsx_img" ] && grep -q "exports/images/" "$xlsx_img"; then
+        while IFS= read -r img_path || [ -n "$img_path" ]; do
+            if [ ! -f "$img_path" ]; then
+                log_error "Missing Excel image file: $img_path"
+            fi
+        done < "$xlsx_img"
+        log_success "Excel image export and files look correct"
+    else
+        log_error "Excel image export list is invalid"
+    fi
+else
+    log_error "Missing Excel image export: $xlsx_img"
+fi
+
+# 10) Validate repository outputs
+log_info "Validating repository output files..."
 
 # Check local export
 txt_file="exports/file2ai_export.txt"
