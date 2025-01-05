@@ -87,6 +87,17 @@ log_success "Cleanup complete"
 # Create necessary directories
 mkdir -p exports logs
 
+# Check for system dependencies
+log_info "Checking system dependencies..."
+if ! command -v soffice &> /dev/null; then
+    log_info "Installing LibreOffice for document conversions..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        brew install libreoffice || log_warn "Failed to install LibreOffice with brew. Please install manually."
+    else
+        sudo apt-get update && sudo apt-get install -y libreoffice || log_warn "Failed to install LibreOffice. Please install manually."
+    fi
+fi
+
 # 2) Create & activate virtual environment
 log_info "Creating fresh virtual environment..."
 python3 -m venv venv

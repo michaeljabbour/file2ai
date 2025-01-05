@@ -38,6 +38,11 @@ web = [
 [project.urls]
 "Source Code" = "https://github.com/michaeljabbour/file2ai"
 
+# System dependencies required:
+# - LibreOffice (soffice) for document conversions
+#   macOS: brew install libreoffice
+#   Linux: sudo apt-get install libreoffice
+
 [tool.setuptools]
 # We only have a single Python module called 'file2ai.py'
 py-modules = ["file2ai"]
