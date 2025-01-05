@@ -236,13 +236,37 @@ def parse_args() -> argparse.Namespace:
     """
     Parse and validate command-line arguments.
 
+    Usage:
+        1. Repository/Directory Export:
+           file2ai.py [--repo-url URL | --local-dir DIR] [options]
+           
+        2. Document Conversion:
+           file2ai.py convert --input FILE --format FORMAT [options]
+           file2ai.py FILE [--format FORMAT] [options]
+
     Commands:
         export  - Export text files from a repository or local directory (default)
         convert - Convert documents between different formats
     """
+    # Check if first argument is a file path
+    if len(sys.argv) > 1 and not sys.argv[1].startswith('-') and os.path.exists(sys.argv[1]):
+        # Insert 'convert' command and --input before the file path
+        sys.argv.insert(1, 'convert')
+        sys.argv.insert(2, '--input')
+
     parser = argparse.ArgumentParser(
-        description="Export text files and convert documents between formats.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        description="""Export text files and convert documents between formats.
+
+Usage:
+    1. Repository/Directory Export:
+       file2ai.py [--repo-url URL | --local-dir DIR] [options]
+       
+    2. Document Conversion:
+       file2ai.py convert --input FILE --format FORMAT [options]
+       file2ai.py FILE [--format FORMAT] [options]
+
+Supported formats for conversion: pdf, text, image, docx, csv, html""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
 
@@ -290,13 +314,13 @@ def parse_args() -> argparse.Namespace:
     convert_parser.add_argument(
         "--input",
         required=True,
-        help="Input file path",
+        help="Input file path (or provide directly as first argument)",
     )
     convert_parser.add_argument(
         "--format",
-        required=True,
         choices=["pdf", "text", "image", "docx", "csv", "html"],
-        help="Output format for the conversion",
+        default="text",
+        help="Output format for the conversion (default: text)",
     )
     convert_parser.add_argument(
         "--output",
