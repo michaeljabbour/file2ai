@@ -337,4 +337,6 @@ def cleanup_job(job_id):
 
 if __name__ == '__main__':
     setup_logging(operation="web", context="server")  # Set up logging for the web server
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Get port from environment variable or use default (8000)
+    port = int(os.environ.get('FLASK_RUN_PORT', 8000))
+    app.run(debug=True, host='0.0.0.0', port=port)

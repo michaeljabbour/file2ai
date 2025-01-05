@@ -97,38 +97,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Launch frontend server
-log_info "Launching frontend server..."
-python web.py &
-FLASK_PID=$!
+# Create test files and populate export directory first
+log_info "Creating test files and populating export directory..."
 
-# Wait for server to start
-sleep 2
-
-# Test frontend server response
-response=$(curl -s http://localhost:5000)
-if [[ $response == *"File2AI Converter"* ]]; then
-    log_success "Frontend server launched successfully"
-else
-    log_error "Frontend server failed to launch properly"
-fi
+# Create test files
+python create_test_pdf.py
+python create_test_doc.py
+python create_test_excel.py
+python create_test_ppt.py
+python create_test_html.py
 
 # Create test file for form submission
 log_info "Creating test file for form submission..."
 echo "Test content" > test_upload.txt
-
-# Test form submission
-log_info "Testing form submission..."
-test_response=$(curl -s -X POST -F "command=convert" -F "format=text" -F "file=@test_upload.txt" http://localhost:5000)
-if [[ $test_response == *"job_id"* ]]; then
-    log_success "Form submission test passed"
-else
-    log_error "Form submission test failed"
-    log_error "Response: $test_response"
-fi
-
-# Clean up test file
-rm -f test_upload.txt
 
 # 4) Run tests with coverage
 log_info "Running tests with coverage..."
@@ -354,33 +335,46 @@ else
     log_error "Missing subdir export file: $subdir_file"
 fi
 
-# 11) Launch and test frontend
+# Launch and test frontend
 log_info "Installing Flask if not present..."
 pip install flask || log_error "Failed to install Flask"
 
 log_info "Launching frontend server..."
 mkdir -p logs
-FLASK_APP=web.py python web.py > logs/frontend.log 2>&1 &
-FRONTEND_PID=$!
+
+# Try ports 8000, 8080, and 3000 in sequence
+declare -a ports=(8000 8080 3000)
+server_started=false
+
+for port in "${ports[@]}"; do
+    log_info "Attempting to start server on port $port..."
+    FLASK_APP=web.py FLASK_RUN_PORT=$port python web.py > logs/frontend.log 2>&1 &
+    FRONTEND_PID=$!
+
+    # Wait for server to start
+    for i in {1..10}; do
+        if curl -s "http://localhost:$port" > /dev/null; then
+            server_started=true
+            export FLASK_PORT=$port
+            log_success "Frontend server is running on port $port"
+            break 2
+        fi
+        sleep 1
+    done
+    
+    # Kill the process if it didn't start successfully
+    kill $FRONTEND_PID 2>/dev/null
+done
+
+if [ "$server_started" = false ]; then
+    log_error "Failed to start frontend server on any port. Check logs/frontend.log for details"
+fi
 
 # Add cleanup trap
 trap 'kill $FRONTEND_PID 2>/dev/null' EXIT
 
-# Wait for server to start
-log_info "Waiting for frontend server to start..."
-for i in {1..30}; do
-    if curl -s http://localhost:5000 > /dev/null; then
-        log_success "Frontend server is running"
-        break
-    fi
-    if [ $i -eq 30 ]; then
-        log_error "Frontend server failed to start. Check logs/frontend.log for details"
-    fi
-    sleep 1
-done
-
 # Verify frontend response
-response=$(curl -s http://localhost:5000)
+response=$(curl -s "http://localhost:$FLASK_PORT")
 if echo "$response" | grep -q "File2AI Converter"; then
     log_success "Frontend is responding correctly"
 else
@@ -389,12 +383,16 @@ fi
 
 # Test form submission
 log_info "Testing form submission..."
-test_response=$(curl -s -X POST -F "command=convert" -F "file=@create_test_pdf.py" http://localhost:5000)
+test_response=$(curl -s -X POST -F "command=convert" -F "file=@test_upload.txt" "http://localhost:$FLASK_PORT")
 if echo "$test_response" | grep -q "job_id"; then
     log_success "Form submission working correctly"
 else
     log_error "Form submission failed"
 fi
+
+
+# Clean up test file
+rm -f test_upload.txt
 
 log_success "All validation checks passed!"
 log_info "Done."
