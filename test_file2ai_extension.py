@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from file2ai import parse_github_url
 
-def test_git_extension():
+def test_file2ai_extension():
     # Test 1: Basic URL without .git
     base_url, branch, subdir = parse_github_url('https://github.com/owner/repo')
     print(f'Test 1 - Basic URL: {base_url} (branch={branch}, subdir={subdir})')
@@ -23,4 +23,4 @@ def test_git_extension():
     assert base_url == 'https://github.com/owner/repo.git'
 
 if __name__ == '__main__':
-    test_git_extension()
+    test_file2ai_extension()

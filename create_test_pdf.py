@@ -16,5 +16,5 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         output_path = sys.argv[1]
     else:
-        output_path = "sample.pdf"
+        output_path = "exports/test.pdf"
     create_test_pdf(output_path)

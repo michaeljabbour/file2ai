@@ -77,9 +77,16 @@ log_success "Virtual environment created and activated"
 
 # 3) Install package and dependencies
 log_info "Installing file2ai in editable mode..."
-pip install --upgrade pip
-pip install -e .
-pip install pytest pytest-cov
+# Capture all installation output
+install_output=$(pip install --upgrade pip 2>&1) || {
+    log_error "Failed to upgrade pip. Output:\n$install_output"
+}
+install_output=$(pip install -e . 2>&1) || {
+    log_error "Failed to install file2ai. Output:\n$install_output"
+}
+install_output=$(pip install pytest pytest-cov 2>&1) || {
+    log_error "Failed to install test dependencies. Output:\n$install_output"
+}
 log_success "Installation complete"
 
 # 4) Run tests with coverage

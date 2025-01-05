@@ -905,7 +905,8 @@ def _write_summary(outfile: TextIO, stats: Dict[str, int]) -> None:
     outfile.write("\nFile Statistics:\n")
     outfile.write("--------------\n")
     outfile.write(f"Total files processed: {stats['processed_files']}\n")
-    outfile.write(f"Total files skipped: {stats['skipped_files']}\n")
+    outfile.write(f"Binary files skipped: {stats['binary_files']}\n")
+    outfile.write(f"Files with errors: {stats['error_files']}\n")
     outfile.write(f"Total characters: {stats['total_chars']:,}\n")
     outfile.write(f"Total lines: {stats['total_lines']:,}\n")
     outfile.write(f"Total tokens: {stats['total_tokens']:,}\n")
@@ -1146,6 +1147,67 @@ def install_pymupdf_support() -> bool:
     """Install PyMuPDF package for PDF-to-image conversion."""
     return install_package_support("PyMuPDF")
 
+def _enhance_and_save_image(img: 'Image.Image', image_path: Path, args: argparse.Namespace, logger: logging.Logger) -> None:
+    """
+    Apply image enhancements (brightness/contrast) and save the image.
+    
+    Args:
+        img: PIL Image object to enhance
+        image_path: Path where to save the image
+        args: Command line arguments containing enhancement parameters
+        logger: Logger instance for output
+    """
+    try:
+        from PIL import ImageEnhance
+        # Apply brightness adjustment with validation
+        if args.brightness != 1.0:
+            brightness = max(0.0, min(2.0, args.brightness))
+            enhancer = ImageEnhance.Brightness(img)
+            img = enhancer.enhance(brightness)
+            if brightness != args.brightness:
+                logger.debug(f"Brightness value clamped to valid range: {brightness}")
+        
+        # Apply contrast adjustment with validation
+        if args.contrast != 1.0:
+            contrast = max(0.0, min(2.0, args.contrast))
+            enhancer = ImageEnhance.Contrast(img)
+            img = enhancer.enhance(contrast)
+            if contrast != args.contrast:
+                logger.debug(f"Contrast value clamped to valid range: {contrast}")
+        
+        # Save with quality setting
+        img.save(str(image_path), quality=args.quality)
+        logger.info("Applied image enhancements (brightness: %.2f, contrast: %.2f)", 
+                  args.brightness, args.contrast)
+    except (ImportError, AttributeError) as e:
+        logger.warning(f"Failed to apply image enhancements: {e}")
+        img.save(str(image_path))
+
+def _write_image_list(images_dir: Path, input_path: Path, pages_to_process: Union[List[int], range], output_path: Path, logger: logging.Logger) -> None:
+    """
+    Write a list of generated image paths to an output file.
+    
+    Args:
+        images_dir: Directory containing generated images
+        input_path: Original input file path
+        pages_to_process: List of page numbers that were processed
+        output_path: Path to write the image list
+        logger: Logger instance for output
+    """
+    # Create a combined output file listing all image paths
+    image_list = []
+    for page_num in pages_to_process:
+        image_name = f"{input_path.stem}_page_{page_num}.png"
+        image_list.append(f"exports/images/{image_name}")
+    
+    # Always write the list file with correct extension
+    if not str(output_path).endswith('.image'):
+        output_path = output_path.with_suffix('.image')
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Write paths with forward slashes for consistency
+    output_path.write_text("\n".join(image_list) + "\n")
+    logger.info(f"Created image list file: {output_path}")
+
 def convert_document(args: argparse.Namespace) -> None:
     """
     Convert a document to the specified format.
@@ -1155,6 +1217,10 @@ def convert_document(args: argparse.Namespace) -> None:
             - input: Path to input file
             - format: Desired output format (pdf, text, image, docx, csv)
             - output: Optional output path
+            - brightness: Image brightness adjustment (0.0-2.0)
+            - contrast: Image contrast adjustment (0.0-2.0)
+            - quality: Image quality setting (1-100)
+            - resolution: Image resolution in DPI
     """
     input_path = Path(args.input)
     if not input_path.exists():
@@ -1515,31 +1581,7 @@ def convert_document(args: argparse.Namespace) -> None:
                             try:
                                 img = Image.frombytes("RGB", (pix.width, pix.height), img_data)
                                 
-                                try:
-                                    from PIL import ImageEnhance
-                                    # Apply brightness adjustment with validation
-                                    if args.brightness != 1.0:
-                                        brightness = max(0.0, min(2.0, args.brightness))
-                                        enhancer = ImageEnhance.Brightness(img)
-                                        img = enhancer.enhance(brightness)
-                                        if brightness != args.brightness:
-                                            logger.debug(f"Brightness value clamped to valid range: {brightness}")
-                                    
-                                    # Apply contrast adjustment with validation
-                                    if args.contrast != 1.0:
-                                        contrast = max(0.0, min(2.0, args.contrast))
-                                        enhancer = ImageEnhance.Contrast(img)
-                                        img = enhancer.enhance(contrast)
-                                        if contrast != args.contrast:
-                                            logger.debug(f"Contrast value clamped to valid range: {contrast}")
-                                    
-                                    # Save with quality setting
-                                    img.save(str(image_path), quality=args.quality)
-                                    logger.info("Applied image enhancements (brightness: %.2f, contrast: %.2f)", 
-                                              args.brightness, args.contrast)
-                                except (ImportError, AttributeError) as e:
-                                    logger.warning(f"Failed to apply image enhancements: {e}")
-                                    img.save(str(image_path))
+                                _enhance_and_save_image(img, image_path, args, logger)
                             except Exception as e:
                                 logger.warning(f"Failed to create PIL image: {e}")
                                 # Fallback to direct save
@@ -1550,20 +1592,7 @@ def convert_document(args: argparse.Namespace) -> None:
                         
                         logger.info(f"Created image for page {page_num}: {image_path}")
                     
-                    # Create a combined output file listing all image paths
-                    image_list = []
-                    for page_num in pages_to_process:
-                        image_name = f"{input_path.stem}_page_{page_num}.png"
-                        image_path = images_dir / image_name
-                        # In test environment, don't check exists
-                        image_list.append(f"exports/images/{image_name}")
-                    
-                    # Always write the list file with correct extension
-                    if not str(output_path).endswith('.image'):
-                        output_path = output_path.with_suffix('.image')
-                    output_path.parent.mkdir(parents=True, exist_ok=True)
-                    # Write paths with forward slashes for consistency
-                    output_path.write_text("\n".join(image_list) + "\n")
+                    _write_image_list(images_dir, input_path, pages_to_process, output_path, logger)
                     
                     logger.info(f"Successfully converted Word document to images in {images_dir}")
                 finally:
@@ -1579,6 +1608,97 @@ def convert_document(args: argparse.Namespace) -> None:
             logger.error(f"Error converting Word document: {e}")
             sys.exit(1)
     
+    elif input_extension == ".pdf":
+        # Check and install PyMuPDF support first
+        if not check_pymupdf_support():
+            logger.info("Installing PDF support...")
+            if not install_pymupdf_support():
+                logger.error("Failed to install PDF support")
+                sys.exit(1)
+            logger.info("PDF support installed successfully")
+        
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            logger.error("Failed to import PyMuPDF")
+            sys.exit(1)
+
+        try:
+            # Open PDF document
+            pdf_doc = fitz.open(input_path)
+            
+            if output_format == "text":
+                # Extract text from PDF
+                full_text = []
+                for page in pdf_doc:
+                    text = page.get_text()
+                    if text.strip():
+                        full_text.append(text)
+                
+                output_path.write_text("\n".join(full_text))
+                logger.info(f"Successfully converted PDF to text: {output_path}")
+            
+            elif output_format == "image":
+                # Create images directory inside exports
+                images_dir = exports_dir / "images"
+                images_dir.mkdir(exist_ok=True)
+                
+                try:
+                    # Parse page range if specified
+                    if args.pages:
+                        pages_to_process = parse_page_range(args.pages)
+                        # Validate page numbers
+                        max_page = len(pdf_doc)
+                        pages_to_process = [p for p in pages_to_process if 1 <= p <= max_page]
+                        if not pages_to_process:
+                            logger.error(f"No valid pages in range: {args.pages} (document has {max_page} pages)")
+                            sys.exit(1)
+                    else:
+                        pages_to_process = range(1, len(pdf_doc) + 1)
+                    
+                    for page_num in pages_to_process:
+                        # PyMuPDF uses 0-based indexing
+                        page = pdf_doc[page_num - 1]
+                        # Set resolution for the pixmap
+                        zoom = args.resolution / 72.0  # Convert DPI to zoom factor
+                        matrix = fitz.Matrix(zoom, zoom)
+                        pix = page.get_pixmap(matrix=matrix)
+                        
+                        # Convert to PIL Image for enhancement
+                        img_data = pix.samples
+                        image_path = images_dir / f"{input_path.stem}_page_{page_num}.png"
+                        
+                        if check_image_enhance_support():
+                            try:
+                                from PIL import Image
+                                img = Image.frombytes("RGB", (pix.width, pix.height), img_data)
+                                
+                                _enhance_and_save_image(img, image_path, args, logger)
+                            except Exception as e:
+                                logger.warning(f"Failed to create PIL image: {e}")
+                                # Fallback to direct save
+                                pix.save(str(image_path))
+                        else:
+                            # Fallback to direct pixmap save if PIL enhancements not available
+                            pix.save(str(image_path))
+                        
+                        logger.info(f"Created image for page {page_num}: {image_path}")
+                    
+                    
+                    _write_image_list(images_dir, input_path, pages_to_process, output_path, logger)
+                    
+                    logger.info(f"Successfully converted PDF to images in {images_dir}")
+                finally:
+                    pdf_doc.close()
+            
+            else:
+                logger.error(f"Unsupported output format for PDF documents: {output_format}")
+                sys.exit(1)
+        
+        except Exception as e:
+            logger.error(f"Error converting PDF document: {e}")
+            sys.exit(1)
+
     elif input_extension in [".html", ".mhtml", ".htm"]:
         if not check_html_support():
             logger.info("Installing HTML document support...")
