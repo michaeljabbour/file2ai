@@ -31,3 +31,6 @@ Thumbs.db
 exports/
 uploads/
 logs/
+file2ai.egg-info/
+.coverage
+.python-version
