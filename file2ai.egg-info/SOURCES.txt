@@ -1,0 +1,9 @@
+LICENSE
+README.md
+file2ai.py
+pyproject.toml
+file2ai.egg-info/PKG-INFO
+file2ai.egg-info/SOURCES.txt
+file2ai.egg-info/dependency_links.txt
+file2ai.egg-info/requires.txt
+file2ai.egg-info/top_level.txt

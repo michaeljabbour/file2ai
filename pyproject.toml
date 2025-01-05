@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "file2ai"
 version = "1.0.1"
 description = "A comprehensive tool for file conversion, text extraction, and AI processing"
+requires-python = ">=3.8"
 authors = [
     { name = "Michael Jabbour", email = "michael@jabbour.dev" }
 ]
@@ -41,5 +42,5 @@ py-modules = ["file2ai"]
 
 [tool.black]
 line-length = 100
-target-version = ['py37']
+target-version = ['py311']
 include = '\.pyi?$'

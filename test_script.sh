@@ -84,10 +84,51 @@ install_output=$(pip install --upgrade pip 2>&1) || {
 install_output=$(pip install -e . 2>&1) || {
     log_error "Failed to install file2ai. Output:\n$install_output"
 }
-install_output=$(pip install pytest pytest-cov 2>&1) || {
+install_output=$(pip install pytest pytest-cov flask 2>&1) || {
     log_error "Failed to install test dependencies. Output:\n$install_output"
 }
 log_success "Installation complete"
+
+# Set up cleanup trap for frontend server
+cleanup() {
+    if [ -n "$FLASK_PID" ]; then
+        kill $FLASK_PID 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
+# Launch frontend server
+log_info "Launching frontend server..."
+python web.py &
+FLASK_PID=$!
+
+# Wait for server to start
+sleep 2
+
+# Test frontend server response
+response=$(curl -s http://localhost:5000)
+if [[ $response == *"File2AI Converter"* ]]; then
+    log_success "Frontend server launched successfully"
+else
+    log_error "Frontend server failed to launch properly"
+fi
+
+# Create test file for form submission
+log_info "Creating test file for form submission..."
+echo "Test content" > test_upload.txt
+
+# Test form submission
+log_info "Testing form submission..."
+test_response=$(curl -s -X POST -F "command=convert" -F "format=text" -F "file=@test_upload.txt" http://localhost:5000)
+if [[ $test_response == *"job_id"* ]]; then
+    log_success "Form submission test passed"
+else
+    log_error "Form submission test failed"
+    log_error "Response: $test_response"
+fi
+
+# Clean up test file
+rm -f test_upload.txt
 
 # 4) Run tests with coverage
 log_info "Running tests with coverage..."
@@ -313,5 +354,49 @@ else
     log_error "Missing subdir export file: $subdir_file"
 fi
 
+# 11) Launch and test frontend
+log_info "Installing Flask if not present..."
+pip install flask || log_error "Failed to install Flask"
+
+log_info "Launching frontend server..."
+mkdir -p logs
+FLASK_APP=web.py python web.py > logs/frontend.log 2>&1 &
+FRONTEND_PID=$!
+
+# Add cleanup trap
+trap 'kill $FRONTEND_PID 2>/dev/null' EXIT
+
+# Wait for server to start
+log_info "Waiting for frontend server to start..."
+for i in {1..30}; do
+    if curl -s http://localhost:5000 > /dev/null; then
+        log_success "Frontend server is running"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        log_error "Frontend server failed to start. Check logs/frontend.log for details"
+    fi
+    sleep 1
+done
+
+# Verify frontend response
+response=$(curl -s http://localhost:5000)
+if echo "$response" | grep -q "File2AI Converter"; then
+    log_success "Frontend is responding correctly"
+else
+    log_error "Frontend response is invalid"
+fi
+
+# Test form submission
+log_info "Testing form submission..."
+test_response=$(curl -s -X POST -F "command=convert" -F "file=@create_test_pdf.py" http://localhost:5000)
+if echo "$test_response" | grep -q "job_id"; then
+    log_success "Form submission working correctly"
+else
+    log_error "Form submission failed"
+fi
+
 log_success "All validation checks passed!"
 log_info "Done."
+
+# Note: The frontend server will be automatically killed by the trap when the script exits

@@ -19,8 +19,13 @@ import tempfile
 import importlib.util
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, Set, NoReturn, TextIO, Dict, List, TypedDict, Union
+from typing import Optional, Tuple, Set, NoReturn, TextIO, Dict, List, TypedDict, Union, TYPE_CHECKING, Any, Protocol
 import json
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PIL.Image import Image
 
 try:
     from PIL import Image, ImageEnhance
@@ -207,13 +212,21 @@ ensure_gitpython()
 from git import Repo, exc  # noqa: E402
 
 
-def setup_logging() -> None:
-    """Configure logging with file and console output."""
+def setup_logging(operation: str = "general") -> None:
+    """
+    Configure logging with file and console output.
+    
+    Args:
+        operation: Type of operation being performed (e.g., 'export', 'convert')
+    """
     logs_dir = Path(LOGS_DIR)
     logs_dir.mkdir(exist_ok=True)
 
-    # Configure logging handlers
-    log_file = logs_dir / f"file2ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    # Get current timestamp with improved readability
+    timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    
+    # Configure logging handlers with operation context
+    log_file = logs_dir / f"file2ai_{operation}_{timestamp}.log"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
@@ -619,7 +632,7 @@ def load_gitignore_patterns(repo_root: Path) -> Tuple[Set[str], Set[str]]:
     
     return ignore_patterns, override_patterns
 
-def should_ignore(path: Path, patterns: Tuple[Set[str], Set[str]], repo_root: Path) -> bool:
+def should_ignore(path: Path, patterns: Tuple[Set[str], Set[str]], repo_root: Path, stats: Optional[Dict[str, int]] = None) -> bool:
     """
     Check if a path should be ignored based on .gitignore patterns.
     Supports blanket ignore with pattern overrides.
@@ -628,6 +641,7 @@ def should_ignore(path: Path, patterns: Tuple[Set[str], Set[str]], repo_root: Pa
         path: Path to check.
         patterns: Tuple of (ignore_patterns, override_patterns) from load_gitignore_patterns.
         repo_root: Repository root path for relative path calculation.
+        stats: Optional dictionary to track file statistics.
     
     Returns:
         True if the path should be ignored, False otherwise.
@@ -635,6 +649,8 @@ def should_ignore(path: Path, patterns: Tuple[Set[str], Set[str]], repo_root: Pa
     # Always check if it's a binary file first
     if not is_text_file(path):
         logger.info(f"Skipped binary file: {path}")
+        if stats is not None:
+            stats["binary_files"] += 1
         return True
 
     ignore_patterns, override_patterns = patterns
@@ -684,6 +700,8 @@ def export_files_to_single_file(
     stats: Dict[str, int] = {
         "processed_files": 0,
         "skipped_files": 0,
+        "binary_files": 0,
+        "error_files": 0,
         "total_chars": 0,
         "total_lines": 0,
         "total_tokens": 0,
@@ -736,6 +754,8 @@ def export_files_to_json(
     stats: Dict[str, int] = {
         "processed_files": 0,
         "skipped_files": 0,
+        "binary_files": 0,
+        "error_files": 0,
         "total_chars": 0,
         "total_lines": 0,
         "total_tokens": 0,
@@ -750,7 +770,7 @@ def export_files_to_json(
         if f.is_file()
         and not f.name.startswith(".")
         and ".git" not in str(f)
-        and not should_ignore(f, ignore_patterns, repo_root)
+        and not should_ignore(f, ignore_patterns, repo_root, stats)
     ]
     total_files = len(files_to_process)
 
@@ -1147,7 +1167,7 @@ def install_pymupdf_support() -> bool:
     """Install PyMuPDF package for PDF-to-image conversion."""
     return install_package_support("PyMuPDF")
 
-def _enhance_and_save_image(img: 'Image.Image', image_path: Path, args: argparse.Namespace, logger: logging.Logger) -> None:
+def _enhance_and_save_image(img: Any, image_path: Path, args: argparse.Namespace, logger: logging.Logger) -> None:
     """
     Apply image enhancements (brightness/contrast) and save the image.
     
@@ -2323,9 +2343,11 @@ def convert_document(args: argparse.Namespace) -> None:
 
 def main() -> NoReturn:
     """Main entry point."""
-    setup_logging()
-    logger.info(f"Starting file2ai version {VERSION}")
     args = parse_args()
+    
+    # Set up logging with operation context
+    setup_logging(args.command)  # Will be either 'export' or 'convert'
+    logger.info(f"Starting file2ai version {VERSION}")
 
     if args.command == "export":
         if args.local_dir:
