@@ -16,14 +16,14 @@ table.cell(1, 1).text = "Value 2"
 
 if __name__ == "__main__":
     import os
-    
+
     # Ensure we're using absolute paths from project root
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     exports_dir = os.path.join(project_root, "exports")
-    
+
     # Create exports directory if it doesn't exist
     os.makedirs(exports_dir, exist_ok=True)
-    
+
     output_path = os.path.join(exports_dir, "test.docx")
     doc.save(output_path)
     print(f"Test document created successfully at: {output_path}")

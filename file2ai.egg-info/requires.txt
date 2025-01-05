@@ -1,6 +1,8 @@
 gitpython
 python-docx
 openpyxl
+weasyprint
+beautifulsoup4
 
 [test]
 pytest>=7.0

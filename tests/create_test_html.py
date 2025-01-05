@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 
+
 def create_test_html():
     html_content = """<!DOCTYPE html>
 <html>
@@ -25,18 +26,19 @@ def create_test_html():
 </html>"""
 
     import os
-    
+
     # Ensure we're using absolute paths from project root
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     exports_dir = os.path.join(project_root, "exports")
-    
+
     # Create exports directory if it doesn't exist
     os.makedirs(exports_dir, exist_ok=True)
-    
+
     output_path = os.path.join(exports_dir, "test.html")
-    with open(output_path, 'w') as f:
+    with open(output_path, "w") as f:
         f.write(html_content)
     print(f"Test HTML file created successfully at: {output_path}")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     create_test_html()

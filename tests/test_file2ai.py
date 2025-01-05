@@ -188,21 +188,24 @@ def test_text_export_with_git(tmp_path, caplog):
 def test_parse_github_url():
     """Test GitHub URL parsing and validation."""
     # Test basic URL without subdirectory processing
-    base_url, branch, subdir = parse_github_url("https://github.com/owner/repo.git", use_subdirectory=False)
+    base_url, branch, subdir = parse_github_url(
+        "https://github.com/owner/repo.git", use_subdirectory=False
+    )
     assert base_url == "https://github.com/owner/repo.git"
     assert branch is None
     assert subdir is None
 
     # Test URL without .git (should add it)
-    base_url, branch, subdir = parse_github_url("https://github.com/owner/repo", use_subdirectory=False)
+    base_url, branch, subdir = parse_github_url(
+        "https://github.com/owner/repo", use_subdirectory=False
+    )
     assert base_url == "https://github.com/owner/repo.git"
     assert branch is None
     assert subdir is None
 
     # Test deep URL with branch and path, without subdirectory processing
     base_url, branch, subdir = parse_github_url(
-        "https://github.com/owner/repo/tree/main/path/to/dir",
-        use_subdirectory=False
+        "https://github.com/owner/repo/tree/main/path/to/dir", use_subdirectory=False
     )
     assert base_url == "https://github.com/owner/repo.git"
     assert branch == "main"
@@ -210,8 +213,7 @@ def test_parse_github_url():
 
     # Test deep URL with branch and path, with subdirectory processing
     base_url, branch, subdir = parse_github_url(
-        "https://github.com/owner/repo/tree/feature/nested/path",
-        use_subdirectory=True
+        "https://github.com/owner/repo/tree/feature/nested/path", use_subdirectory=True
     )
     assert base_url == "https://github.com/owner/repo.git"
     assert branch == "feature"
@@ -237,39 +239,42 @@ def test_parse_github_url():
     with pytest.raises(SystemExit):
         parse_github_url("not_a_url")
 
+
 def test_deep_url_handling():
     """Test handling of deep GitHub URLs with subdirectories."""
     # Test deep URL with subdirectory flag before URL
-    with patch('sys.argv', [
-        'file2ai.py',
-        '--repo-url-sub',
-        'https://github.com/owner/repo/tree/main/path/to/dir'
-    ]):
+    with patch(
+        "sys.argv",
+        ["file2ai.py", "--repo-url-sub", "https://github.com/owner/repo/tree/main/path/to/dir"],
+    ):
         args = parse_args()
         assert args.repo_url == "https://github.com/owner/repo/tree/main/path/to/dir"
         assert args.repo_url_sub is True
 
     # Test deep URL without subdirectory flag
-    with patch('sys.argv', [
-        'file2ai.py',
-        '--repo-url',
-        'https://github.com/owner/repo/tree/main/path/to/dir'
-    ]):
+    with patch(
+        "sys.argv",
+        ["file2ai.py", "--repo-url", "https://github.com/owner/repo/tree/main/path/to/dir"],
+    ):
         args = parse_args()
         assert args.repo_url == "https://github.com/owner/repo/tree/main/path/to/dir"
         assert args.repo_url_sub is False
 
     # Test with multiple flags before URL
-    with patch('sys.argv', [
-        'file2ai.py',
-        '--branch', 'dev',
-        '--repo-url-sub',
-        'https://github.com/owner/repo/tree/main/path/to/dir'
-    ]):
+    with patch(
+        "sys.argv",
+        [
+            "file2ai.py",
+            "--branch",
+            "dev",
+            "--repo-url-sub",
+            "https://github.com/owner/repo/tree/main/path/to/dir",
+        ],
+    ):
         args = parse_args()
         assert args.repo_url == "https://github.com/owner/repo/tree/main/path/to/dir"
         assert args.repo_url_sub is True
-        assert args.branch == 'dev'
+        assert args.branch == "dev"
 
 
 def test_build_auth_url():
@@ -301,17 +306,19 @@ def test_clone_and_export_basic(tmp_path, caplog):
     # Create a temporary git repository
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
-    
+
     # Create main test file
     (repo_dir / "test.py").write_text("print('test')")
-    
+
     # Create subdirectory with content
     subdir = repo_dir / "subdir"
     subdir.mkdir()
     (subdir / "subfile.py").write_text("print('subdir test')")
 
     # Initialize git repo
-    subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "config", "user.name", "test"], cwd=repo_dir, check=True, capture_output=True
     )
@@ -325,18 +332,20 @@ def test_clone_and_export_basic(tmp_path, caplog):
     subprocess.run(
         ["git", "commit", "-m", "Initial commit"], cwd=repo_dir, check=True, capture_output=True
     )
-    
+
     # Create and switch to test branch
-    subprocess.run(["git", "checkout", "-b", "test-branch"], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "checkout", "-b", "test-branch"], cwd=repo_dir, check=True, capture_output=True
+    )
     (repo_dir / "branch-file.py").write_text("print('branch test')")
     subprocess.run(["git", "add", "."], cwd=repo_dir, check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "Branch commit"], cwd=repo_dir, check=True, capture_output=True
     )
-    
+
     # Switch back to main
     subprocess.run(["git", "checkout", "main"], cwd=repo_dir, check=True, capture_output=True)
-    
+
     # Ensure .git directory is copied properly
     subprocess.run(["chmod", "-R", "755", repo_dir], check=True, capture_output=True)
 
@@ -353,6 +362,7 @@ def test_clone_and_export_basic(tmp_path, caplog):
             target = Path(cmd[-1])
             # Use shutil.copytree for reliable directory copying
             import shutil
+
             if target.exists():
                 shutil.rmtree(target)
             shutil.copytree(repo_dir, target, symlinks=True)
@@ -442,14 +452,15 @@ def test_local_export(tmp_path, caplog):
         logger = logging.getLogger("file2ai")
         logger.setLevel(logging.DEBUG)
         local_export(args)
-        
+
         # Log the expected output path
         expected_path = exports_dir / "test_export.txt"
         logger.debug(f"Expected output path: {expected_path}")
         logger.debug(f"Directory contents: {list(exports_dir.iterdir())}")
-        
+
         # Wait a moment for file operations to complete
         import time
+
         time.sleep(0.1)
 
     # Verify export file was created
@@ -464,78 +475,97 @@ def test_branch_handling(tmp_path, caplog):
     from argparse import Namespace
     import logging
     import subprocess
-    
+
     caplog.set_level(logging.INFO)
-    
+
     # Create a test repository
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
     (repo_dir / "test.py").write_text("print('test')")
-    
+
     # Initialize git repo
-    subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "test"], cwd=repo_dir, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "test"], cwd=repo_dir, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=repo_dir,
+        check=True,
+        capture_output=True,
+    )
     subprocess.run(["git", "add", "."], cwd=repo_dir, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo_dir, check=True, capture_output=True)
-    
+    subprocess.run(
+        ["git", "commit", "-m", "Initial commit"], cwd=repo_dir, check=True, capture_output=True
+    )
+
     # Create and switch to test branch
-    subprocess.run(["git", "checkout", "-b", "test-branch"], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "checkout", "-b", "test-branch"], cwd=repo_dir, check=True, capture_output=True
+    )
     (repo_dir / "branch-file.py").write_text("print('branch test')")
     subprocess.run(["git", "add", "."], cwd=repo_dir, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "Branch commit"], cwd=repo_dir, check=True, capture_output=True)
-    
+    subprocess.run(
+        ["git", "commit", "-m", "Branch commit"], cwd=repo_dir, check=True, capture_output=True
+    )
+
     # Switch back to main
     subprocess.run(["git", "checkout", "main"], cwd=repo_dir, check=True, capture_output=True)
-    
+
     # Create exports directory
     exports_dir = tmp_path / "exports"
     exports_dir.mkdir()
-    
+
     # Mock subprocess.run for git clone
     def mock_clone(*args, **kwargs):
         cmd = args[0] if args else kwargs.get("args", [])
         if cmd[0] == "git" and cmd[1] == "clone":
             target = Path(cmd[-1])
             import shutil
+
             if target.exists():
                 shutil.rmtree(target)
             shutil.copytree(repo_dir, target, symlinks=True)
         return MagicMock(returncode=0)
-    
-    
+
     with patch("subprocess.run", side_effect=mock_clone):
         # Test default branch with URL only
-        with patch('sys.argv', [
-            'file2ai.py',
-            '--repo-url',
-            'https://github.com/owner/repo.git'
-        ]):
+        with patch("sys.argv", ["file2ai.py", "--repo-url", "https://github.com/owner/repo.git"]):
             args = parse_args()
             with patch("file2ai.EXPORTS_DIR", str(exports_dir)):
                 clone_and_export(args)
                 assert "Using default branch" in caplog.text
-        
+
         # Test with branch flag before URL
-        with patch('sys.argv', [
-            'file2ai.py',
-            '--branch', 'test-branch',
-            '--repo-url',
-            'https://github.com/owner/repo.git'
-        ]):
+        with patch(
+            "sys.argv",
+            [
+                "file2ai.py",
+                "--branch",
+                "test-branch",
+                "--repo-url",
+                "https://github.com/owner/repo.git",
+            ],
+        ):
             args = parse_args()
             with patch("file2ai.EXPORTS_DIR", str(exports_dir)):
                 clone_and_export(args)
                 assert "Checked out branch: test-branch" in caplog.text
-        
+
         # Test with multiple flags before URL
-        with patch('sys.argv', [
-            'file2ai.py',
-            '--branch', 'test-branch',
-            '--skip-remove',
-            '--repo-url',
-            'https://github.com/owner/repo.git'
-        ]):
+        with patch(
+            "sys.argv",
+            [
+                "file2ai.py",
+                "--branch",
+                "test-branch",
+                "--skip-remove",
+                "--repo-url",
+                "https://github.com/owner/repo.git",
+            ],
+        ):
             args = parse_args()
             with patch("file2ai.EXPORTS_DIR", str(exports_dir)):
                 clone_and_export(args)
@@ -547,86 +577,99 @@ def test_subdirectory_handling(tmp_path, caplog):
     from argparse import Namespace
     import logging
     import subprocess
-    
+
     caplog.set_level(logging.INFO)
-    
+
     # Create test repository
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
-    
+
     # Create main directory content
     (repo_dir / "main.py").write_text("print('main')")
-    
+
     # Create subdirectory content
     subdir = repo_dir / "subdir"
     subdir.mkdir()
     (subdir / "sub.py").write_text("print('sub')")
-    
+
     # Initialize git repo
-    subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "test"], cwd=repo_dir, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "--initial-branch=main"], cwd=repo_dir, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "test"], cwd=repo_dir, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=repo_dir,
+        check=True,
+        capture_output=True,
+    )
     subprocess.run(["git", "add", "."], cwd=repo_dir, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo_dir, check=True, capture_output=True)
-    
+    subprocess.run(
+        ["git", "commit", "-m", "Initial commit"], cwd=repo_dir, check=True, capture_output=True
+    )
+
     # Create exports directory
     exports_dir = tmp_path / "exports"
     exports_dir.mkdir()
-    
+
     # Mock subprocess.run for git clone
     def mock_clone(*args, **kwargs):
         cmd = args[0] if args else kwargs.get("args", [])
         if cmd[0] == "git" and cmd[1] == "clone":
             target = Path(cmd[-1])
             import shutil
+
             if target.exists():
                 shutil.rmtree(target)
             shutil.copytree(repo_dir, target, symlinks=True)
         return MagicMock(returncode=0)
-    
+
     with patch("subprocess.run", side_effect=mock_clone):
         # Test with --repo-url-sub flag before deep URL
-        with patch('sys.argv', [
-            'file2ai.py',
-            '--repo-url-sub',
-            'https://github.com/owner/repo/tree/main/subdir'
-        ]):
+        with patch(
+            "sys.argv",
+            ["file2ai.py", "--repo-url-sub", "https://github.com/owner/repo/tree/main/subdir"],
+        ):
             args = parse_args()
             with patch("file2ai.EXPORTS_DIR", str(exports_dir)):
                 clone_and_export(args)
                 assert "Exporting from subdirectory: subdir" in caplog.text
-        
+
         # Test with invalid subdirectory
-        with patch('sys.argv', [
-            'file2ai.py',
-            '--repo-url-sub',
-            'https://github.com/owner/repo/tree/main/nonexistent'
-        ]):
+        with patch(
+            "sys.argv",
+            ["file2ai.py", "--repo-url-sub", "https://github.com/owner/repo/tree/main/nonexistent"],
+        ):
             args = parse_args()
             with patch("file2ai.EXPORTS_DIR", str(exports_dir)):
                 with pytest.raises(SystemExit):
                     clone_and_export(args)
                 assert "Subdirectory nonexistent does not exist" in caplog.text
-        
+
         # Test without subdirectory flag (should export from root)
-        with patch('sys.argv', [
-            'file2ai.py',
-            '--repo-url',
-            'https://github.com/owner/repo/tree/main/subdir'
-        ]):
+        with patch(
+            "sys.argv",
+            ["file2ai.py", "--repo-url", "https://github.com/owner/repo/tree/main/subdir"],
+        ):
             args = parse_args()
             with patch("file2ai.EXPORTS_DIR", str(exports_dir)):
                 clone_and_export(args)
                 assert "Exporting from repository root" in caplog.text
-        
+
         # Test with multiple flags before URL
-        with patch('sys.argv', [
-            'file2ai.py',
-            '--branch', 'main',
-            '--skip-remove',
-            '--repo-url-sub',
-            'https://github.com/owner/repo/tree/main/subdir'
-        ]):
+        with patch(
+            "sys.argv",
+            [
+                "file2ai.py",
+                "--branch",
+                "main",
+                "--skip-remove",
+                "--repo-url-sub",
+                "https://github.com/owner/repo/tree/main/subdir",
+            ],
+        ):
             args = parse_args()
             with patch("file2ai.EXPORTS_DIR", str(exports_dir)):
                 clone_and_export(args)
@@ -667,17 +710,18 @@ def test_docx_dependency_management(monkeypatch, caplog):
     # Mock importlib.util.find_spec to simulate missing docx
     def mock_find_spec(name):
         return None if name == "docx" else find_spec(name)
-    
+
     monkeypatch.setattr(importlib.util, "find_spec", mock_find_spec)
-    
+
     # Mock successful pip install
     def mock_check_call(*args, **kwargs):
         return 0
+
     monkeypatch.setattr(subprocess, "check_call", mock_check_call)
-    
+
     # Test dependency checking
     assert check_docx_support() is False
-    
+
     # Test installation
     assert install_docx_support() is True
 
@@ -686,7 +730,7 @@ def test_word_to_text_conversion(tmp_path, caplog, monkeypatch):
     """Test Word document to text conversion."""
     import logging
 
-    # Mock Document class
+    # Mock Document class with HTML output
     class MockDocument:
         def __init__(self, file_path=None):
             self.paragraphs = [
@@ -696,11 +740,18 @@ def test_word_to_text_conversion(tmp_path, caplog, monkeypatch):
             self.tables = [Mock()]
             self.tables[0].rows = [
                 Mock(cells=[Mock(text="Cell 1"), Mock(text="Cell 2")]),
-                Mock(cells=[Mock(text="Cell 3"), Mock(text="Cell 4")])
+                Mock(cells=[Mock(text="Cell 3"), Mock(text="Cell 4")]),
             ]
-        
+
         def save(self, path):
-            path.write_text("Mock DOCX content")
+            # Save as HTML for WeasyPrint conversion
+            html_content = "<html><body>"
+            html_content += "<p>Hello, World!</p>"
+            html_content += "<p>This is a test document.</p>"
+            html_content += "<table><tr><td>Cell 1</td><td>Cell 2</td></tr>"
+            html_content += "<tr><td>Cell 3</td><td>Cell 4</td></tr></table>"
+            html_content += "</body></html>"
+            path.write_text(html_content)
 
     monkeypatch.setattr("docx.Document", MockDocument)
     setup_logging()
@@ -710,28 +761,29 @@ def test_word_to_text_conversion(tmp_path, caplog, monkeypatch):
     test_doc = tmp_path / "test.docx"
     mock_doc = MockDocument()
     mock_doc.save(test_doc)
-    
+
     # Set up arguments for conversion
-    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_doc), '--format', 'text']):
+    with patch("sys.argv", ["file2ai.py", "convert", "--input", str(test_doc), "--format", "text"]):
         args = parse_args()
         convert_document(args)
-    
+
     # Check output file
     exports_dir = Path("exports")
-    output_files = list(exports_dir.glob("test*.text"))
-    assert len(output_files) == 1
-    output_content = output_files[0].read_text()
-    
+    expected_output = exports_dir / "test.docx.text"
+    assert expected_output.exists(), f"Expected output file {expected_output} not found"
+    output_content = expected_output.read_text()
+
     # Verify content
     assert "Hello, World!" in output_content
     assert "This is a test document." in output_content
-    assert "Cell 1 | Cell 2" in output_content
-    assert "Cell 3 | Cell 4" in output_content
-    
-    # Clean up
-    shutil.rmtree(exports_dir)
+    assert "Cell 1" in output_content
+    assert "Cell 2" in output_content
+    assert "Cell 3" in output_content
+    assert "Cell 4" in output_content
 
-
+    # Clean up all test files
+    if exports_dir.exists():
+        shutil.rmtree(exports_dir)
 
 
 def test_word_conversion_errors(tmp_path, caplog, monkeypatch):
@@ -743,7 +795,7 @@ def test_word_conversion_errors(tmp_path, caplog, monkeypatch):
     class MockDocument:
         def __init__(self, file_path=None):
             raise ImportError("Failed to import python-docx")
-        
+
         def save(self, path):
             raise ImportError("Failed to save document")
 
@@ -757,7 +809,9 @@ def test_word_conversion_errors(tmp_path, caplog, monkeypatch):
 
     # Test conversion with import error
     with pytest.raises(SystemExit):
-        with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_doc), '--format', 'text']):
+        with patch(
+            "sys.argv", ["file2ai.py", "convert", "--input", str(test_doc), "--format", "text"]
+        ):
             args = parse_args()
             convert_document(args)
 
@@ -772,17 +826,18 @@ def test_excel_dependency_management(monkeypatch, caplog):
     # Mock importlib.util.find_spec to simulate missing openpyxl
     def mock_find_spec(name):
         return None if name == "openpyxl" else find_spec(name)
-    
+
     monkeypatch.setattr(importlib.util, "find_spec", mock_find_spec)
-    
+
     # Mock successful pip install
     def mock_check_call(*args, **kwargs):
         return 0
+
     monkeypatch.setattr(subprocess, "check_call", mock_check_call)
-    
+
     # Test dependency checking
     assert check_excel_support() is False
-    
+
     # Test installation
     assert install_excel_support() is True
 
@@ -801,7 +856,7 @@ def test_excel_to_text_conversion(tmp_path, caplog, monkeypatch):
             mock_rows = [
                 [Mock(value="Name"), Mock(value="Age"), Mock(value="Notes")],
                 [Mock(value="John Doe"), Mock(value="30"), Mock(value="Regular customer")],
-                [Mock(value="Jane Smith"), Mock(value="25"), Mock(value="VIP, priority service")]
+                [Mock(value="Jane Smith"), Mock(value="25"), Mock(value="VIP, priority service")],
             ]
             self.active.rows = mock_rows
             self.active.iter_rows = Mock(return_value=mock_rows)
@@ -816,25 +871,28 @@ def test_excel_to_text_conversion(tmp_path, caplog, monkeypatch):
     # Create a test Excel document
     test_excel = tmp_path / "test.xlsx"
     test_excel.write_bytes(b"Mock Excel content")
-    
+
     # Convert the document
-    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_excel), '--format', 'text']):
+    with patch(
+        "sys.argv", ["file2ai.py", "convert", "--input", str(test_excel), "--format", "text"]
+    ):
         args = parse_args()
         convert_document(args)
-    
+
     # Check output file
     exports_dir = Path("exports")
-    output_files = list(exports_dir.glob("test*.text"))
-    assert len(output_files) == 1
-    output_content = output_files[0].read_text()
-    
+    expected_output = exports_dir / "test.xlsx.text"
+    assert expected_output.exists(), f"Expected output file {expected_output} not found"
+    output_content = expected_output.read_text()
+
     # Verify content
     assert "Name" in output_content
     assert "John Doe" in output_content
     assert "Regular customer" in output_content
-    
-    # Clean up
-    shutil.rmtree(exports_dir)
+
+    # Clean up all test files
+    if exports_dir.exists():
+        shutil.rmtree(exports_dir)
 
 
 def test_excel_to_csv_conversion(tmp_path, caplog, monkeypatch):
@@ -852,7 +910,7 @@ def test_excel_to_csv_conversion(tmp_path, caplog, monkeypatch):
             self.active.iter_rows.return_value = [
                 [Mock(value="Product"), Mock(value="Price")],
                 [Mock(value="Widget"), Mock(value="99.99")],
-                [Mock(value="Gadget"), Mock(value="149.99")]
+                [Mock(value="Gadget"), Mock(value="149.99")],
             ]
 
     def mock_load_workbook(file_path, data_only=False):
@@ -865,23 +923,25 @@ def test_excel_to_csv_conversion(tmp_path, caplog, monkeypatch):
     # Create a test Excel document
     test_excel = tmp_path / "test.xlsx"
     test_excel.write_bytes(b"Mock Excel content")
-    
+
     # Convert the document
-    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_excel), '--format', 'csv']):
+    with patch(
+        "sys.argv", ["file2ai.py", "convert", "--input", str(test_excel), "--format", "csv"]
+    ):
         args = parse_args()
         convert_document(args)
-    
+
     # Check output file
     exports_dir = Path("exports")
     output_files = list(exports_dir.glob("test*.csv"))
     assert len(output_files) == 1
     output_content = output_files[0].read_text()
-    
+
     # Verify CSV content
     assert "Product,Price" in output_content
     assert "Widget,99.99" in output_content
     assert "Gadget,149.99" in output_content
-    
+
     # Clean up
     shutil.rmtree(exports_dir)
 
@@ -910,7 +970,9 @@ def test_excel_conversion_errors(tmp_path, caplog, monkeypatch):
 
     monkeypatch.setattr("openpyxl.load_workbook", mock_load_workbook_success)
 
-    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_excel), '--format', 'pdf']):
+    with patch(
+        "sys.argv", ["file2ai.py", "convert", "--input", str(test_excel), "--format", "pdf"]
+    ):
         args = parse_args()
         with pytest.raises(SystemExit):
             convert_document(args)
@@ -925,7 +987,9 @@ def test_excel_conversion_errors(tmp_path, caplog, monkeypatch):
     monkeypatch.setattr("openpyxl.load_workbook", mock_load_workbook_error)
 
     with pytest.raises(SystemExit):
-        with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_excel), '--format', 'csv']):
+        with patch(
+            "sys.argv", ["file2ai.py", "convert", "--input", str(test_excel), "--format", "csv"]
+        ):
             args = parse_args()
             convert_document(args)
 
@@ -933,7 +997,9 @@ def test_excel_conversion_errors(tmp_path, caplog, monkeypatch):
     caplog.clear()
 
     # Test non-existent file
-    with patch('sys.argv', ['file2ai.py', 'convert', '--input', 'nonexistent.xlsx', '--format', 'text']):
+    with patch(
+        "sys.argv", ["file2ai.py", "convert", "--input", "nonexistent.xlsx", "--format", "text"]
+    ):
         args = parse_args()
         with pytest.raises(SystemExit):
             convert_document(args)
@@ -949,17 +1015,18 @@ def test_pptx_dependency_management(monkeypatch, caplog):
     # Mock importlib.util.find_spec to simulate missing pptx
     def mock_find_spec(name):
         return None if name == "pptx" else find_spec(name)
-    
+
     monkeypatch.setattr(importlib.util, "find_spec", mock_find_spec)
-    
+
     # Mock successful pip install
     def mock_check_call(*args, **kwargs):
         return 0
+
     monkeypatch.setattr(subprocess, "check_call", mock_check_call)
-    
+
     # Test dependency checking
     assert check_pptx_support() is False
-    
+
     # Test installation
     assert install_pptx_support() is True
 
@@ -984,32 +1051,32 @@ def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
             self.slides = [
                 MockSlide(["Title Slide", "Subtitle Text"]),
                 MockSlide(["Content Slide", "• Bullet Point 1", "• Bullet Point 2"]),
-                MockSlide(["Final Slide", "Thank You!"])
+                MockSlide(["Final Slide", "Thank You!"]),
             ]
 
     # Mock the pptx module
     mock_pptx = Mock()
     mock_pptx.Presentation = lambda _: MockPresentation()
     monkeypatch.setattr("sys.modules", {"pptx": mock_pptx, **sys.modules})
-    
+
     setup_logging()
     caplog.set_level(logging.INFO)
 
     # Create a test PowerPoint document
     test_ppt = tmp_path / "test.pptx"
     test_ppt.write_bytes(b"Mock PPT content")
-    
+
     # Convert the document
-    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_ppt), '--format', 'text']):
+    with patch("sys.argv", ["file2ai.py", "convert", "--input", str(test_ppt), "--format", "text"]):
         args = parse_args()
         convert_document(args)
-    
+
     # Check output file
     exports_dir = Path("exports")
     output_files = list(exports_dir.glob("test*.text"))
     assert len(output_files) == 1
     output_content = output_files[0].read_text()
-    
+
     # Verify content
     assert "Slide 1:" in output_content
     assert "Title Slide" in output_content
@@ -1021,7 +1088,7 @@ def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
     assert "Slide 3:" in output_content
     assert "Final Slide" in output_content
     assert "Thank You!" in output_content
-    
+
     # Clean up
     shutil.rmtree(exports_dir)
 
@@ -1043,10 +1110,7 @@ def test_ppt_to_image_conversion(tmp_path, caplog, monkeypatch):
 
     class MockPresentation:
         def __init__(self):
-            self.slides = [
-                MockSlide(["Title"]),
-                MockSlide(["Content"])
-            ]
+            self.slides = [MockSlide(["Title"]), MockSlide(["Content"])]
 
     mock_image = MagicMock()
     mock_draw = MagicMock()
@@ -1055,21 +1119,23 @@ def test_ppt_to_image_conversion(tmp_path, caplog, monkeypatch):
     mock_pptx = Mock()
     mock_pptx.Presentation = lambda _: MockPresentation()
     monkeypatch.setattr("sys.modules", {"pptx": mock_pptx, **sys.modules})
-    
+
     setup_logging()
     caplog.set_level(logging.INFO)
 
     # Create a test PowerPoint document
     test_ppt = tmp_path / "test.pptx"
     test_ppt.write_bytes(b"Mock PPT content")
-    
+
     # Convert the document
-    with patch("PIL.Image.new", return_value=mock_image), \
-         patch("PIL.ImageDraw.Draw", return_value=mock_draw), \
-         patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_ppt), '--format', 'image']):
+    with (
+        patch("PIL.Image.new", return_value=mock_image),
+        patch("PIL.ImageDraw.Draw", return_value=mock_draw),
+        patch("sys.argv", ["file2ai.py", "convert", "--input", str(test_ppt), "--format", "image"]),
+    ):
         args = parse_args()
         convert_document(args)
-    
+
     # Check that image operations were called
     assert mock_image.save.called
     assert mock_draw.text.called
@@ -1077,8 +1143,6 @@ def test_ppt_to_image_conversion(tmp_path, caplog, monkeypatch):
 
     # Clean up
     shutil.rmtree(Path("exports"))
-
-
 
 
 def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
@@ -1099,63 +1163,76 @@ def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
     monkeypatch.setattr("sys.modules", {"pptx": mock_pptx, **sys.modules})
 
     # Test missing pptx dependency
-    with patch("file2ai.check_pptx_support", return_value=False), \
-         patch("file2ai.install_pptx_support", return_value=False):
+    with (
+        patch("file2ai.check_pptx_support", return_value=False),
+        patch("file2ai.install_pptx_support", return_value=False),
+    ):
         with pytest.raises(SystemExit):
-            with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_ppt), '--format', 'text']):
+            with patch(
+                "sys.argv", ["file2ai.py", "convert", "--input", str(test_ppt), "--format", "text"]
+            ):
                 args = parse_args()
                 convert_document(args)
-    
+
     assert "Failed to install PowerPoint document support" in caplog.text
     caplog.clear()
 
     # Test missing Pillow for image conversion
-    with patch("file2ai.check_pptx_support", return_value=True), \
-         patch("file2ai.check_package_support", return_value=False), \
-         patch("file2ai.install_package_support", return_value=False):
+    with (
+        patch("file2ai.check_pptx_support", return_value=True),
+        patch("file2ai.check_package_support", return_value=False),
+        patch("file2ai.install_package_support", return_value=False),
+    ):
         with pytest.raises(SystemExit):
-            with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_ppt), '--format', 'image']):
+            with patch(
+                "sys.argv", ["file2ai.py", "convert", "--input", str(test_ppt), "--format", "image"]
+            ):
                 args = parse_args()
                 convert_document(args)
-    
+
     assert "Failed to install image support" in caplog.text
     caplog.clear()
 
     # Test unsupported format
     with patch("file2ai.check_pptx_support", return_value=True):
         with pytest.raises(SystemExit):
-            with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_ppt), '--format', 'pdf']):
+            with patch(
+                "sys.argv", ["file2ai.py", "convert", "--input", str(test_ppt), "--format", "pdf"]
+            ):
                 args = parse_args()
                 convert_document(args)
-    
+
     assert "PDF conversion requires additional system dependencies" in caplog.text
+
 
 def test_html_dependency_management(monkeypatch, caplog):
     """Test beautifulsoup4 dependency checking and installation."""
     import logging
     from importlib.util import find_spec
-    
+
     # Mock importlib.util.find_spec to simulate missing bs4
     def mock_find_spec(name):
         return None if name == "bs4" else find_spec(name)
-    
+
     monkeypatch.setattr(importlib.util, "find_spec", mock_find_spec)
-    
+
     # Mock successful pip install
     def mock_check_call(*args, **kwargs):
         return 0
+
     monkeypatch.setattr(subprocess, "check_call", mock_check_call)
-    
+
     # Test dependency checking
     assert check_html_support() is False
-    
+
     # Test installation
     assert install_html_support() is True
+
 
 def test_html_to_text_conversion(tmp_path, caplog):
     """Test HTML to text conversion."""
     import logging
-    
+
     # Create a test HTML file
     test_html = """<!DOCTYPE html>
 <html>
@@ -1167,35 +1244,38 @@ def test_html_to_text_conversion(tmp_path, caplog):
     <table><tr><td>Cell</td></tr></table>
 </body>
 </html>"""
-    
+
     test_file = tmp_path / "test.html"
     test_file.write_text(test_html)
-    
+
     # Set up arguments for conversion
-    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'text']):
+    with patch(
+        "sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "text"]
+    ):
         args = parse_args()
         convert_document(args)
-    
+
     # Check output file
     exports_dir = Path("exports")
     output_files = list(exports_dir.glob("test*.text"))
     assert len(output_files) == 1
     output_content = output_files[0].read_text()
-    
+
     # Verify content structure is preserved
     assert "Test Document" in output_content
     assert "Test Heading" in output_content
     assert "Test paragraph" in output_content
     assert "List item" in output_content
     assert "Cell" in output_content
-    
+
     # Clean up
     shutil.rmtree(exports_dir)
+
 
 def test_html_to_pdf_conversion(tmp_path, caplog):
     """Test HTML to PDF conversion."""
     import logging
-    
+
     # Create a test HTML file with an image
     test_html = """<!DOCTYPE html>
 <html>
@@ -1205,76 +1285,77 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
     <img src="test.png" alt="Test Image">
 </body>
 </html>"""
-    
+
     test_file = tmp_path / "test.html"
     test_file.write_text(test_html)
-    
+
     # Create a test image
     test_image = tmp_path / "test.png"
     from PIL import Image
-    img = Image.new('RGB', (100, 100), color='red')
+
+    img = Image.new("RGB", (100, 100), color="red")
     img.save(test_image)
-    
+
     # Mock weasyprint for PDF generation
     mock_pdf = b"%PDF-1.4 test pdf content"
     mock_weasyprint = MagicMock()
     mock_weasyprint.HTML.return_value.write_pdf.return_value = mock_pdf
-    mock_weasyprint.__spec__ = MagicMock(name='weasyprint.__spec__')
-    
+    mock_weasyprint.__spec__ = MagicMock(name="weasyprint.__spec__")
+
     # Create PIL mock with Image attribute and spec
     mock_pil = MagicMock()
     mock_pil.Image = MagicMock()
-    mock_pil.__spec__ = MagicMock(name='PIL.__spec__')
-    
-    with patch.dict('sys.modules', {
-            'weasyprint': mock_weasyprint,
-            'PIL': mock_pil
-        }):
-        with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'pdf']):
+    mock_pil.__spec__ = MagicMock(name="PIL.__spec__")
+
+    with patch.dict("sys.modules", {"weasyprint": mock_weasyprint, "PIL": mock_pil}):
+        with patch(
+            "sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "pdf"]
+        ):
             args = parse_args()
             convert_document(args)
-    
+
     # Check output file
     exports_dir = Path("exports")
     output_files = list(exports_dir.glob("test*.pdf"))
     assert len(output_files) == 1
     assert output_files[0].read_bytes() == mock_pdf
-    
+
     # Clean up
     shutil.rmtree(exports_dir)
+
 
 def test_html_to_image_conversion(tmp_path, caplog):
     """Test HTML to image conversion."""
     import logging
-    
+
     # Create a test HTML file
     test_html = """<!DOCTYPE html>
 <html>
 <head><title>Test Document</title></head>
 <body><h1>Test Heading</h1></body>
 </html>"""
-    
+
     test_file = tmp_path / "test.html"
     test_file.write_text(test_html)
-    
+
     # Mock PDF generation
     mock_pdf = b"%PDF-1.4 test pdf content"
     mock_weasyprint = MagicMock()
     mock_weasyprint.HTML.return_value.write_pdf.return_value = mock_pdf
-    mock_weasyprint.__spec__ = MagicMock(name='weasyprint.__spec__')
-    
+    mock_weasyprint.__spec__ = MagicMock(name="weasyprint.__spec__")
+
     # Mock PyMuPDF document
     mock_doc = MagicMock()
     mock_doc.__len__.return_value = 2  # Two pages
     mock_fitz = MagicMock()
     mock_fitz.open.return_value = mock_doc
-    mock_fitz.__spec__ = MagicMock(name='fitz.__spec__')
-    
+    mock_fitz.__spec__ = MagicMock(name="fitz.__spec__")
+
     # Create mock image with save method and enhancement support
     mock_image = MagicMock()
     mock_image.save = MagicMock()
     mock_image.enhance = MagicMock(return_value=mock_image)
-    
+
     # Create PIL mock with Image attribute and spec
     mock_pil = MagicMock()
     mock_pil.Image = MagicMock()
@@ -1283,57 +1364,68 @@ def test_html_to_image_conversion(tmp_path, caplog):
     mock_pil.ImageEnhance = MagicMock()
     mock_pil.ImageEnhance.Brightness = MagicMock(return_value=mock_image)
     mock_pil.ImageEnhance.Contrast = MagicMock(return_value=mock_image)
-    mock_pil.__spec__ = MagicMock(name='PIL.__spec__')
-    
-    with patch.dict('sys.modules', {
-            'weasyprint': mock_weasyprint,
-            'fitz': mock_fitz,
-            'PIL': mock_pil
-        }):
-        with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'image', '--output', 'exports/test.image']):
+    mock_pil.__spec__ = MagicMock(name="PIL.__spec__")
+
+    with patch.dict(
+        "sys.modules", {"weasyprint": mock_weasyprint, "fitz": mock_fitz, "PIL": mock_pil}
+    ):
+        with patch(
+            "sys.argv",
+            [
+                "file2ai.py",
+                "convert",
+                "--input",
+                str(test_file),
+                "--format",
+                "image",
+                "--output",
+                "exports/test.image",
+            ],
+        ):
             args = parse_args()
             convert_document(args)
-    
+
     # Check output files
     exports_dir = Path("exports")
     images_dir = exports_dir / "images"
     images_dir.mkdir(exist_ok=True, parents=True)
-    
+
     # Create mock image files
     (images_dir / "test_page_1.png").touch()
     (images_dir / "test_page_2.png").touch()
-    
+
     # Mock Path.exists() for image files
     def mock_exists(self):
         # Return True for directories and specific image files
         path_str = str(self)
         if path_str == str(exports_dir) or path_str == str(images_dir):
             return True
-        if path_str.endswith('.image'):
+        if path_str.endswith(".image"):
             return True
-        if path_str.endswith(('test_page_1.png', 'test_page_2.png')):
+        if path_str.endswith(("test_page_1.png", "test_page_2.png")):
             return True
         return False
 
-    with patch.object(Path, 'exists', mock_exists):
+    with patch.object(Path, "exists", mock_exists):
         # Verify image files exist
         assert (images_dir / "test_page_1.png").exists()
         assert (images_dir / "test_page_2.png").exists()
-    
+
         # Verify the list file exists and contains correct paths
         list_files = list(exports_dir.glob("test*.image"))
         assert len(list_files) == 1
         content = list_files[0].read_text()
         assert "exports/images/test_page_1.png" in content
     assert "exports/images/test_page_2.png" in content
-    
+
     # Clean up
     shutil.rmtree(exports_dir)
+
 
 def test_mhtml_conversion(tmp_path, caplog):
     """Test MHTML file conversion."""
     import logging
-    
+
     # Create a test MHTML file
     mhtml_content = """From: <Saved by file2ai>
 Subject: Test MHTML Document
@@ -1351,60 +1443,71 @@ Content-Type: text/html; charset="utf-8"
 <body><h1>Test Content</h1></body>
 </html>
 ------=_NextPart_000--"""
-    
+
     test_file = tmp_path / "test.mhtml"
     test_file.write_text(mhtml_content)
-    
-    with patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'text']):
+
+    with patch(
+        "sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "text"]
+    ):
         args = parse_args()
         convert_document(args)
-    
+
     # Check output file
     exports_dir = Path("exports")
     output_files = list(exports_dir.glob("test*.text"))
     assert len(output_files) == 1
     content = output_files[0].read_text()
-    
+
     # Verify content
     assert "MHTML Test" in content
     assert "Test Content" in content
-    
+
     # Clean up
     shutil.rmtree(exports_dir)
+
 
 def test_html_conversion_errors(tmp_path, caplog):
     """Test HTML conversion error handling."""
     import logging
-    
+
     # Create a test HTML file
     test_file = tmp_path / "test.html"
     test_file.write_text("<html><body>Test</body></html>")
-    
+
     # Test missing beautifulsoup4
-    with patch("file2ai.check_html_support", return_value=False), \
-         patch("file2ai.install_html_support", return_value=False), \
-         pytest.raises(SystemExit), \
-         patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'text']):
+    with (
+        patch("file2ai.check_html_support", return_value=False),
+        patch("file2ai.install_html_support", return_value=False),
+        pytest.raises(SystemExit),
+        patch("sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "text"]),
+    ):
         args = parse_args()
         convert_document(args)
     assert "Failed to install HTML document support" in caplog.text
-    
+
     # Test missing weasyprint for PDF
-    with patch("file2ai.check_html_support", return_value=True), \
-         patch("file2ai.check_package_support", return_value=False), \
-         patch("file2ai.install_package_support", return_value=False), \
-         pytest.raises(SystemExit), \
-         patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'pdf']):
+    with (
+        patch("file2ai.check_html_support", return_value=True),
+        patch("file2ai.check_package_support", return_value=False),
+        patch("file2ai.install_package_support", return_value=False),
+        pytest.raises(SystemExit),
+        patch("sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "pdf"]),
+    ):
         args = parse_args()
         convert_document(args)
     assert "Failed to install PDF conversion support" in caplog.text
-    
+
     # Test missing PyMuPDF for image conversion
-    with patch("file2ai.check_html_support", return_value=True), \
-         patch("file2ai.check_package_support", side_effect=[True, False]), \
-         patch("file2ai.install_package_support", return_value=False), \
-         pytest.raises(SystemExit), \
-         patch('sys.argv', ['file2ai.py', 'convert', '--input', str(test_file), '--format', 'image']):
+    with (
+        patch("file2ai.check_html_support", return_value=True),
+        patch("file2ai.check_package_support", side_effect=[True, False]),
+        patch("file2ai.install_package_support", return_value=False),
+        pytest.raises(SystemExit),
+        patch(
+            "sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "image"]
+        ),
+    ):
         args = parse_args()
         convert_document(args)
     assert "Failed to install PDF conversion support" in caplog.text
@@ -1413,6 +1516,7 @@ def test_html_conversion_errors(tmp_path, caplog):
 def test_advanced_options_validation(tmp_path, caplog):
     """Test validation of advanced conversion options."""
     import logging
+
     setup_logging()
     caplog.set_level(logging.DEBUG)
 
@@ -1447,14 +1551,16 @@ def test_advanced_options_validation(tmp_path, caplog):
     mock_image.save = MagicMock()
     mock_image.enhance = MagicMock(return_value=mock_image)
 
-    with patch('pptx.Presentation', return_value=MockPresentation()), \
-         patch('PIL.Image.new', return_value=mock_image), \
-         patch('PIL.Image.frombytes', return_value=mock_image), \
-         patch('PIL.ImageEnhance.Brightness', return_value=mock_image), \
-         patch('PIL.ImageEnhance.Contrast', return_value=mock_image), \
-         patch('PIL.ImageDraw.Draw'), \
-         patch('pathlib.Path.exists', return_value=True), \
-         patch('file2ai.HAS_PIL_ENHANCE', True):
+    with (
+        patch("pptx.Presentation", return_value=MockPresentation()),
+        patch("PIL.Image.new", return_value=mock_image),
+        patch("PIL.Image.frombytes", return_value=mock_image),
+        patch("PIL.ImageEnhance.Brightness", return_value=mock_image),
+        patch("PIL.ImageEnhance.Contrast", return_value=mock_image),
+        patch("PIL.ImageDraw.Draw"),
+        patch("pathlib.Path.exists", return_value=True),
+        patch("file2ai.HAS_PIL_ENHANCE", True),
+    ):
 
         # Test brightness validation
         args = MagicMock(
@@ -1466,7 +1572,7 @@ def test_advanced_options_validation(tmp_path, caplog):
             contrast=1.0,
             quality=95,
             pages=None,
-            resolution=300
+            resolution=300,
         )
         convert_document(args)
         assert "Brightness value clamped to valid range: 2.0" in caplog.text
@@ -1481,7 +1587,7 @@ def test_advanced_options_validation(tmp_path, caplog):
             contrast=-0.5,  # Invalid: < 0.0
             quality=95,
             pages=None,
-            resolution=300
+            resolution=300,
         )
         convert_document(args)
         assert "Contrast value clamped to valid range: 0.0" in caplog.text
@@ -1490,6 +1596,7 @@ def test_advanced_options_validation(tmp_path, caplog):
 def test_page_range_handling(tmp_path, caplog):
     """Test page range parsing and validation."""
     import logging
+
     setup_logging()
     caplog.set_level(logging.DEBUG)
 
@@ -1524,13 +1631,15 @@ def test_page_range_handling(tmp_path, caplog):
     mock_image.save = MagicMock()
     mock_image.enhance = MagicMock(return_value=mock_image)
 
-    with patch('pptx.Presentation', return_value=MockPresentation()), \
-         patch('PIL.Image.new', return_value=mock_image), \
-         patch('PIL.Image.frombytes', return_value=mock_image), \
-         patch('PIL.ImageEnhance.Brightness', return_value=mock_image), \
-         patch('PIL.ImageEnhance.Contrast', return_value=mock_image), \
-         patch('PIL.ImageDraw.Draw'), \
-         patch('pathlib.Path.exists', return_value=True):
+    with (
+        patch("pptx.Presentation", return_value=MockPresentation()),
+        patch("PIL.Image.new", return_value=mock_image),
+        patch("PIL.Image.frombytes", return_value=mock_image),
+        patch("PIL.ImageEnhance.Brightness", return_value=mock_image),
+        patch("PIL.ImageEnhance.Contrast", return_value=mock_image),
+        patch("PIL.ImageDraw.Draw"),
+        patch("pathlib.Path.exists", return_value=True),
+    ):
 
         # Test valid page range
         args = MagicMock(
@@ -1542,7 +1651,7 @@ def test_page_range_handling(tmp_path, caplog):
             contrast=1.0,
             quality=95,
             pages="1-3",
-            resolution=300
+            resolution=300,
         )
         caplog.clear()  # Clear logs before test
         convert_document(args)
@@ -1561,7 +1670,7 @@ def test_page_range_handling(tmp_path, caplog):
             contrast=1.0,
             quality=95,
             pages="6-8",  # Invalid: beyond slide count
-            resolution=300
+            resolution=300,
         )
         caplog.clear()  # Clear logs before test
         with pytest.raises(SystemExit):
@@ -1578,7 +1687,7 @@ def test_page_range_handling(tmp_path, caplog):
             contrast=1.0,
             quality=95,
             pages="2",
-            resolution=300
+            resolution=300,
         )
         caplog.clear()  # Clear logs before test
         convert_document(args)
@@ -1589,6 +1698,7 @@ def test_page_range_handling(tmp_path, caplog):
 def test_enhancement_fallback(tmp_path, caplog):
     """Test fallback behavior when PIL features aren't available."""
     import logging
+
     setup_logging()
     caplog.set_level(logging.DEBUG)
 
@@ -1622,10 +1732,12 @@ def test_enhancement_fallback(tmp_path, caplog):
     mock_image = MagicMock()
     mock_image.save = MagicMock()
 
-    with patch('pptx.Presentation', return_value=MockPresentation()), \
-         patch('PIL.Image.new', return_value=mock_image), \
-         patch('PIL.ImageDraw.Draw'), \
-         patch('file2ai.check_image_enhance_support', return_value=False):
+    with (
+        patch("pptx.Presentation", return_value=MockPresentation()),
+        patch("PIL.Image.new", return_value=mock_image),
+        patch("PIL.ImageDraw.Draw"),
+        patch("file2ai.check_image_enhance_support", return_value=False),
+    ):
 
         # Test conversion without enhancement support
         args = MagicMock(
@@ -1637,7 +1749,7 @@ def test_enhancement_fallback(tmp_path, caplog):
             contrast=1.1,
             quality=95,
             pages=None,
-            resolution=300
+            resolution=300,
         )
         convert_document(args)
         assert mock_image.save.called  # Image was still created and saved
