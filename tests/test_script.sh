@@ -479,7 +479,9 @@ while [ $port -le $max_port ] && [ "$server_started" = false ]; do
         
         # Kill the process if it didn't start successfully
         if [ "$server_started" = false ]; then
-            kill $FRONTEND_PID 2>/dev/null
+            # Temporarily commented out to keep server running for manual testing
+            # kill $FRONTEND_PID 2>/dev/null
+            echo "Server startup attempt failed on port $port"
         fi
     else
         log_info "Port $port is in use, trying next port..."
@@ -493,7 +495,8 @@ if [ "$server_started" = false ]; then
 fi
 
 # Add cleanup trap
-trap 'kill $FRONTEND_PID 2>/dev/null' EXIT
+# Temporarily commented out to keep server running for manual testing
+# trap 'kill $FRONTEND_PID 2>/dev/null' EXIT
 
 # Verify frontend response
 response=$(curl -s "http://localhost:$FLASK_PORT")

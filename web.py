@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, send_file, jsonify
+from flask import Flask, request, send_file, jsonify, send_from_directory
 from pathlib import Path
 import os
 import sys
@@ -228,91 +228,104 @@ def process_job(
         job_events[job_id].set()
 
 
-@app.route("/", methods=["GET", "POST"])
-def index():
-    if request.method == "POST":
-        command = request.form.get("command", "export")
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_react(path):
+    if path and Path(f"frontend/file2ai-frontend/dist/{path}").exists():
+        return send_from_directory("frontend/file2ai-frontend/dist", path)
+    return send_from_directory("frontend/file2ai-frontend/dist", "index.html")
 
-        # Create job
-        job_id = str(uuid.uuid4())
-        conversion_jobs[job_id] = JobStatus(
-            status="queued",
-            progress=0,
-            errors=[],
-            start_time=datetime.now(),
-            output_files=[]
+@app.route("/api", methods=["POST"])
+def handle_api():
+    # Debug logging
+    print("Received API request")
+    print("Form data:", request.form)
+    print("Files:", request.files)
+    print("Headers:", request.headers)
+    
+    command = request.form.get("command", "export")
+    print("Command:", command)
+
+    # Create job
+    job_id = str(uuid.uuid4())
+    conversion_jobs[job_id] = JobStatus(
+        status="queued",
+        progress=0,
+        errors=[],
+        start_time=datetime.now(),
+        output_files=[]
+    )
+    job_events[job_id] = threading.Event()
+
+    # Handle different commands
+    if command == "convert":
+        if not request.files:
+            return jsonify({"error": "No files selected"}), 400
+
+        files = {
+            f.filename: f
+            for f in request.files.getlist("file")
+            if f.filename
+        }
+        if not files:
+            return jsonify({"error": "No files selected"}), 400
+
+        options = ConversionOptions(
+            format=request.form.get("format", "text"),
+            pages=request.form.get("pages", ""),
+            brightness=request.form.get("brightness", "1.0"),
+            contrast=request.form.get("contrast", "1.0"),
+            resolution=request.form.get("resolution", "300"),
         )
-        job_events[job_id] = threading.Event()
 
-        # Handle different commands
-        if command == "convert":
-            if not request.files:
-                return jsonify({"error": "No files selected"}), 400
-
-            files = {
-                f.filename: f
-                for f in request.files.getlist("file")
-                if f.filename
-            }
-            if not files:
-                return jsonify({"error": "No files selected"}), 400
-
-            options = ConversionOptions(
-                format=request.form.get("format", "text"),
-                pages=request.form.get("pages", ""),
-                brightness=request.form.get("brightness", "1.0"),
-                contrast=request.form.get("contrast", "1.0"),
-                resolution=request.form.get("resolution", "300"),
-            )
-
-            # Start conversion in background
-            thread = threading.Thread(
-                target=process_job,
-                args=(job_id, command, files, options)
-            )
-
-        else:  # command == 'export'
-            fmt = request.form.get("format", "text")
-            options = ConversionOptions(format=fmt)
-
-            # Add repository-specific options
-            if repo_url := request.form.get("repo_url"):
-                options.update(
-                    repo_url=repo_url,
-                    branch=request.form.get("branch"),
-                    token=request.form.get("token"),
-                )
-
-            # Add local directory options
-            elif request.form.get("local_dir"):
-                if not request.files:
-                    return jsonify({"error": "No directory selected"}), 400
-
-                # Get the first file's directory path
-                first_file = next(iter(request.files.values()))
-                dir_path = str(Path(first_file.filename).parent)
-                options["local_dir"] = dir_path
-
-            else:
-                return (
-                    jsonify({
-                        "error": (
-                            "No repository URL or local directory provided"
-                        )
-                    }),
-                    400
-                )
-
-            # Start export in background
-            thread = threading.Thread(
-                target=process_job,
-                args=(job_id, command, None, options)
-            )
-
+        # Start conversion in background
+        thread = threading.Thread(
+            target=process_job,
+            args=(job_id, command, files, options)
+        )
         thread.start()
         return jsonify({"job_id": job_id})
 
-    return render_template("index.html")
+    else:  # command == 'export'
+        fmt = request.form.get("format", "text")
+        options = ConversionOptions(format=fmt)
+
+        # Add repository-specific options
+        if repo_url := request.form.get("repo_url"):
+            if not repo_url:
+                return jsonify({"error": "No repository URL provided"}), 400
+            options.update(
+                repo_url=repo_url,
+                branch=request.form.get("branch"),
+                token=request.form.get("token"),
+            )
+            files = {"repo_url": repo_url}
+
+        # Add local directory options
+        elif local_dir := request.form.get("local_dir"):
+            if not request.files:
+                return jsonify({"error": "No directory selected"}), 400
+
+            # Get the first file's directory path
+            first_file = next(iter(request.files.values()))
+            dir_path = str(Path(first_file.filename).parent)
+            options["local_dir"] = dir_path
+            files = {"local_dir": dir_path}
+
+        else:
+            return jsonify({
+                "error": "No repository URL or local directory provided"
+            }), 400
+
+        # Start export in background
+        thread = threading.Thread(
+            target=process_job,
+            args=(job_id, command, files, options)
+        )
+        thread.start()
+        return jsonify({"job_id": job_id})
+
+    return jsonify({"error": "Invalid command"}), 400
 
 
 @app.route("/status/<job_id>")

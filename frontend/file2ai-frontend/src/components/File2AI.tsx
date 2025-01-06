@@ -68,7 +68,16 @@ const File2AI: React.FC = () => {
     formData.append('format', outputFormat);
 
     if (selectedTab === 'file' && files) {
-      Array.from(files).forEach(file => formData.append('file', file));
+      formData.append('command', 'convert');
+      Array.from(files).forEach(file => {
+        console.log('Appending file:', file.name);
+        formData.append('file', file);
+      });
+      // Debug FormData contents
+      for (let [key, value] of formData.entries()) {
+        console.log('FormData entry:', key, value instanceof File ? value.name : value);
+      }
+      console.log('Sending form data with files...');
     } else if (selectedTab === 'repo') {
       formData.append('repo_url', repoUrl);
       if (branch) formData.append('branch', branch);
@@ -78,9 +87,12 @@ const File2AI: React.FC = () => {
     }
 
     try {
-      const response = await fetch('/', {
+      const response = await fetch('/api', {
         method: 'POST',
-        body: formData
+        body: formData,
+        headers: {
+          // Don't set Content-Type header - browser will set it automatically with boundary
+        }
       });
       
       const data = await response.json();
