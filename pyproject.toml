@@ -6,13 +6,17 @@ build-backend = "setuptools.build_meta"
 name = "file2ai"
 version = "1.0.1"
 description = "A comprehensive tool for file conversion, text extraction, and AI processing"
-requires-python = ">=3.11"
+requires-python = ">=3.8"
 authors = [
     { name = "Michael Jabbour", email = "michael@jabbour.dev" }
 ]
 license = { file = "LICENSE" }
 keywords = ["git", "export", "text"]
 classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -54,7 +58,7 @@ py-modules = ["file2ai"]
 
 [tool.black]
 line-length = 100
-target-version = ['py311', 'py312', 'py313']
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312', 'py313']
 include = '\.pyi?$'
 
 [tool.pytest.ini_options]
