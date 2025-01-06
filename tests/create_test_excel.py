@@ -1,11 +1,12 @@
 from openpyxl import Workbook
 from pathlib import Path
 
+
 def create_test_excel():
     """Create a test Excel file with multiple sheets and various data types."""
     # Create workbook with sample data
     wb = Workbook()
-    
+
     # Get the active worksheet
     ws1 = wb.active
     if ws1 is None:
@@ -17,7 +18,7 @@ def create_test_excel():
     sheet1_data = [
         ["Name", "Age", "Notes"],
         ["John Doe", "30", "Regular customer"],
-        ["Jane Smith", "25", "VIP, priority service"]
+        ["Jane Smith", "25", "VIP, priority service"],
     ]
 
     # Add data to Sheet1
@@ -27,11 +28,7 @@ def create_test_excel():
 
     # Create and populate Sheet2
     ws2 = wb.create_sheet("Sheet2")
-    sheet2_data = [
-        ["Product", "Price"],
-        ["Widget", "99.99"],
-        ["Gadget", "149.99"]
-    ]
+    sheet2_data = [["Product", "Price"], ["Widget", "99.99"], ["Gadget", "149.99"]]
 
     # Add data to Sheet2
     for row_idx, row_data in enumerate(sheet2_data, 1):
@@ -40,17 +37,18 @@ def create_test_excel():
 
     # Save the workbook
     import os
-    
+
     # Ensure we're using absolute paths from project root
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     exports_dir = os.path.join(project_root, "exports")
-    
+
     # Create exports directory if it doesn't exist
     os.makedirs(exports_dir, exist_ok=True)
-    
+
     output_path = os.path.join(exports_dir, "test.xlsx")
     wb.save(output_path)
     print(f"Created sample Excel file at: {output_path}")
+
 
 if __name__ == "__main__":
     create_test_excel()

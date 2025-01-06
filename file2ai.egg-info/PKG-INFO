@@ -27,14 +27,17 @@ License: MIT License
         
 Project-URL: Source Code, https://github.com/michaeljabbour/file2ai
 Keywords: git,export,text
-Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
 Classifier: License :: OSI Approved :: MIT License
 Classifier: Operating System :: OS Independent
-Requires-Python: >=3.8
+Requires-Python: <3.13,>=3.11
 License-File: LICENSE
 Requires-Dist: gitpython
 Requires-Dist: python-docx
 Requires-Dist: openpyxl
+Requires-Dist: weasyprint
+Requires-Dist: beautifulsoup4
 Provides-Extra: test
 Requires-Dist: pytest>=7.0; extra == "test"
 Requires-Dist: pytest-cov>=4.0; extra == "test"
