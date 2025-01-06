@@ -69,10 +69,15 @@ def process_job(
     """
     if options is None:
         options = ConversionOptions()
+    
+    # Initialize temp_files list at the start
+    temp_files = []
+    
     try:
         job = conversion_jobs[job_id]
         job["status"] = "processing"
         job["progress"] = 0
+        job["errors"] = []  # Reset errors at start
 
         # Handle different commands
         if command == "convert":
@@ -109,50 +114,101 @@ def process_job(
             # Process files
             output_files = []
             total_files = len(files)
+            temp_files = []  # Track temporary files for cleanup
 
             for idx, (filename, file_data) in enumerate(files.items()):
+                input_path = None
+                output_path = None
                 try:
                     # Save uploaded file
                     input_path = UPLOAD_FOLDER / filename
-                    file_data.save(str(input_path))
+                    # Read file content into memory first
+                    file_content = file_data.read()
+                    # Create and write to file
+                    with open(str(input_path), 'wb') as f:
+                        f.write(file_content)
+                    temp_files.append(input_path)  # Track for cleanup
+                    
+                    # Convert path to absolute path
+                    input_path = input_path.resolve()
+                    logger.info(f"Using absolute path for conversion: {input_path}")
+                    
+                    # Verify file exists and has content
+                    if not input_path.exists():
+                        raise IOError(f"File not created: {input_path}")
+                    if input_path.stat().st_size == 0:
+                        raise IOError(f"File is empty: {input_path}")
+                    
+                    logger.info(f"Successfully saved uploaded file to: {input_path}")
 
                     # Create output path
                     out_filename = f"{filename}.{output_format}"
                     output_path = EXPORTS_FOLDER / out_filename
+                    logger.info(f"Converting {input_path} to {output_path} with format {output_format}")
 
                     # Create args namespace
                     args = Namespace(
-                        command="convert",
-                        input=str(input_path),
-                        output=str(output_path),
-                        format=output_format,
-                        pages=options.get("pages"),
-                        brightness=brightness,
-                        contrast=contrast,
-                        resolution=resolution,
+                            command="convert",
+                            input=str(input_path),
+                            output=str(output_path),
+                            format=output_format,
+                            pages=options.get("pages"),
+                            brightness=brightness,
+                            contrast=contrast,
+                            resolution=resolution,
                     )
 
                     # Convert file
+                    logger.info(f"Starting conversion with args: {args}")
+                    
+                    # Verify input file still exists before conversion
+                    if not input_path.exists():
+                        raise IOError(f"Input file missing before conversion: {input_path}")
+                    
+                    
+                    # Check file permissions and readability
+                    if not os.access(str(input_path), os.R_OK):
+                        raise IOError(f"Input file not readable: {input_path}")
+                        
+                    logger.info(f"Input file verified before conversion: {input_path}")
                     convert_document(args)
+                    
+                    # Verify output after conversion
+                    if not output_path.exists():
+                        raise IOError(f"Output file not created: {output_path}")
+                    if output_path.stat().st_size == 0:
+                        raise IOError(f"Output file is empty: {output_path}")
+                    logger.info(f"Successfully converted file: {output_path}")
                     output_files.append(output_path)
-
+                    
                     # Update progress
                     job["progress"] = ((idx + 1) / total_files) * 100
-
+                    logger.info(f"Updated progress to {job['progress']}%")
+                    
                 except Exception as e:
+                    logger.error(f"Error during conversion: {str(e)}")
                     job["errors"].append(
                         "Error converting %s: %s" % (filename, str(e))
                     )
-                finally:
-                    if input_path.exists():
-                        input_path.unlink()
+                    if output_path and output_path.exists():
+                        try:
+                            output_path.unlink()  # Clean up failed output
+                        except Exception as cleanup_err:
+                            logger.error(f"Error cleaning up output file: {cleanup_err}")
+                    job["status"] = "completed_with_errors"
 
             job["output_files"] = output_files
+            
+            if job["errors"]:
+                job["status"] = "completed_with_errors"
+            else:
+                job["status"] = "completed"
 
         elif command == "export":
             # Handle repository export or local directory export
             repo_url = options.get("repo_url")
             local_dir = options.get("local_dir")
+            subdir = options.get("subdir")  # Get subdir from options
 
             if not repo_url and not local_dir:
                 msg = (
@@ -177,16 +233,39 @@ def process_job(
                     args = Namespace(
                         command="export",
                         repo_url=str(repo_url),
-                        branch=str(options.get("branch", "")),
+                        branch=str(options.get("branch") or "main"),  # Default to main if no branch specified
                         token=str(options.get("token", "")),
                         output=str(output_path),
                         format=str(options.get("format", "text")),
+                        repo_url_sub=None,  # Add missing required attribute
+                        output_file=None,  # Add missing required attribute
+                        skip_remove=False,  # Add missing required attribute
+                        subdir=options.get("subdir", "")  # Get subdir from options, default to empty string
                     )
 
                     # Export repository
-                    clone_and_export(args)
-                    job["output_files"] = [output_path]
-                    job["progress"] = 100
+                    try:
+                        # Ensure output directory exists
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        
+                        # Export repository
+                        clone_and_export(args)
+                        
+                        # Verify output
+                        if output_path.exists():
+                            job["output_files"] = [output_path]
+                            job["status"] = "completed"
+                            job["progress"] = 100
+                            logger.info(f"Successfully created output file: {output_path}")
+                        else:
+                            job["status"] = "failed"
+                            job["errors"].append(f"Export failed to create output file: {output_path}")
+                            logger.error(f"Failed to create output file: {output_path}")
+                    except Exception as e:
+                        job["status"] = "failed"
+                        job["errors"].append(f"Export failed: {str(e)}")
+                        job["progress"] = 0
+                        logger.error(f"Export error: {str(e)}")
                 else:
                     # Create output path for local directory
                     dir_name = Path(str(local_dir)).name
@@ -200,12 +279,65 @@ def process_job(
                         local_dir=str(local_dir),
                         output=str(output_path),
                         format=str(options.get("format", "text")),
+                        output_file=None,  # Required attribute
+                        skip_remove=False,  # Required attribute
+                        subdir=options.get("subdir", ""),  # Handle subdir parameter
+                        repo_url=None,  # Required for consistency
+                        branch=None,  # Required for consistency
+                        token=None   # Required for consistency
                     )
 
                     # Export local directory
-                    local_export(args)
-                    job["output_files"] = [output_path]
-                    job["progress"] = 100
+                    try:
+                        # Verify input directory exists and is readable
+                        input_dir = Path(str(local_dir))
+                        if not input_dir.exists():
+                            raise IOError(f"Directory not found: {input_dir}")
+                        if not input_dir.is_dir():
+                            raise IOError(f"Not a directory: {input_dir}")
+                        if not os.access(str(input_dir), os.R_OK):
+                            raise IOError(f"Directory not readable: {input_dir}")
+                            
+                        # Handle subdir if specified
+                        if args.subdir:
+                            subdir_path = input_dir / args.subdir
+                            if not subdir_path.exists():
+                                raise IOError(f"Subdirectory not found: {subdir_path}")
+                            if not subdir_path.is_dir():
+                                raise IOError(f"Not a directory: {subdir_path}")
+                            args.local_dir = str(subdir_path)
+                            logger.info(f"Using subdirectory: {subdir_path}")
+
+                        # Ensure output directory exists
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        
+                        # Export directory
+                        logger.info(f"Starting local export from {args.local_dir} to {output_path}")
+                        local_export(args)
+                        
+                        # Verify output
+                        if output_path.exists():
+                            if output_path.stat().st_size == 0:
+                                raise IOError(f"Output file is empty: {output_path}")
+                            job["output_files"] = [output_path]
+                            job["status"] = "completed"
+                            job["progress"] = 100
+                            logger.info(f"Successfully created output file: {output_path}")
+                        else:
+                            job["status"] = "failed"
+                            job["errors"].append(f"Export failed to create output file: {output_path}")
+                            logger.error(f"Failed to create output file: {output_path}")
+                    except Exception as e:
+                        job["status"] = "failed"
+                        job["errors"].append(f"Export failed: {str(e)}")
+                        job["progress"] = 0
+                        logger.error(f"Export error: {str(e)}")
+                        # Clean up any partial output
+                        if output_path.exists():
+                            try:
+                                output_path.unlink()
+                            except Exception as cleanup_err: 
+                                logger.error(f"Error cleaning up output file: {cleanup_err}")
 
             except Exception as e:
                 error_type = "repository" if repo_url else "local directory"
@@ -224,6 +356,14 @@ def process_job(
         job["errors"].append("Job failed: %s" % str(e))
 
     finally:
+        # Clean up temporary files
+        for temp_file in temp_files:
+            try:
+                if temp_file.exists():
+                    temp_file.unlink()
+            except Exception as e:
+                logger.error(f"Error cleaning up temp file {temp_file}: {e}")
+        
         # Signal completion
         job_events[job_id].set()
 
@@ -231,14 +371,49 @@ def process_job(
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def serve_react(path):
-    if path and Path(f"frontend/file2ai-frontend/dist/{path}").exists():
-        return send_from_directory("frontend/file2ai-frontend/dist", path)
-    return send_from_directory("frontend/file2ai-frontend/dist", "index.html")
+    app.logger.info(f"Serving path: {path}")
+    
+    if not path:
+        app.logger.info("Serving index.html")
+        try:
+            return send_from_directory("frontend", "index.html")
+        except Exception as e:
+            app.logger.error(f"Error serving index.html: {str(e)}")
+            return str(e), 500
+    
+    if path.startswith("api/"):
+        return "Not found", 404
+        
+    frontend_path = Path("frontend") / path
+    app.logger.info(f"Checking path: {frontend_path}")
+    
+    if frontend_path.exists():
+        try:
+            mimetype = None
+            if path.endswith('.js'):
+                mimetype = 'text/babel'  # Required for Babel to transform JSX
+                response = send_from_directory("frontend", path, mimetype=mimetype)
+                response.headers['Content-Type'] = mimetype
+                app.logger.info(f"Serving JS file with mimetype: {mimetype}")
+                return response
+            elif path.endswith('.html'):
+                mimetype = 'text/html'
+                return send_from_directory("frontend", path, mimetype=mimetype)
+            
+            app.logger.info(f"Serving static file: {path}")
+            return send_from_directory("frontend", path)
+        except Exception as e:
+            app.logger.error(f"Error serving {path}: {str(e)}")
+            return str(e), 500
+    
+    app.logger.info("File not found, serving index.html")
+    return send_from_directory("frontend", "index.html")
 
-@app.route("/api", methods=["POST"])
+@app.route("/", methods=["POST"])
 def handle_api():
+    """Handle API requests for file conversion and exports"""
     # Debug logging
-    print("Received API request")
+    logger.info("Received API request")
     print("Form data:", request.form)
     print("Files:", request.files)
     print("Headers:", request.headers)
@@ -288,7 +463,10 @@ def handle_api():
 
     else:  # command == 'export'
         fmt = request.form.get("format", "text")
-        options = ConversionOptions(format=fmt)
+        options = {
+            "format": fmt,
+            "subdir": request.form.get("subdir")  # Store subdir in options
+        }
 
         # Add repository-specific options
         if repo_url := request.form.get("repo_url"):
@@ -303,12 +481,13 @@ def handle_api():
 
         # Add local directory options
         elif local_dir := request.form.get("local_dir"):
-            if not request.files:
+            if not local_dir:
                 return jsonify({"error": "No directory selected"}), 400
-
-            # Get the first file's directory path
-            first_file = next(iter(request.files.values()))
-            dir_path = str(Path(first_file.filename).parent)
+            
+            dir_path = str(Path(local_dir).absolute())
+            if not Path(dir_path).exists():
+                return jsonify({"error": f"Directory not found: {dir_path}"}), 400
+                
             options["local_dir"] = dir_path
             files = {"local_dir": dir_path}
 
@@ -335,11 +514,22 @@ def get_status(job_id):
         return jsonify({"error": "Job not found"}), 404
 
     job = conversion_jobs[job_id]
-    return jsonify({
+    
+    # Check if job is completed but has errors
+    if job["status"] == "processing" and job["errors"]:
+        job["status"] = "failed"
+    
+    response = {
         "status": job["status"],
         "progress": job["progress"],
         "errors": job["errors"]
-    })
+    }
+    
+    # Add more detailed error information if available
+    if job["errors"] and job["status"] == "failed":
+        response["error_details"] = "\n".join(job["errors"])
+    
+    return jsonify(response)
 
 
 @app.route("/download/<job_id>")

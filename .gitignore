@@ -16,7 +16,8 @@ build/
 .eggs/
 .coverage
 
-# Logs and exports
+# Test files and outputs
+test_files/
 exports/
 logs/
 

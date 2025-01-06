@@ -64,6 +64,7 @@ cleanup_dirs=(
     "venv"
     "logs"
     "exports"
+    "test_files"
     "launchers"
     "__pycache__"
     "*.egg-info"
@@ -85,7 +86,7 @@ done
 log_success "Cleanup complete"
 
 # Create necessary directories
-mkdir -p exports logs
+mkdir -p exports logs test_files
 
 # System dependency checks will be handled by Python package management
 
@@ -108,8 +109,10 @@ log_success "Installation complete"
 
 # Set up cleanup trap for frontend server
 cleanup() {
+    # Keep server running for manual testing
     if [ -n "$FLASK_PID" ]; then
-        kill $FLASK_PID 2>/dev/null || true
+        echo "Frontend server will remain running for manual testing..."
+        # kill $FLASK_PID 2>/dev/null || true
     fi
 }
 trap cleanup EXIT
@@ -117,9 +120,11 @@ trap cleanup EXIT
 # Create test files and populate export directory first
 log_info "Creating test files and populating export directory..."
 
-# Create exports directory if it doesn't exist and ensure proper permissions
+# Create necessary directories if they don't exist and ensure proper permissions
 mkdir -p "$PROJECT_ROOT/exports"
+mkdir -p "$PROJECT_ROOT/test_files"
 chmod 777 "$PROJECT_ROOT/exports"
+chmod 777 "$PROJECT_ROOT/test_files"
 
 # Create all test files first
 log_info "Creating test files..."
@@ -139,22 +144,24 @@ python "$PROJECT_ROOT/tests/create_test_html.py" || log_error "Failed to create 
 # Verify all test files exist and have content
 log_info "Verifying test files..."
 for file in test.pdf test.docx test.xlsx test.pptx test.html; do
-    if [ ! -f "$PROJECT_ROOT/exports/$file" ]; then
+    if [ ! -f "$PROJECT_ROOT/test_files/$file" ]; then
         log_error "Test file not found: $file"
     fi
-    if [ ! -s "$PROJECT_ROOT/exports/$file" ]; then
+    if [ ! -s "$PROJECT_ROOT/test_files/$file" ]; then
         log_error "Test file is empty: $file"
     fi
+    # Copy test files to exports for preservation
+    cp "$PROJECT_ROOT/test_files/$file" "$PROJECT_ROOT/exports/$file" 2>/dev/null || true
 done
 
-log_info "Files in exports directory after creation:"
-ls -la "$PROJECT_ROOT/exports/"
+log_info "Files in test_files directory after creation:"
+ls -la "$PROJECT_ROOT/test_files/"
 
 # Create backup directory and backup all test files
 mkdir -p "$PROJECT_ROOT/tests/backup"
 for file in test.pdf test.docx test.xlsx test.pptx test.html; do
-    if [ -f "$PROJECT_ROOT/exports/$file" ]; then
-        cp "$PROJECT_ROOT/exports/$file" "$PROJECT_ROOT/tests/backup/$file" || log_error "Failed to backup $file"
+    if [ -f "$PROJECT_ROOT/test_files/$file" ]; then
+        cp "$PROJECT_ROOT/test_files/$file" "$PROJECT_ROOT/tests/backup/$file" || log_error "Failed to backup $file"
         log_info "Backed up $file"
     fi
 done
@@ -164,7 +171,7 @@ sleep 2  # Give filesystem time to sync
 # Verify all test files exist
 log_info "Verifying test files..."
 for file in test.pdf test.docx test.xlsx test.pptx test.html; do
-    if [ ! -f "$PROJECT_ROOT/exports/$file" ]; then
+    if [ ! -f "$PROJECT_ROOT/test_files/$file" ]; then
         log_error "Test file not found: $file"
     fi
 done
@@ -231,24 +238,24 @@ python "$PROJECT_ROOT/file2ai.py" --repo-url-sub https://github.com/michaeljabbo
 # Remove duplicate PDF conversion test section as it's already handled above
 
 log_info "Testing Word document conversion..."
-python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/exports/test.docx" --format text --output "$PROJECT_ROOT/exports/test.docx.text" || { log_error "Word to text conversion failed!"; true; }
-python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/exports/test.docx" --format image --output "$PROJECT_ROOT/exports/test.docx.image" --brightness 1.5 --contrast 1.2 || { log_error "Word to image conversion failed!"; true; }
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.docx" --format text --output "$PROJECT_ROOT/test_files/test.docx.text" || { log_error "Word to text conversion failed!"; true; }
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.docx" --format image --output "$PROJECT_ROOT/test_files/test.docx.image" --brightness 1.5 --contrast 1.2 || { log_error "Word to image conversion failed!"; true; }
 
 log_info "Testing PowerPoint conversion..."
-python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/exports/test.pptx" --format text --output "$PROJECT_ROOT/exports/test.pptx.text" || { log_error "PowerPoint to text conversion failed!"; true; }
-python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/exports/test.pptx" --format image --output "$PROJECT_ROOT/exports/test.pptx.image" --brightness 1.5 --contrast 1.2 || { log_error "PowerPoint to image conversion failed!"; true; }
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.pptx" --format text --output "$PROJECT_ROOT/test_files/test.pptx.text" || { log_error "PowerPoint to text conversion failed!"; true; }
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.pptx" --format image --output "$PROJECT_ROOT/test_files/test.pptx.image" --brightness 1.5 --contrast 1.2 || { log_error "PowerPoint to image conversion failed!"; true; }
 
 log_info "Testing Excel conversion..."
-python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/exports/test.xlsx" --format text --output "$PROJECT_ROOT/exports/test.xlsx.text" || { log_error "Excel to text conversion failed!"; true; }
-python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/exports/test.xlsx" --format image --output "$PROJECT_ROOT/exports/test.xlsx.image" --brightness 1.5 --contrast 1.2 || { log_error "Excel to image conversion failed!"; true; }
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.xlsx" --format text --output "$PROJECT_ROOT/test_files/test.xlsx.text" || { log_error "Excel to text conversion failed!"; true; }
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.xlsx" --format image --output "$PROJECT_ROOT/test_files/test.xlsx.image" --brightness 1.5 --contrast 1.2 || { log_error "Excel to image conversion failed!"; true; }
 
 # 9) Validate document conversion outputs
 log_info "Validating document conversion outputs..."
 
 # Check PDF outputs
-pdf_txt="$PROJECT_ROOT/exports/test.text"  # First try the new format
+pdf_txt="$PROJECT_ROOT/test_files/test.text"  # First try the new format
 if [ ! -f "$pdf_txt" ]; then
-    pdf_txt="$PROJECT_ROOT/exports/test.pdf.text"  # Try legacy format as fallback
+    pdf_txt="$PROJECT_ROOT/test_files/test.pdf.text"  # Try legacy format as fallback
 fi
 
 if [ -f "$pdf_txt" ]; then
@@ -259,13 +266,13 @@ if [ -f "$pdf_txt" ]; then
         log_error "PDF text export is empty"
     fi
 else
-    log_error "Missing PDF text export. Tried:\n- $PROJECT_ROOT/exports/test.text\n- $PROJECT_ROOT/exports/test.pdf.text"
+    log_error "Missing PDF text export. Tried:\n- $PROJECT_ROOT/test_files/test.text\n- $PROJECT_ROOT/test_files/test.pdf.text"
 fi
 
 # Check PDF image outputs
-pdf_img="$PROJECT_ROOT/exports/test.image"  # First try the new format
+pdf_img="$PROJECT_ROOT/test_files/test.image"  # First try the new format
 if [ ! -f "$pdf_img" ]; then
-    pdf_img="$PROJECT_ROOT/exports/test.pdf.image"  # Try legacy format as fallback
+    pdf_img="$PROJECT_ROOT/test_files/test.pdf.image"  # Try legacy format as fallback
 fi
 
 if [ -f "$pdf_img" ]; then
@@ -282,14 +289,14 @@ if [ -f "$pdf_img" ]; then
         log_error "PDF image export list is invalid"
     fi
 else
-    log_error "Missing PDF image export. Tried:\n- $PROJECT_ROOT/exports/test.image\n- $PROJECT_ROOT/exports/test.pdf.image"
+    log_error "Missing PDF image export. Tried:\n- $PROJECT_ROOT/test_files/test.image\n- $PROJECT_ROOT/test_files/test.pdf.image"
 fi
 
 # Check Word document outputs
 # Check Word document text outputs
-docx_txt="$PROJECT_ROOT/exports/test.text"  # First try the new format
+docx_txt="$PROJECT_ROOT/test_files/test.text"  # First try the new format
 if [ ! -f "$docx_txt" ]; then
-    docx_txt="$PROJECT_ROOT/exports/test.docx.text"  # Try legacy format as fallback
+    docx_txt="$PROJECT_ROOT/test_files/test.docx.text"  # Try legacy format as fallback
 fi
 
 if [ -f "$docx_txt" ]; then
@@ -300,13 +307,13 @@ if [ -f "$docx_txt" ]; then
         log_error "Word text export is empty"
     fi
 else
-    log_error "Missing Word text export. Tried:\n- $PROJECT_ROOT/exports/test.text\n- $PROJECT_ROOT/exports/test.docx.text"
+    log_error "Missing Word text export. Tried:\n- $PROJECT_ROOT/test_files/test.text\n- $PROJECT_ROOT/test_files/test.docx.text"
 fi
 
-docx_img="$PROJECT_ROOT/exports/test.docx.image"
+docx_img="$PROJECT_ROOT/test_files/test.docx.image"
 if [ -f "$docx_img" ]; then
     log_info "Word image export found"
-    if [ -s "$docx_img" ] && grep -q "exports/images/" "$docx_img"; then
+    if [ -s "$docx_img" ] && grep -q "test_files/images/" "$docx_img"; then
         while IFS= read -r img_path || [ -n "$img_path" ]; do
             if [ ! -f "$img_path" ]; then
                 log_error "Missing Word image file: $img_path"
@@ -321,7 +328,7 @@ else
 fi
 
 # Check PowerPoint outputs
-ppt_txt="$PROJECT_ROOT/exports/test.pptx.text"
+ppt_txt="$PROJECT_ROOT/test_files/test.pptx.text"
 if [ -f "$ppt_txt" ]; then
     log_info "PowerPoint text export found"
     if [ -s "$ppt_txt" ]; then
@@ -333,10 +340,10 @@ else
     log_error "Missing PowerPoint text export: $ppt_txt"
 fi
 
-ppt_img="$PROJECT_ROOT/exports/test.pptx.image"
+ppt_img="$PROJECT_ROOT/test_files/test.pptx.image"
 if [ -f "$ppt_img" ]; then
     log_info "PowerPoint image export found"
-    if [ -s "$ppt_img" ] && grep -q "exports/images/" "$ppt_img"; then
+    if [ -s "$ppt_img" ] && grep -q "test_files/images/" "$ppt_img"; then
         while IFS= read -r img_path || [ -n "$img_path" ]; do
             if [ ! -f "$img_path" ]; then
                 log_error "Missing PowerPoint image file: $img_path"
@@ -351,7 +358,7 @@ else
 fi
 
 # Check Excel outputs
-xlsx_txt="$PROJECT_ROOT/exports/test.xlsx.text"
+xlsx_txt="$PROJECT_ROOT/test_files/test.xlsx.text"
 if [ -f "$xlsx_txt" ]; then
     log_info "Excel text export found"
     if [ -s "$xlsx_txt" ]; then
@@ -363,10 +370,10 @@ else
     log_error "Missing Excel text export: $xlsx_txt"
 fi
 
-xlsx_img="$PROJECT_ROOT/exports/test.xlsx.image"
+xlsx_img="$PROJECT_ROOT/test_files/test.xlsx.image"
 if [ -f "$xlsx_img" ]; then
     log_info "Excel image export found"
-    if [ -s "$xlsx_img" ] && grep -q "exports/images/" "$xlsx_img"; then
+    if [ -s "$xlsx_img" ] && grep -q "test_files/images/" "$xlsx_img"; then
         while IFS= read -r img_path || [ -n "$img_path" ]; do
             if [ ! -f "$img_path" ]; then
                 log_error "Missing Excel image file: $img_path"
@@ -384,9 +391,12 @@ fi
 log_info "Validating repository output files..."
 
 # Check local export
-txt_file="exports/file2ai_export.txt"
+txt_file="test_files/file2ai_export.txt"
 if [ -f "$txt_file" ]; then
     log_info "Local directory export found"
+    
+    # Copy to exports directory for actual file2ai exports
+    cp "$txt_file" "exports/file2ai_export.txt" 2>/dev/null || true
     
     # Basic content validation
     if grep -q "Generated by file2ai" "$txt_file" && \
@@ -409,7 +419,7 @@ else
 fi
 
 # Check remote repo export
-txt_file="exports/file2ai_export.txt"
+txt_file="test_files/file2ai_export.txt"
 if [ -f "$txt_file" ]; then
     log_info "Remote repo text export found"
     

@@ -418,6 +418,12 @@ Supported formats for conversion: pdf, text, image, docx, csv, html""",
             args.repo_url_sub = None
 
         # Process export command arguments if provided
+        # Handle --subdir first as it can be used for both local and repo exports
+        if args.subdir:
+            args.local_dir = os.path.abspath(args.subdir)
+            logger.info(f"Using subdirectory as source: {args.local_dir}")
+            return args
+            
         if args.local_dir:
             args.repo_url_sub = False
             return args
@@ -610,8 +616,9 @@ def prepare_exports_dir() -> Path:
     Returns:
         Path to the exports directory.
     """
-    exports_dir = Path("exports")
-    exports_dir.mkdir(exist_ok=True)
+    exports_dir = Path(EXPORTS_DIR).resolve()
+    exports_dir.mkdir(parents=True, exist_ok=True)
+    logger.debug(f"Using exports directory: {exports_dir}")
     return exports_dir
 
 
@@ -1120,11 +1127,19 @@ def local_export(args: argparse.Namespace) -> None:
         args: Command line arguments namespace.
     """
     logger.info("Starting export of local directory")
-    local_dir = Path(args.local_dir)
+    local_dir = Path(args.subdir if hasattr(args, 'subdir') and args.subdir else args.local_dir).resolve()
+    if not local_dir.exists():
+        logger.error(f"Directory does not exist: {local_dir}")
+        raise FileNotFoundError(f"Directory does not exist: {local_dir}")
+    if not local_dir.is_dir():
+        logger.error(f"Path is not a directory: {local_dir}")
+        raise NotADirectoryError(f"Path is not a directory: {local_dir}")
+        
     repo_name = local_dir.name or "local-export"
     extension = ".json" if args.format == "json" else ".txt"
     output_file = args.output_file or f"file2ai_export{extension}"
-    output_path = Path(EXPORTS_DIR) / output_file
+    exports_dir = prepare_exports_dir()
+    output_path = exports_dir / output_file
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path = _sequential_filename(output_path.resolve())
     logger.debug(f"Using output path: {output_path}")
@@ -1342,10 +1357,22 @@ def convert_document(args: argparse.Namespace) -> None:
             - quality: Image quality setting (1-100)
             - resolution: Image resolution in DPI
     """
-    input_path = Path(args.input)
-    if not input_path.exists():
-        logger.error(f"Input file not found: {input_path}")
-        sys.exit(1)
+    input_path = Path(args.input).resolve()  # Get absolute path
+    logger.info(f"Attempting to convert file: {input_path}")
+    
+    # Verify file exists and is accessible
+    try:
+        if not input_path.exists():
+            logger.error(f"Input file not found: {input_path}")
+            raise FileNotFoundError(f"Input file not found: {input_path}")
+        
+        # Check if file is readable
+        with open(input_path, 'rb') as test_read:
+            test_read.read(1)
+        logger.info(f"Successfully verified file exists and is readable: {input_path}")
+    except (FileNotFoundError, IOError, PermissionError) as e:
+        logger.error(f"File access error: {str(e)}")
+        raise
 
     # Determine output path
     if args.output:
@@ -1367,6 +1394,62 @@ def convert_document(args: argparse.Namespace) -> None:
 
     input_extension = input_path.suffix.lower()
     output_format = args.format.lower()
+
+    # Handle basic text files first
+    if input_extension in TEXT_EXTENSIONS or output_format == "text":
+        logger.info(f"Starting text file conversion from {input_path} to {output_path}")
+        
+        # Verify input file exists and is readable
+        if not input_path.exists():
+            error_msg = f"Input file does not exist: {input_path}"
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
+            
+        if not os.access(str(input_path), os.R_OK):
+            error_msg = f"Input file not readable: {input_path}"
+            logger.error(error_msg)
+            raise IOError(error_msg)
+            
+        logger.info(f"Input file verified before conversion: {input_path}")
+        
+        # Read and convert file with proper encoding handling
+        for encoding in ['utf-8', 'latin-1']:
+            try:
+                logger.info(f"Attempting to read file with {encoding} encoding")
+                with open(input_path, 'r', encoding=encoding) as input_file:
+                    content = input_file.read()
+                    logger.info(f"Successfully read input file with {encoding} encoding")
+                    
+                    # Write output file immediately after successful read
+                    with open(output_path, 'w', encoding='utf-8') as output_file:
+                        output_file.write(content)
+                        logger.info(f"Successfully wrote output file: {output_path}")
+                        
+                    # Verify output file was created successfully
+                    if not output_path.exists():
+                        error_msg = f"Output file not created: {output_path}"
+                        logger.error(error_msg)
+                        raise IOError(error_msg)
+                        
+                    if output_path.stat().st_size == 0:
+                        error_msg = f"Output file is empty: {output_path}"
+                        logger.error(error_msg)
+                        raise IOError(error_msg)
+                        
+                    logger.info("File conversion completed successfully")
+                    return  # Success - exit the function
+                    
+            except UnicodeDecodeError:
+                logger.info(f"Failed to read with {encoding} encoding, trying next encoding")
+                continue
+            except IOError as e:
+                logger.error(f"IO Error during file operation: {str(e)}")
+                raise
+        
+        # If we get here, no encoding worked
+        error_msg = "Failed to decode file with any supported encoding"
+        logger.error(error_msg)
+        raise UnicodeDecodeError(error_msg)
 
     # Handle Excel documents (XLS/XLSX)
     if input_extension in [".xls", ".xlsx"]:
