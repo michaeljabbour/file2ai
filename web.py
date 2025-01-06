@@ -1,15 +1,36 @@
 from flask import Flask, render_template, request, send_file, flash, redirect, url_for, jsonify
 from pathlib import Path
 import os
+import sys
 import uuid
 import threading
 import queue
 from datetime import datetime
 import logging
-from file2ai import convert_document, setup_logging
+from typing import Dict, Optional, List, TypedDict, Union
+from werkzeug.datastructures import FileStorage
+from file2ai import convert_document, clone_and_export, local_export, setup_logging
 from argparse import Namespace
 
 logger = logging.getLogger(__name__)
+
+class ConversionOptions(TypedDict, total=False):
+    format: str
+    pages: Optional[str]
+    brightness: Union[str, float]
+    contrast: Union[str, float]
+    resolution: Union[str, int]
+    repo_url: Optional[str]
+    branch: Optional[str]
+    token: Optional[str]
+    local_dir: Optional[str]
+
+class JobStatus(TypedDict):
+    status: str
+    progress: float
+    errors: List[str]
+    start_time: datetime
+    output_files: List[Path]
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # For flash messages
@@ -24,119 +45,225 @@ UPLOAD_FOLDER.mkdir(exist_ok=True)
 EXPORTS_FOLDER = Path('exports')
 EXPORTS_FOLDER.mkdir(exist_ok=True)
 
-def process_conversion(job_id, files, options):
-    """Background conversion process"""
+def process_job(job_id: str, command: str, files: Optional[Dict[str, FileStorage]] = None, options: Optional[ConversionOptions] = None) -> None:
+    """Background processing for all job types
+    
+    Args:
+        job_id: Unique identifier for the job
+        command: Type of operation ('convert' or 'export')
+        files: Dictionary of uploaded files (filename -> FileStorage)
+        options: Dictionary of conversion/export options
+    """
+    if options is None:
+        options = ConversionOptions()
     try:
         job = conversion_jobs[job_id]
         job['status'] = 'processing'
         job['progress'] = 0
-        total_files = len(files)
         
-        # Validate format
-        valid_formats = ['text', 'pdf', 'html', 'docx', 'xlsx', 'pptx']
-        output_format = options.get('format', 'text')
-        if output_format not in valid_formats:
-            raise ValueError(f"Invalid format: {output_format}. Valid formats are: {', '.join(valid_formats)}")
-        
-        # Validate numeric parameters
-        try:
-            brightness = float(options.get('brightness', 1.0))
-            contrast = float(options.get('contrast', 1.0))
-            resolution = int(options.get('resolution', 300))
-            if not (0.1 <= brightness <= 2.0 and 0.1 <= contrast <= 2.0 and 72 <= resolution <= 1200):
-                raise ValueError("Invalid parameter values. Brightness and contrast must be between 0.1 and 2.0, resolution between 72 and 1200.")
-        except ValueError as e:
-            raise ValueError(f"Invalid conversion parameters: {str(e)}")
-        
-        # Create a zip file for multiple files
-        output_files = []
-        
-        for idx, (filename, file_data) in enumerate(files.items()):
+        # Handle different commands
+        if command == 'convert':
+            if not files:
+                raise ValueError("No files provided for conversion")
+            
+            # Validate format for conversion
+            valid_formats = ['text', 'pdf', 'html', 'docx', 'xlsx', 'pptx']
+            output_format = str(options.get('format', 'text'))
+            if output_format not in valid_formats:
+                raise ValueError(f"Invalid format: {output_format}. Valid formats are: {', '.join(valid_formats)}")
+            
+            # Validate numeric parameters
             try:
-                # Save uploaded file
-                input_path = UPLOAD_FOLDER / filename
-                file_data.save(str(input_path))
+                brightness = float(str(options.get('brightness', 1.0)))
+                contrast = float(str(options.get('contrast', 1.0)))
+                resolution = int(str(options.get('resolution', 300)))
                 
-                # Create output path
-                output_path = EXPORTS_FOLDER / f"{filename}.{output_format}"
-                
-                # Create args namespace
-                args = Namespace(
-                    command='convert',
-                    input=str(input_path),
-                    output=str(output_path),
-                    format=output_format,
-                    pages=options.get('pages'),
-                    brightness=brightness,
-                    contrast=contrast,
-                    resolution=resolution
-                )
-                
-                # Convert file
-                convert_document(args)
-                output_files.append(output_path)
-                
-                # Update progress
-                job['progress'] = ((idx + 1) / total_files) * 100
-                
+                if not (0.1 <= brightness <= 2.0):
+                    raise ValueError("Brightness must be between 0.1 and 2.0")
+                if not (0.1 <= contrast <= 2.0):
+                    raise ValueError("Contrast must be between 0.1 and 2.0")
+                if not (72 <= resolution <= 1200):
+                    raise ValueError("Resolution must be between 72 and 1200 DPI")
+            except ValueError as e:
+                raise ValueError(f"Invalid conversion parameters: {str(e)}")
+            
+            # Process files
+            output_files = []
+            total_files = len(files)
+            
+            for idx, (filename, file_data) in enumerate(files.items()):
+                try:
+                    # Save uploaded file
+                    input_path = UPLOAD_FOLDER / filename
+                    file_data.save(str(input_path))
+                    
+                    # Create output path
+                    output_path = EXPORTS_FOLDER / f"{filename}.{output_format}"
+                    
+                    # Create args namespace
+                    args = Namespace(
+                        command='convert',
+                        input=str(input_path),
+                        output=str(output_path),
+                        format=output_format,
+                        pages=options.get('pages'),
+                        brightness=brightness,
+                        contrast=contrast,
+                        resolution=resolution
+                    )
+                    
+                    # Convert file
+                    convert_document(args)
+                    output_files.append(output_path)
+                    
+                    # Update progress
+                    job['progress'] = ((idx + 1) / total_files) * 100
+                    
+                except Exception as e:
+                    job['errors'].append(f"Error converting {filename}: {str(e)}")
+                finally:
+                    if input_path.exists():
+                        input_path.unlink()
+            
+            job['output_files'] = output_files
+            
+        elif command == 'export':
+            # Handle repository export or local directory export
+            repo_url = options.get('repo_url')
+            local_dir = options.get('local_dir')
+
+            if not repo_url and not local_dir:
+                raise ValueError("Neither repository URL nor local directory provided for export")
+
+            try:
+                if repo_url:
+                    # Create output path for repository
+                    repo_name = str(repo_url).rstrip('/').split('/')[-1].replace('.git', '')
+                    output_path = EXPORTS_FOLDER / f"{repo_name}_export.{str(options.get('format', 'text'))}"
+                    
+                    # Create args namespace for repository export
+                    args = Namespace(
+                        command='export',
+                        repo_url=str(repo_url),
+                        branch=str(options.get('branch', '')),
+                        token=str(options.get('token', '')),
+                        output=str(output_path),
+                        format=str(options.get('format', 'text'))
+                    )
+                    
+                    # Export repository
+                    clone_and_export(args)
+                    job['output_files'] = [output_path]
+                    job['progress'] = 100
+                else:
+                    # Create output path for local directory
+                    dir_name = Path(str(local_dir)).name
+                    output_path = EXPORTS_FOLDER / f"{dir_name}_export.{str(options.get('format', 'text'))}"
+                    
+                    # Create args namespace for local export
+                    args = Namespace(
+                        command='export',
+                        local_dir=str(local_dir),
+                        output=str(output_path),
+                        format=str(options.get('format', 'text'))
+                    )
+                    
+                    # Export local directory
+                    local_export(args)
+                    job['output_files'] = [output_path]
+                    job['progress'] = 100
+                    
             except Exception as e:
-                job['errors'].append(f"Error converting {filename}: {str(e)}")
-            finally:
-                if input_path.exists():
-                    input_path.unlink()
+                error_type = "repository" if repo_url else "local directory"
+                job['errors'].append(f"Error exporting {error_type}: {str(e)}")
         
-        job['output_files'] = output_files
+        else:
+            raise ValueError(f"Invalid command: {command}")
+        
         job['status'] = 'completed' if not job['errors'] else 'completed_with_errors'
         
     except Exception as e:
         job['status'] = 'failed'
-        job['errors'].append(f"Conversion failed: {str(e)}")
+        job['errors'].append(f"Job failed: {str(e)}")
     
     finally:
         # Signal completion
         job_events[job_id].set()
 
 @app.route('/', methods=['GET', 'POST'])
-def upload_file():
+def index():
     if request.method == 'POST':
-        if not request.files:
-            return jsonify({'error': 'No files selected'}), 400
-        
-        files = {f.filename: f for f in request.files.getlist('file') if f.filename}
-        if not files:
-            return jsonify({'error': 'No files selected'}), 400
+        command = request.form.get('command', 'export')
         
         # Create job
         job_id = str(uuid.uuid4())
-        conversion_jobs[job_id] = {
-            'status': 'queued',
-            'progress': 0,
-            'errors': [],
-            'start_time': datetime.now(),
-            'output_files': []
-        }
+        conversion_jobs[job_id] = JobStatus(
+            status='queued',
+            progress=0,
+            errors=[],
+            start_time=datetime.now(),
+            output_files=[]
+        )
         job_events[job_id] = threading.Event()
         
+        # Handle different commands
+        if command == 'convert':
+            if not request.files:
+                return jsonify({'error': 'No files selected'}), 400
+            
+            files = {f.filename: f for f in request.files.getlist('file') if f.filename}
+            if not files:
+                return jsonify({'error': 'No files selected'}), 400
+            
+            
+            options = ConversionOptions(
+                format=request.form.get('format', 'text'),
+                pages=request.form.get('pages', ''),
+                brightness=request.form.get('brightness', '1.0'),
+                contrast=request.form.get('contrast', '1.0'),
+                resolution=request.form.get('resolution', '300')
+            )
+            
+            # Start conversion in background
+            thread = threading.Thread(
+                target=process_job,
+                args=(job_id, command, files, options)
+            )
+            
+        else:  # command == 'export'
+            options = ConversionOptions(format=request.form.get('format', 'text'))
+            
+            # Add repository-specific options
+            if repo_url := request.form.get('repo_url'):
+                options.update(
+                    repo_url=repo_url,
+                    branch=request.form.get('branch'),
+                    token=request.form.get('token')
+                )
+            
+            # Add local directory options
+            elif request.form.get('local_dir'):
+                if not request.files:
+                    return jsonify({'error': 'No directory selected'}), 400
+                
+                # Get the first file's directory path
+                first_file = next(iter(request.files.values()))
+                dir_path = str(Path(first_file.filename).parent)
+                options['local_dir'] = dir_path
+            
+            else:
+                return jsonify({'error': 'No repository URL or local directory provided'}), 400
+            
+            # Start export in background
+            thread = threading.Thread(
+                target=process_job,
+                args=(job_id, command, None, options)
+            )
         
-        # Get conversion options
-        options = {
-            'format': request.form.get('format', 'text'),
-            'pages': request.form.get('pages', ''),
-            'brightness': request.form.get('brightness', '1.0'),
-            'contrast': request.form.get('contrast', '1.0'),
-            'resolution': request.form.get('resolution', '300')
-        }
-        
-        # Start conversion in background
-        thread = threading.Thread(
-            target=process_conversion,
-            args=(job_id, files, options)
-        )
         thread.start()
-        
         return jsonify({'job_id': job_id})
         
-    return render_template('upload.html')
+    return render_template('index.html')
 
 @app.route('/status/<job_id>')
 def get_status(job_id):
@@ -210,5 +337,18 @@ def cleanup_job(job_id):
     return jsonify({'status': 'cleaned'})
 
 if __name__ == '__main__':
-    setup_logging()  # Set up logging for the web server
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    setup_logging(operation="web", context="server")  # Set up logging for the web server
+    
+    # Get port from environment variable or use default (8000)
+    port = int(os.environ.get('FLASK_RUN_PORT', 8000))
+    
+    try:
+        app.run(debug=True, host='0.0.0.0', port=port)
+    except OSError as e:
+        if "Address already in use" in str(e):
+            logger.error(f"\nPort {port} is in use. Try one of the following:")
+            logger.error(f"1. Set a different port using: export FLASK_RUN_PORT=8080")
+            logger.error(f"2. On macOS, disable AirPlay Receiver in System Preferences -> General -> AirDrop & Handoff")
+            logger.error(f"3. Use an alternative port like 8080, 3000, or 8000\n")
+            sys.exit(1)
+        raise  # Re-raise other OSErrors

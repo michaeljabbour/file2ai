@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "file2ai"
 version = "1.0.1"
 description = "A comprehensive tool for file conversion, text extraction, and AI processing"
+requires-python = ">=3.8"
 authors = [
     { name = "Michael Jabbour", email = "michael@jabbour.dev" }
 ]
@@ -26,7 +27,9 @@ dependencies = [
 test = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    "pytest-mock"
+    "pytest-mock",
+    "fpdf>=1.7.2",
+    "python-pptx>=0.6.21"
 ]
 web = [
     "flask>=2.0.0"
@@ -35,11 +38,21 @@ web = [
 [project.urls]
 "Source Code" = "https://github.com/michaeljabbour/file2ai"
 
+# System dependencies required:
+# - LibreOffice (soffice) for document conversions
+#   macOS: brew install libreoffice
+#   Linux: sudo apt-get install libreoffice
+
 [tool.setuptools]
 # We only have a single Python module called 'file2ai.py'
 py-modules = ["file2ai"]
 
 [tool.black]
 line-length = 100
-target-version = ['py37']
+target-version = ['py311']
 include = '\.pyi?$'
+
+[tool.pytest.ini_options]
+addopts = "-v"
+testpaths = ["tests"]
+norecursedirs = ["exports", "logs", "venv", "__pycache__"]

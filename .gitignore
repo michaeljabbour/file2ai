@@ -8,6 +8,14 @@ env/
 .env/
 .venv/
 
+# Python package builds
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+.coverage
+
 # Logs and exports
 exports/
 logs/
@@ -20,3 +28,9 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+exports/
+uploads/
+logs/
+file2ai.egg-info/
+.coverage
+.python-version
