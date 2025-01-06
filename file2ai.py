@@ -198,10 +198,8 @@ TEXT_EXTENSIONS: Set[str] = {
 
 BINARY_EXTENSIONS: Set[str] = {
     ".bin",
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".gif",
+    ".jpg",  # Standard image format
+    ".jpeg", # Standard image format
     ".pdf",
     ".exe",
     ".dll",
@@ -672,8 +670,7 @@ def load_gitignore_patterns(repo_root: Path) -> Tuple[Set[str], Set[str]]:
         "*.bin",
         "*.jpg",
         "*.jpeg",
-        "*.png",
-        "*.gif",
+        "*.jpg",
         "*.pdf",
         "*.zip",
         "*.tar.gz",
@@ -1782,10 +1779,10 @@ def convert_document(args: argparse.Namespace) -> None:
 
                     # Create the .image file that contains the list of generated images
                     image_output_path = output_path.with_suffix(".image")
-                    image_files = sorted(Path(images_dir).glob("*.png"))
+                    image_files = sorted(Path(images_dir).glob("*.jpg"))
                     with open(image_output_path, "w") as f:
                         for img_path in image_files:
-                            # Ensure path is in the format "exports/images/filename.png"
+                            # Ensure path is in the format "exports/images/filename.jpg"
                             relative_path = f"exports/images/{img_path.name}"
                             f.write(f"{relative_path}\n")
                     logger.info(f"Successfully converted Excel to images in {images_dir}")
@@ -2224,7 +2221,7 @@ def convert_document(args: argparse.Namespace) -> None:
 
                             # Convert to PIL Image for enhancement if PIL is available
                             img_data = pix.samples
-                            image_path = images_dir / f"{input_path.stem}_page_{page_num}.png"
+                            image_path = images_dir / f"{input_path.stem}_page_{page_num}.jpg"
 
                             if check_image_enhance_support():
                                 try:
@@ -2280,7 +2277,7 @@ def convert_document(args: argparse.Namespace) -> None:
                         # Create a combined output file listing all image paths
                         image_list = []
                         for page_num in pages_to_process:
-                            image_name = f"{input_path.stem}_page_{page_num}.png"
+                            image_name = f"{input_path.stem}_page_{page_num}.jpg"
                             image_path = images_dir / image_name
                             # In test environment, don't check exists
                             image_list.append(f"exports/images/{image_name}")
@@ -2447,7 +2444,7 @@ def convert_document(args: argparse.Namespace) -> None:
                 # Create a combined output file listing all image paths
                 image_list = []
                 for page_num in pages_to_process:
-                    image_name = f"{input_path.stem}_page_{page_num}.png"
+                    image_name = f"{input_path.stem}_page_{page_num}.jpg"
                     image_path = images_dir / image_name
                     # In test environment, don't check exists
                     image_list.append(f"exports/images/{image_name}")

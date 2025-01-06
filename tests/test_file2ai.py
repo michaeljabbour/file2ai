@@ -1272,7 +1272,7 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
 <head><title>Test Document</title></head>
 <body>
     <h1>Test Heading</h1>
-    <img src="test.png" alt="Test Image">
+    <img src="test.jpg" alt="Test Image">
 </body>
 </html>"""
 
@@ -1280,7 +1280,7 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
     test_file.write_text(test_html)
 
     # Create a test image
-    test_image = tmp_path / "test.png"
+    test_image = tmp_path / "test.jpg"
     from PIL import Image
 
     img = Image.new("RGB", (100, 100), color="red")
@@ -1315,7 +1315,7 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
 
 
 def test_html_to_image_conversion(tmp_path, caplog):
-    """Test HTML to image conversion."""
+    """Test HTML to JPG image conversion."""
 
     # Create a test HTML file
     test_html = """<!DOCTYPE html>
@@ -1380,8 +1380,8 @@ def test_html_to_image_conversion(tmp_path, caplog):
     images_dir.mkdir(exist_ok=True, parents=True)
 
     # Create mock image files
-    (images_dir / "test_page_1.png").touch()
-    (images_dir / "test_page_2.png").touch()
+    (images_dir / "test_page_1.jpg").touch()
+    (images_dir / "test_page_2.jpg").touch()
 
     # Mock Path.exists() for image files
     def mock_exists(self):
@@ -1391,21 +1391,21 @@ def test_html_to_image_conversion(tmp_path, caplog):
             return True
         if path_str.endswith(".image"):
             return True
-        if path_str.endswith(("test_page_1.png", "test_page_2.png")):
+        if path_str.endswith(("test_page_1.jpg", "test_page_2.jpg")):
             return True
         return False
 
     with patch.object(Path, "exists", mock_exists):
         # Verify image files exist
-        assert (images_dir / "test_page_1.png").exists()
-        assert (images_dir / "test_page_2.png").exists()
+        assert (images_dir / "test_page_1.jpg").exists()
+        assert (images_dir / "test_page_2.jpg").exists()
 
         # Verify the list file exists and contains correct paths
         list_files = list(exports_dir.glob("test*.image"))
         assert len(list_files) == 1
         content = list_files[0].read_text()
-        assert "exports/images/test_page_1.png" in content
-    assert "exports/images/test_page_2.png" in content
+        assert "exports/images/test_page_1.jpg" in content
+    assert "exports/images/test_page_2.jpg" in content
 
     # Clean up
     shutil.rmtree(exports_dir)
