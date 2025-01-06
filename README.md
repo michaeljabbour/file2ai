@@ -179,30 +179,104 @@ This places the file in `exports/my_export.txt`.
 
 ### 4. Document Conversion
 
-The `convert` subcommand enables basic document format conversion:
+file2ai supports converting between various document formats. You can use either the direct file path method or the `convert` subcommand:
 
 ```bash
-# Convert a file to PDF format
-python file2ai.py convert --input document.txt --format pdf
+# Direct file path method (simplest):
+python file2ai.py document.pdf                    # Converts to text by default
+python file2ai.py document.docx --format pdf      # Specify output format
+python file2ai.py document.xlsx --format csv      # Convert Excel to CSV
 
-# Convert a file to plain text
+# Using convert subcommand (more options):
 python file2ai.py convert --input document.pdf --format text
-
-# Convert a document to image format
-python file2ai.py convert --input document.pdf --format image
 ```
 
-Currently supported output formats:
-- Text (TXT)
-- PDF
-- Image
+#### Supported Formats and Examples
 
-You can specify a custom output path using the `--output` option:
-```bash
-python file2ai.py convert --input document.txt --format pdf --output custom_name.pdf
-```
+1. **PDF Documents**
+   ```bash
+   # Convert PDF to text (with page selection)
+   python file2ai.py sample.pdf --pages "1-3,5"
+   python file2ai.py convert --input sample.pdf --format text --pages "1,3,5-7"
 
-Note: By default, converted files are saved in the `exports/` directory with an automatically generated filename based on the input file and chosen format.
+   # Convert PDF to images
+   python file2ai.py sample.pdf --format image --resolution 300
+   ```
+
+2. **Microsoft Word (DOC/DOCX)**
+   ```bash
+   # Convert Word to text
+   python file2ai.py document.docx
+   
+   # Convert Word to PDF
+   python file2ai.py document.docx --format pdf
+   ```
+
+3. **Microsoft Excel (XLS/XLSX)**
+   ```bash
+   # Convert Excel to CSV
+   python file2ai.py spreadsheet.xlsx --format csv
+   
+   # Convert Excel to text (preserves formatting)
+   python file2ai.py spreadsheet.xlsx --format text
+   ```
+
+4. **PowerPoint (PPT/PPTX)**
+   ```bash
+   # Convert PowerPoint to images (one per slide)
+   python file2ai.py slides.pptx --format image
+   
+   # Convert with image quality settings
+   python file2ai.py slides.pptx --format image --quality 90 --resolution 300
+   ```
+
+5. **HTML/MHTML**
+   ```bash
+   # Convert HTML to text (strips formatting)
+   python file2ai.py webpage.html
+   
+   # Convert HTML to PDF
+   python file2ai.py webpage.html --format pdf
+   ```
+
+#### Advanced Options
+
+1. **Image Processing Options**
+   ```bash
+   # Adjust brightness and contrast (range: 0.0-2.0)
+   python file2ai.py document.pdf --format image --brightness 1.2 --contrast 1.1
+   
+   # Set image quality and resolution
+   python file2ai.py slides.pptx --format image --quality 95 --resolution 300
+   ```
+
+2. **Output Control**
+   ```bash
+   # Specify custom output path
+   python file2ai.py document.pdf --output custom_name.text
+   
+   # Default: files are saved in exports/ directory
+   python file2ai.py document.docx  # Creates exports/document.text
+   ```
+
+#### Format-Specific Features
+
+- **PDF Processing**
+  - Page range selection with flexible syntax (e.g., "1-3,5,7-9")
+  - High-quality text extraction with layout preservation
+  - Image export with customizable resolution
+
+- **Office Documents**
+  - Maintains document structure when converting to text
+  - Preserves tables and formatting in Excel conversions
+  - Supports batch image export for PowerPoint slides
+
+- **Image Processing**
+  - Adjustable brightness and contrast
+  - Quality control for compression (1-100)
+  - Custom resolution settings (DPI)
+
+Note: All converted files are saved in the `exports/` directory by default. Use the `--output` option to specify a custom location.
 
 ## Development
 

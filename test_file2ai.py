@@ -1453,7 +1453,8 @@ def test_advanced_options_validation(tmp_path, caplog):
          patch('PIL.ImageEnhance.Brightness', return_value=mock_image), \
          patch('PIL.ImageEnhance.Contrast', return_value=mock_image), \
          patch('PIL.ImageDraw.Draw'), \
-         patch('pathlib.Path.exists', return_value=True):
+         patch('pathlib.Path.exists', return_value=True), \
+         patch('file2ai.HAS_PIL_ENHANCE', True):
 
         # Test brightness validation
         args = MagicMock(
