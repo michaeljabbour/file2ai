@@ -9,3 +9,4 @@ file2ai.egg-info/requires.txt
 file2ai.egg-info/top_level.txt
 tests/test_file2ai.py
 tests/test_file2ai_extension.py
+tests/test_weasyprint.py

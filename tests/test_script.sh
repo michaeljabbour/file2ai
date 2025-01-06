@@ -198,7 +198,28 @@ log_info "Project root: $PROJECT_ROOT"
 log_info "Contents of exports directory:"
 ls -la "$PROJECT_ROOT/exports/"
 
-# Test PDF conversion
+# Test web interface
+log_info "Testing web interface..."
+python "$PROJECT_ROOT/file2ai.py" serve --port 8000 &
+FLASK_PID=$!
+sleep 2  # Wait for server to start
+
+# Test if server is running
+if ! curl -s http://localhost:8000 > /dev/null; then
+    log_error "Web server failed to start"
+    kill $FLASK_PID 2>/dev/null || true
+    exit 1
+fi
+log_success "Web server started successfully"
+
+# Clean up web server
+kill $FLASK_PID
+sleep 1
+
+# Test document conversions with pure Python implementation
+log_info "Testing document conversions..."
+
+# Test PDF conversion with default settings
 log_info "Testing PDF conversion..."
 pdf_file="$PROJECT_ROOT/exports/test.pdf"
 if [ ! -f "$pdf_file" ]; then
@@ -214,23 +235,78 @@ if [ ! -s "$pdf_file" ]; then
 fi
 
 log_info "Found PDF file, starting conversion..."
+# Test text conversion
 python "$PROJECT_ROOT/file2ai.py" convert --input "$pdf_file" --format text --output "$PROJECT_ROOT/exports/test.pdf.text" || log_error "PDF to text conversion failed!"
-python "$PROJECT_ROOT/file2ai.py" convert --input "$pdf_file" --format image --output "$PROJECT_ROOT/exports/test.pdf.image" --brightness 1.5 --contrast 1.2 || log_error "PDF to image conversion failed!"
+
+# Test image conversion with default enhancement values
+log_info "Testing image conversion with optimal enhancement values..."
+python "$PROJECT_ROOT/file2ai.py" convert --input "$pdf_file" --format image --output "$PROJECT_ROOT/exports/test.pdf.enhanced.png" || log_error "PDF to enhanced image conversion failed!"
+
+# Test image conversion with custom values
+python "$PROJECT_ROOT/file2ai.py" convert --input "$pdf_file" --format image --output "$PROJECT_ROOT/exports/test.pdf.custom.png" --brightness 1.3 --contrast 1.1 || log_error "PDF to custom image conversion failed!"
+
+# Verify all conversions produced output
+log_info "Verifying conversion outputs..."
+for output in test.pdf.text test.pdf.enhanced.png test.pdf.custom.png; do
+    if [ ! -f "$PROJECT_ROOT/exports/$output" ]; then
+        log_error "Output file not found: $output"
+    fi
+    if [ ! -s "$PROJECT_ROOT/exports/$output" ]; then
+        log_error "Output file is empty: $output"
+    fi
+done
+log_success "All conversion outputs verified"
 
 # 6) Test local directory export
 log_info "Testing local directory export..."
 python "$PROJECT_ROOT/file2ai.py" --local-dir "$PROJECT_ROOT" || log_error "Local export failed!"
 
-# 7) Test normal remote repo export
-log_info "Testing normal remote repo export..."
-python "$PROJECT_ROOT/file2ai.py" --repo-url https://github.com/michaeljabbour/file2ai || log_error "Remote repo export failed!"
+# 7) Test repository export features
+log_info "Testing repository export features..."
 
-# 8) Test subdir/extra path export
+# Test normal repo export with text format
+log_info "Testing normal repo export (text format)..."
+python "$PROJECT_ROOT/file2ai.py" --repo-url https://github.com/michaeljabbour/file2ai --format text || log_error "Remote repo export (text) failed!"
+
+# Test repo export with JSON format
+log_info "Testing repo export with JSON format..."
+python "$PROJECT_ROOT/file2ai.py" --repo-url https://github.com/michaeljabbour/file2ai --format json || log_error "Remote repo export (json) failed!"
+
+# Test specific branch export
+log_info "Testing specific branch export..."
+python "$PROJECT_ROOT/file2ai.py" --repo-url https://github.com/michaeljabbour/file2ai --branch main || log_error "Branch-specific export failed!"
+
+# Test subdirectory export
+log_info "Testing subdirectory export..."
+python "$PROJECT_ROOT/file2ai.py" --repo-url https://github.com/michaeljabbour/file2ai --subdir tests || log_error "Subdirectory export failed!"
+
+# Test subdir/extra path export
 log_info "Testing subdir/extra path export..."
 python "$PROJECT_ROOT/file2ai.py" --repo-url-sub https://github.com/michaeljabbour/file2ai/pulls || log_error "Subdir export failed!"
+
+# Validate JSON output
+json_file="exports/file2ai_export.json"
+if [ -f "$json_file" ]; then
+    log_info "JSON export found"
+    if jq empty "$json_file" 2>/dev/null; then
+        log_success "JSON export is valid"
+        
+        # Check required fields
+        if jq -e '.repository_name and .files and .metadata' "$json_file" >/dev/null; then
+            log_success "JSON structure looks correct"
+        else
+            log_error "JSON export missing required fields"
+        fi
+    else
+        log_error "JSON export is not valid"
+    fi
+else
+    log_error "Missing JSON export file: $json_file"
+fi
 # Remove duplicate PDF conversion test section as it's already handled above
 
-log_info "Testing Word document conversion..."
+# Test all supported formats
+log_info "Testing Word document conversion (pure Python)..."
 python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/exports/test.docx" --format text --output "$PROJECT_ROOT/exports/test.docx.text" || { log_error "Word to text conversion failed!"; true; }
 python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/exports/test.docx" --format image --output "$PROJECT_ROOT/exports/test.docx.image" --brightness 1.5 --contrast 1.2 || { log_error "Word to image conversion failed!"; true; }
 
@@ -241,6 +317,19 @@ python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/exports/test.pp
 log_info "Testing Excel conversion..."
 python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/exports/test.xlsx" --format text --output "$PROJECT_ROOT/exports/test.xlsx.text" || { log_error "Excel to text conversion failed!"; true; }
 python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/exports/test.xlsx" --format image --output "$PROJECT_ROOT/exports/test.xlsx.image" --brightness 1.5 --contrast 1.2 || { log_error "Excel to image conversion failed!"; true; }
+
+log_info "Testing HTML conversion (pure Python)..."
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/exports/test.html" --format text --output "$PROJECT_ROOT/exports/test.html.text" || { log_error "HTML to text conversion failed!"; true; }
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/exports/test.html" --format image --output "$PROJECT_ROOT/exports/test.html.image" || { log_error "HTML to image conversion failed!"; true; }
+
+# Verify cross-platform compatibility
+log_info "Verifying Python version compatibility..."
+python_version=$(python --version)
+if [[ $python_version =~ 3\.1[12] ]]; then
+    log_success "Running on supported Python version: $python_version"
+else
+    log_warn "Running on Python version $python_version (recommended: 3.11 or 3.12)"
+fi
 
 # 9) Validate document conversion outputs
 log_info "Validating document conversion outputs..."
@@ -378,6 +467,43 @@ if [ -f "$xlsx_img" ]; then
     fi
 else
     log_error "Missing Excel image export: $xlsx_img"
+fi
+
+# Check HTML outputs
+html_txt="$PROJECT_ROOT/exports/test.html.text"
+if [ -f "$html_txt" ]; then
+    log_info "HTML text export found"
+    if [ -s "$html_txt" ]; then
+        log_success "HTML text export has content"
+    else
+        log_error "HTML text export is empty"
+    fi
+else
+    log_error "Missing HTML text export: $html_txt"
+fi
+
+html_img="$PROJECT_ROOT/exports/test.html.image"
+if [ -f "$html_img" ]; then
+    log_info "HTML image export found"
+    if [ -s "$html_img" ] && grep -q "exports/images/" "$html_img"; then
+        while IFS= read -r img_path || [ -n "$img_path" ]; do
+            if [ ! -f "$img_path" ]; then
+                log_error "Missing HTML image file: $img_path"
+            fi
+            
+            # Verify image enhancement values in filename
+            if [[ "$img_path" == *"enhanced"* ]]; then
+                if ! identify -format "%[fx:brightness] %[fx:contrast]" "$img_path" 2>/dev/null | grep -q "1.50.*1.20"; then
+                    log_warn "Image $img_path may not have optimal enhancement values (expected: brightness=1.50, contrast=1.20)"
+                fi
+            fi
+        done < "$html_img"
+        log_success "HTML image export and files look correct"
+    else
+        log_error "HTML image export list is invalid"
+    fi
+else
+    log_error "Missing HTML image export: $html_img"
 fi
 
 # 10) Validate repository outputs
