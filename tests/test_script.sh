@@ -38,7 +38,9 @@
 #       before running tests. Make sure to backup any important
 #       files before running.
 
-set -e  # Exit on any error
+# Initialize error tracking
+ERRORS=()
+ERROR_COUNT=0
 
 # Colors for output
 RED='\033[0;31m'
@@ -48,13 +50,32 @@ NC='\033[0m'
 
 # Logging helpers
 log_success() { echo -e "${GREEN}✓ $1${NC}"; }
-log_error() { echo -e "${RED}✗ $1${NC}"; exit 1; }
+log_error() { 
+    echo -e "${RED}✗ $1${NC}"
+    ERRORS+=("$1")
+    ((ERROR_COUNT++))
+}
 log_warn() { echo -e "${YELLOW}! $1${NC}"; }
 log_info() { echo -e "➜ $1"; }
 
+# Function to display all errors and exit with proper status
+display_errors_and_exit() {
+    if [ ${#ERRORS[@]} -gt 0 ]; then
+        echo -e "\n${RED}The following errors occurred:${NC}"
+        for error in "${ERRORS[@]}"; do
+            echo -e "${RED}✗ $error${NC}"
+        done
+        echo -e "\n${RED}Total errors: $ERROR_COUNT${NC}"
+        exit 1
+    else
+        log_success "All tests completed successfully"
+        exit 0
+    fi
+}
+
 # Get the project root directory (one level up from tests/)
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$PROJECT_ROOT" || log_error "Failed to change to project root directory"
+cd "$PROJECT_ROOT" || { log_error "Failed to change to project root directory"; display_errors_and_exit; }
 
 # 1) Clean up old artifacts
 log_info "Cleaning up old artifacts..."
@@ -100,9 +121,11 @@ log_info "Installing file2ai in editable mode with all dependencies..."
 # Capture all installation output
 install_output=$(pip install --upgrade pip 2>&1) || {
     log_error "Failed to upgrade pip. Output:\n$install_output"
+    display_errors_and_exit
 }
 install_output=$(pip install -e ".[test,web]" 2>&1) || {
     log_error "Failed to install file2ai with dependencies. Output:\n$install_output"
+    display_errors_and_exit
 }
 log_success "Installation complete"
 
@@ -208,7 +231,6 @@ sleep 2  # Wait for server to start
 if ! curl -s http://localhost:8000 > /dev/null; then
     log_error "Web server failed to start"
     kill $FLASK_PID 2>/dev/null || true
-    exit 1
 fi
 log_success "Web server started successfully"
 
@@ -226,12 +248,10 @@ if [ ! -f "$pdf_file" ]; then
     log_error "PDF test file not found at: $pdf_file"
     log_error "Contents of exports directory:"
     ls -la "$PROJECT_ROOT/exports/"
-    exit 1
 fi
 
 if [ ! -s "$pdf_file" ]; then
     log_error "PDF test file is empty: $pdf_file"
-    exit 1
 fi
 
 log_info "Found PDF file, starting conversion..."
@@ -240,14 +260,14 @@ python "$PROJECT_ROOT/file2ai.py" convert --input "$pdf_file" --format text --ou
 
 # Test image conversion with default enhancement values
 log_info "Testing image conversion with optimal enhancement values..."
-python "$PROJECT_ROOT/file2ai.py" convert --input "$pdf_file" --format image --output "$PROJECT_ROOT/exports/test.pdf.enhanced.png" || log_error "PDF to enhanced image conversion failed!"
+python "$PROJECT_ROOT/file2ai.py" convert --input "$pdf_file" --format image --output "$PROJECT_ROOT/exports/test.pdf.enhanced.jpg" || log_error "PDF to enhanced image conversion failed!"
 
 # Test image conversion with custom values
-python "$PROJECT_ROOT/file2ai.py" convert --input "$pdf_file" --format image --output "$PROJECT_ROOT/exports/test.pdf.custom.png" --brightness 1.3 --contrast 1.1 || log_error "PDF to custom image conversion failed!"
+python "$PROJECT_ROOT/file2ai.py" convert --input "$pdf_file" --format image --output "$PROJECT_ROOT/exports/test.pdf.custom.jpg" --brightness 1.3 --contrast 1.1 || log_error "PDF to custom image conversion failed!"
 
 # Verify all conversions produced output
 log_info "Verifying conversion outputs..."
-for output in test.pdf.text test.pdf.enhanced.png test.pdf.custom.png; do
+for output in test.pdf.text test.pdf.enhanced.jpg test.pdf.custom.jpg; do
     if [ ! -f "$PROJECT_ROOT/exports/$output" ]; then
         log_error "Output file not found: $output"
     fi
@@ -255,6 +275,9 @@ for output in test.pdf.text test.pdf.enhanced.png test.pdf.custom.png; do
         log_error "Output file is empty: $output"
     fi
 done
+
+# Display final error summary and exit with appropriate status
+display_errors_and_exit
 log_success "All conversion outputs verified"
 
 # 6) Test local directory export
@@ -642,7 +665,10 @@ fi
 # Clean up test file
 rm -f "$PROJECT_ROOT/exports/test_upload.txt"
 
-log_success "All validation checks passed!"
+log_success "All validation checks completed!"
 log_info "Done."
 
 # Note: The frontend server will be automatically killed by the trap when the script exits
+
+# Display final error summary and exit with appropriate status
+display_errors_and_exit
