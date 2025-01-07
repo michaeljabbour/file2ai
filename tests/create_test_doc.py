@@ -26,4 +26,4 @@ if __name__ == "__main__":
 
     output_path = os.path.join(test_files_dir, "test.docx")
     doc.save(output_path)
-    print(f"Test document created successfully at: {output_path}")
+    # File created successfully

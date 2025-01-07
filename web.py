@@ -39,8 +39,18 @@ class JobStatus(TypedDict):
     output_files: List[Path]
 
 
-app = Flask(__name__)
+from file2ai import EXPORTS_DIR, UPLOADS_DIR, FRONTEND_DIR, prepare_exports_dir
+
+app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path='')
 app.secret_key = os.urandom(24)  # For flash messages
+
+# Ensure required directories exist with proper permissions
+prepare_exports_dir()  # Use the existing function from file2ai.py
+UPLOADS_FOLDER = Path(UPLOADS_DIR)
+FRONTEND_FOLDER = Path(FRONTEND_DIR)
+
+for folder in [UPLOADS_FOLDER, FRONTEND_FOLDER]:
+    folder.mkdir(exist_ok=True, mode=0o755)
 
 # Global job tracking
 conversion_jobs = {}

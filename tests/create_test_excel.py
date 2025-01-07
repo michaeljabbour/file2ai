@@ -47,7 +47,7 @@ def create_test_excel():
 
     output_path = os.path.join(test_files_dir, "test.xlsx")
     wb.save(output_path)
-    print(f"Created sample Excel file at: {output_path}")
+    # File created successfully
 
 
 if __name__ == "__main__":

@@ -37,7 +37,7 @@ def create_test_html():
     output_path = os.path.join(test_files_dir, "test.html")
     with open(output_path, "w") as f:
         f.write(html_content)
-    print(f"Test HTML file created successfully at: {output_path}")
+    # File created successfully
 
 
 if __name__ == "__main__":

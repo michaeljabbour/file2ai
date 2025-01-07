@@ -60,10 +60,13 @@ function File2AI() {
 
     // Prepare form data with correct command
     const formData = new FormData();
-    formData.append("format", outputFormat);
-
+    formData.append("format", outputFormat || "text");  // Ensure format is never empty
+    
     if (selectedTab === "file" && files?.length) {
       formData.append("command", "convert");
+      // Log form data for debugging
+      console.log("Format:", outputFormat);
+      console.log("Files:", files);
       Array.from(files).forEach((f) => formData.append("file", f));
     } else if (selectedTab === "repo") {
       formData.append("command", "export");

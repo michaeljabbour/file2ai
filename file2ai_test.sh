@@ -101,14 +101,66 @@ backup_test_files() {
     done
 }
 
-# Main execution
+# Run pytest with proper configuration
+run_tests() {
+    log_info "Running pytest..."
+    if ! command -v pytest &> /dev/null; then
+        log_error "pytest not found. Please install test dependencies first."
+        return 1
+    fi
+
+    # Run pytest with progress bar and minimal output
+    python -m pytest tests/test_file2ai.py -v --tb=short --show-capture=no || {
+        log_error "Some tests failed!"
+        return 1
+    }
+    log_success "All tests passed!"
+}
+
+# Show progress bar
+show_progress() {
+    local current=$1
+    local total=$2
+    local width=50
+    local percentage=$((current * 100 / total))
+    local filled=$((width * current / total))
+    local empty=$((width - filled))
+    printf "\rProgress: [%${filled}s%${empty}s] %d%%" "" "" "$percentage"
+}
+
+# Main execution with progress tracking
 main() {
+    local total_steps=6
+    local current_step=0
+
+    show_progress $current_step $total_steps
+
     clean_old_artifacts
+    ((current_step++))
+    show_progress $current_step $total_steps
+
     create_directories
+    ((current_step++))
+    show_progress $current_step $total_steps
+
     create_test_files
+    ((current_step++))
+    show_progress $current_step $total_steps
+
     verify_test_files
+    ((current_step++))
+    show_progress $current_step $total_steps
+
     backup_test_files
-    log_success "All test files created and verified!"
+    ((current_step++))
+    show_progress $current_step $total_steps
+
+    run_tests
+    ((current_step++))
+    show_progress $current_step $total_steps
+    echo # New line after progress bar
+
+    log_success "All steps completed successfully!"
 }
 
 # Run main if script is executed directly

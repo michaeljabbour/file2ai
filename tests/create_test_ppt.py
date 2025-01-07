@@ -38,7 +38,7 @@ def create_test_presentation():
 
     output_path = os.path.join(test_files_dir, "test.pptx")
     prs.save(output_path)
-    print(f"Created test presentation at: {output_path}")
+    # File created successfully
 
 
 if __name__ == "__main__":

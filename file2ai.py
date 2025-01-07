@@ -24,6 +24,11 @@ import json
 
 from typing import TYPE_CHECKING
 
+# Directory constants
+EXPORTS_DIR = "exports"
+UPLOADS_DIR = "uploads"
+FRONTEND_DIR = "frontend"
+
 if TYPE_CHECKING:
     from PIL.Image import Image as PILImage
     from PIL import ImageEnhance
@@ -355,6 +360,24 @@ Supported formats for conversion: pdf, text, image, docx, csv, html""",
 
     # Create subparsers for different commands
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Web interface subcommand
+    web_parser = subparsers.add_parser(
+        "web",
+        help="Start the web interface",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    web_parser.add_argument(
+        "--port",
+        type=int,
+        default=8001,
+        help="Port to run the web server on (default: 8001)",
+    )
+    web_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to run the web server on (default: 127.0.0.1)",
+    )
 
     # Convert subcommand
     convert_parser = subparsers.add_parser(
@@ -2823,9 +2846,17 @@ def main() -> NoReturn:
             clone_and_export(args)
     elif args.command == "convert":
         convert_document(args)
-
-    logger.info("file2ai completed successfully")
-    sys.exit(0)
+    elif args.command == "web":
+        # Import Flask app here to avoid circular imports
+        from web import app
+        # Ensure exports directory exists with proper permissions
+        exports_dir = Path(EXPORTS_DIR)
+        exports_dir.mkdir(exist_ok=True, mode=0o755)
+        # Start Flask server
+        app.run(host=args.host, port=args.port)
+    else:
+        logger.info("file2ai completed successfully")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
