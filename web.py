@@ -42,7 +42,7 @@ from file2ai import (
     convert_document,
     clone_and_export,
     local_export,
-    setup_logging
+    setup_logging,
 )
 from argparse import Namespace
 
@@ -130,9 +130,7 @@ def process_job(
             if output_format not in valid_formats:
                 formats_str = ", ".join(valid_formats)
                 raise ValueError(
-                    "Invalid format: %s. Valid formats are: %s" % (
-                        output_format, formats_str
-                    )
+                    ("Invalid format: %s. Valid formats are: %s" % (output_format, formats_str))
                 )
 
             # Validate numeric parameters
@@ -222,20 +220,20 @@ def process_job(
                     output_files.append(output_path)
                     
                     # Update progress
-                    job["progress"] = ((idx + 1) / total_files) * 100
-                    logger.info(f"Updated progress to {job['progress']}%")
-                    
+                    progress = ((idx + 1) / total_files) * 100
+                    job["progress"] = progress
+                    logger.info(f"Updated progress to {progress}%")
                 except Exception as e:
                     logger.error(f"Error during conversion: {str(e)}")
-                    job["errors"].append(
-                        "Error converting %s: %s" % (filename, str(e))
-                    )
+                    job["errors"].append("Error converting %s: %s" % (filename, str(e)))
                     if output_path and output_path.exists():
                         try:
                             output_path.unlink()  # Clean up failed output
                         except Exception as cleanup_err:
                             logger.error(f"Error cleaning up output file: {cleanup_err}")
-                    job["status"] = "completed_with_errors"
+                finally:
+                    if input_path and input_path.exists():
+                        input_path.unlink()
 
             job["output_files"] = output_files
             
@@ -251,21 +249,14 @@ def process_job(
             subdir = options.get("subdir")  # Get subdir from options
 
             if not repo_url and not local_dir:
-                msg = (
-                    "Neither repository URL nor local directory "
-                    "provided for export"
-                )
+                msg = "Neither repository URL nor local directory " "provided for export"
                 raise ValueError(msg)
 
             try:
                 if repo_url:
                     # Create output path for repository
-                    repo_name = (
-                        str(repo_url).rstrip("/")
-                        .split("/")[-1]
-                        .replace(".git", "")
-                    )
-                    format_ext = str(options.get('format', 'text'))
+                    repo_name = str(repo_url).rstrip("/").split("/")[-1].replace(".git", "")
+                    format_ext = str(options.get("format", "text"))
                     filename = f"{repo_name}_export.{format_ext}"
                     output_path = EXPORTS_FOLDER / filename
 
@@ -309,7 +300,7 @@ def process_job(
                 else:
                     # Create output path for local directory
                     dir_name = Path(str(local_dir)).name
-                    format_ext = str(options.get('format', 'text'))
+                    format_ext = str(options.get("format", "text"))
                     filename = f"{dir_name}_export.{format_ext}"
                     output_path = EXPORTS_FOLDER / filename
 
@@ -390,9 +381,8 @@ def process_job(
 
             except Exception as e:
                 error_type = "repository" if repo_url else "local directory"
-                job["errors"].append(
-                    "Error exporting %s: %s" % (error_type, str(e))
-                )
+                error_msg = "Error exporting %s: %s" % (error_type, str(e))
+                job["errors"].append(error_msg)
 
         else:
             raise ValueError("Invalid command: %s" % command)
@@ -457,6 +447,7 @@ def serve_react(path):
     app.logger.info("File not found, serving index.html")
     return send_from_directory("frontend", "index.html")
 
+<<<<<<< HEAD
 @app.route("/", methods=["POST"])
 def handle_api():
     """Handle API requests for file conversion and exports"""
@@ -499,7 +490,141 @@ def handle_api():
             brightness=request.form.get("brightness", "1.0"),
             contrast=request.form.get("contrast", "1.0"),
             resolution=request.form.get("resolution", "300"),
+||||||| ccf8128
+        # Create job
+        job_id = str(uuid.uuid4())
+        conversion_jobs[job_id] = JobStatus(
+            status="queued",
+            progress=0,
+            errors=[],
+            start_time=datetime.now(),
+            output_files=[]
+=======
+        # Create job
+        job_id = str(uuid.uuid4())
+        conversion_jobs[job_id] = JobStatus(
+            status="queued", progress=0, errors=[], start_time=datetime.now(), output_files=[]
+>>>>>>> main
         )
+<<<<<<< HEAD
+||||||| ccf8128
+        job_events[job_id] = threading.Event()
+
+        # Handle different commands
+        if command == "convert":
+            if not request.files:
+                return jsonify({"error": "No files selected"}), 400
+
+            files = {
+                f.filename: f
+                for f in request.files.getlist("file")
+                if f.filename
+            }
+            if not files:
+                return jsonify({"error": "No files selected"}), 400
+
+            options = ConversionOptions(
+                format=request.form.get("format", "text"),
+                pages=request.form.get("pages", ""),
+                brightness=request.form.get("brightness", "1.0"),
+                contrast=request.form.get("contrast", "1.0"),
+                resolution=request.form.get("resolution", "300"),
+            )
+
+            # Start conversion in background
+            thread = threading.Thread(
+                target=process_job,
+                args=(job_id, command, files, options)
+            )
+
+        else:  # command == 'export'
+            fmt = request.form.get("format", "text")
+            options = ConversionOptions(format=fmt)
+
+            # Add repository-specific options
+            if repo_url := request.form.get("repo_url"):
+                options.update(
+                    repo_url=repo_url,
+                    branch=request.form.get("branch"),
+                    token=request.form.get("token"),
+                )
+
+            # Add local directory options
+            elif request.form.get("local_dir"):
+                if not request.files:
+                    return jsonify({"error": "No directory selected"}), 400
+
+                # Get the first file's directory path
+                first_file = next(iter(request.files.values()))
+                dir_path = str(Path(first_file.filename).parent)
+                options["local_dir"] = dir_path
+
+            else:
+                return (
+                    jsonify({
+                        "error": (
+                            "No repository URL or local directory provided"
+                        )
+                    }),
+                    400
+                )
+
+            # Start export in background
+            thread = threading.Thread(
+                target=process_job,
+                args=(job_id, command, None, options)
+            )
+=======
+        job_events[job_id] = threading.Event()
+
+        # Handle different commands
+        if command == "convert":
+            if not request.files:
+                return jsonify({"error": "No files selected"}), 400
+
+            files = {f.filename: f for f in request.files.getlist("file") if f.filename}
+            if not files:
+                return jsonify({"error": "No files selected"}), 400
+
+            options = ConversionOptions(
+                format=request.form.get("format", "text"),
+                pages=request.form.get("pages", ""),
+                brightness=request.form.get("brightness", "1.0"),
+                contrast=request.form.get("contrast", "1.0"),
+                resolution=request.form.get("resolution", "300"),
+            )
+
+            # Start conversion in background
+            thread = threading.Thread(target=process_job, args=(job_id, command, files, options))
+
+        else:  # command == 'export'
+            fmt = request.form.get("format", "text")
+            options = ConversionOptions(format=fmt)
+
+            # Add repository-specific options
+            if repo_url := request.form.get("repo_url"):
+                options.update(
+                    repo_url=repo_url,
+                    branch=request.form.get("branch"),
+                    token=request.form.get("token"),
+                )
+
+            # Add local directory options
+            elif request.form.get("local_dir"):
+                if not request.files:
+                    return jsonify({"error": "No directory selected"}), 400
+
+                # Get the first file's directory path
+                first_file = next(iter(request.files.values()))
+                dir_path = str(Path(first_file.filename).parent)
+                options["local_dir"] = dir_path
+
+            else:
+                return (jsonify({"error": ("No repository URL or local directory provided")}), 400)
+
+            # Start export in background
+            thread = threading.Thread(target=process_job, args=(job_id, command, None, options))
+>>>>>>> main
 
         # Start conversion in background
         thread = threading.Thread(
@@ -571,9 +696,10 @@ def handle_api():
 def get_status(job_id):
     """Get job status"""
     if job_id not in conversion_jobs:
-        return jsonify({"error": "Job not found"}), 404
+        return (jsonify({"error": "Job not found"}), 404)
 
     job = conversion_jobs[job_id]
+<<<<<<< HEAD
     
     # Check if job is completed but has errors
     if job["status"] == "processing" and job["errors"]:
@@ -590,17 +716,26 @@ def get_status(job_id):
         response["error_details"] = "\n".join(job["errors"])
     
     return jsonify(response)
+||||||| ccf8128
+    return jsonify({
+        "status": job["status"],
+        "progress": job["progress"],
+        "errors": job["errors"]
+    })
+=======
+    return jsonify({"status": job["status"], "progress": job["progress"], "errors": job["errors"]})
+>>>>>>> main
 
 
 @app.route("/download/<job_id>")
 def download_files(job_id):
     """Download converted files"""
     if job_id not in conversion_jobs:
-        return jsonify({"error": "Job not found"}), 404
+        return (jsonify({"error": "Job not found"}), 404)
 
     job = conversion_jobs[job_id]
     if job["status"] not in ["completed", "completed_with_errors"]:
-        return jsonify({"error": "Job not complete"}), 400
+        return (jsonify({"error": "Job not complete"}), 400)
 
     if len(job["output_files"]) == 1:
         # Single file download
@@ -608,7 +743,7 @@ def download_files(job_id):
         return send_file(
             str(output_path),
             as_attachment=True,
-            download_name=output_path.name
+            download_name=output_path.name,
         )
     else:
         # Multiple files - create zip
@@ -633,7 +768,7 @@ def download_files(job_id):
 def cleanup_job(job_id):
     """Clean up job files and data"""
     if job_id not in conversion_jobs:
-        return jsonify({"error": "Job not found"}), 404
+        return (jsonify({"error": "Job not found"}), 404)
 
     job = conversion_jobs[job_id]
 
@@ -663,20 +798,13 @@ if __name__ == "__main__":
         app.run(debug=True, host="0.0.0.0", port=port)
     except OSError as e:
         if "Address already in use" in str(e):
-            logger.error(
-                "\nPort %d is in use. Try one of the following:",
-                port
-            )
-            logger.error(
-                "1. Set a different port using: export FLASK_RUN_PORT=8080"
-            )
+            logger.error("\nPort %d is in use. Try one of the following:", port)
+            logger.error("1. Set a different port using: " "export FLASK_RUN_PORT=8080")
             logger.error(
                 "2. On macOS, disable AirPlay Receiver in "
                 "System Preferences -> "
                 "General -> AirDrop & Handoff"
             )
-            logger.error(
-                "3. Use an alternative port like 8080, 3000, or 8000\n"
-            )
+            logger.error("3. Use an alternative port like " "8080, 3000, or 8000\n")
             sys.exit(1)
         raise  # Re-raise other OSErrors

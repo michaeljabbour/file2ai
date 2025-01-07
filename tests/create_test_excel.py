@@ -1,5 +1,4 @@
 from openpyxl import Workbook
-from pathlib import Path
 
 
 def create_test_excel():
