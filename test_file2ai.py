@@ -27,6 +27,10 @@ from file2ai import (
     install_html_support,
     convert_document,
     setup_logging,
+    check_package_support,
+    install_package_support,
+    check_image_enhance_support,
+    convert_word_to_image,
 )
 
 
@@ -1685,3 +1689,124 @@ def test_enhancement_fallback(tmp_path, caplog):
         convert_document(args)
         assert mock_image.save.called  # Image was still created and saved
         assert "Failed to apply image enhancements" not in caplog.text  # No error, just skipped
+
+
+def test_word_to_image_conversion(tmp_path):
+    """Test Word document to image conversion."""
+    import logging
+    from docx import Document
+    from PIL import Image
+    import pytest
+
+    # Create a test Word document
+    doc = Document()
+    doc.add_paragraph("Test paragraph 1")
+    doc.add_paragraph("Test paragraph 2")
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Cell 1"
+    table.cell(0, 1).text = "Cell 2"
+    table.cell(1, 0).text = "Cell 3"
+    table.cell(1, 1).text = "Cell 4"
+
+    # Save test document
+    input_path = tmp_path / "test.docx"
+    doc.save(input_path)
+
+    # Create output directory
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+
+    # Test conversion
+    image_list = convert_word_to_image(
+        input_path=input_path,
+        output_dir=output_dir,
+        resolution=300,
+        brightness=1.0,
+        contrast=1.0,
+        quality=95,
+        logger=logging.getLogger(__name__)
+    )
+
+    # Verify output
+    assert len(image_list) > 0
+    for image_path in image_list:
+        assert Path(image_path).exists()
+        img = Image.open(image_path)
+        assert img.mode == "RGB"
+        assert img.size[0] > 0
+        assert img.size[1] > 0
+
+
+def test_word_to_image_error_handling(tmp_path):
+    """Test error handling in Word to image conversion."""
+    import logging
+    import pytest
+    from docx import Document
+
+    # Test with non-existent file
+    with pytest.raises(FileNotFoundError):
+        convert_word_to_image(
+            input_path=Path("nonexistent.docx"),
+            output_dir=tmp_path,
+            resolution=300,
+            logger=logging.getLogger(__name__)
+        )
+
+    # Test with invalid resolution
+    doc = Document()
+    doc.add_paragraph("Test")
+    input_path = tmp_path / "test.docx"
+    doc.save(input_path)
+    
+    with pytest.raises(ValueError):
+        convert_word_to_image(
+            input_path=input_path,
+            output_dir=tmp_path,
+            resolution=-1,
+            logger=logging.getLogger(__name__)
+        )
+
+
+def test_package_support():
+    """Test package support checking functionality."""
+    # Test with existing package
+    assert check_package_support("os")
+    
+    # Test with non-existent package
+    assert not check_package_support("nonexistent_package_xyz")
+    
+    # Test package mapping
+    assert check_package_support("python-docx") == check_package_support("docx")
+    assert check_package_support("python-pptx") == check_package_support("pptx")
+
+
+def test_install_package_support():
+    """Test package installation functionality."""
+    # Test with already installed package
+    assert install_package_support("os")
+    
+    # Test with mapped package name
+    result = install_package_support("python-docx")
+    assert isinstance(result, bool)
+
+
+def test_docx_support():
+    """Test Word document support checks."""
+    # Test support check
+    has_support = check_docx_support()
+    assert isinstance(has_support, bool)
+    
+    # Verify global flag is updated
+    import file2ai
+    assert file2ai.HAS_DOCX == has_support
+
+
+def test_excel_support():
+    """Test Excel document support checks."""
+    # Test support check
+    has_support = check_excel_support()
+    assert isinstance(has_support, bool)
+    
+    # Test installation attempt
+    result = install_excel_support()
+    assert isinstance(result, bool)

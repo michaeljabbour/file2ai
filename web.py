@@ -726,20 +726,28 @@ if __name__ == "__main__":
     # Set up logging for the web server
     setup_logging(operation="web", context="server")
 
-    # Get port from environment variable or use default (8000)
-    port = int(os.environ.get("FLASK_RUN_PORT", 8000))
-
-    try:
-        app.run(debug=True, host="0.0.0.0", port=port)
-    except OSError as e:
-        if "Address already in use" in str(e):
-            logger.error("\nPort %d is in use. Try one of the following:", port)
-            logger.error("1. Set a different port using: " "export FLASK_RUN_PORT=8080")
-            logger.error(
-                "2. On macOS, disable AirPlay Receiver in "
-                "System Preferences -> "
-                "General -> AirDrop & Handoff"
-            )
-            logger.error("3. Use an alternative port like " "8080, 3000, or 8000\n")
-            sys.exit(1)
-        raise  # Re-raise other OSErrors
+    # Try multiple ports starting from default (8000)
+    start_port = int(os.environ.get("FLASK_RUN_PORT", 8000))
+    max_port = start_port + 20  # Try up to 20 ports
+    
+    for port in range(start_port, max_port + 1):
+        try:
+            logger.info(f"Attempting to start server on port {port}...")
+            app.run(debug=True, host="0.0.0.0", port=port)
+            break  # If successful, exit the loop
+        except OSError as e:
+            if "Address already in use" in str(e):
+                logger.warning(f"Port {port} is in use, trying next port...")
+                if port == max_port:
+                    logger.error("\nAll ports from %d to %d are in use.", start_port, max_port)
+                    logger.error("Try one of the following:")
+                    logger.error("1. Set a different port using: export FLASK_RUN_PORT=<port>")
+                    logger.error(
+                        "2. On macOS, disable AirPlay Receiver in "
+                        "System Preferences -> "
+                        "General -> AirDrop & Handoff"
+                    )
+                    logger.error("3. Free up ports in the range %d-%d\n", start_port, max_port)
+                    sys.exit(1)
+                continue
+            raise  # Re-raise other OSErrors

@@ -38,15 +38,20 @@ Classifier: License :: OSI Approved :: MIT License
 Classifier: Operating System :: OS Independent
 Requires-Python: >=3.8
 License-File: LICENSE
-Requires-Dist: gitpython
-Requires-Dist: python-docx
-Requires-Dist: openpyxl
-Requires-Dist: weasyprint
-Requires-Dist: beautifulsoup4
-Requires-Dist: pytest>=7.0
-Requires-Dist: pytest-cov>=4.0
-Requires-Dist: pytest-mock
+Requires-Dist: gitpython>=3.1.40
+Requires-Dist: python-docx>=0.8.11
+Requires-Dist: openpyxl>=3.1.2
+Requires-Dist: weasyprint>=60.1
+Requires-Dist: beautifulsoup4>=4.12.2
 Requires-Dist: fpdf>=1.7.2
 Requires-Dist: python-pptx>=0.6.21
 Requires-Dist: requests>=2.31.0
-Requires-Dist: flask>=2.0.0
+Requires-Dist: pillow>=10.1.0
+Requires-Dist: pymupdf>=1.23.7
+Requires-Dist: tqdm>=4.66.1
+Provides-Extra: test
+Requires-Dist: pytest>=7.0; extra == "test"
+Requires-Dist: pytest-cov>=4.0; extra == "test"
+Requires-Dist: pytest-mock; extra == "test"
+Provides-Extra: web
+Requires-Dist: flask>=2.0.0; extra == "web"
