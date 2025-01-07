@@ -410,6 +410,12 @@ show_progress() {
 
 # Main execution with progress tracking
 main() {
+    # Initial cleanup and setup
+    rm -rf file2ai.egg-info venv logs exports
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -e .
+    
     # Test exports and validation
     test_exports() {
         log_info "Testing local and remote exports..."
