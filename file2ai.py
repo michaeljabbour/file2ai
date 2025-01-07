@@ -1809,6 +1809,61 @@ def convert_document(args: argparse.Namespace) -> None:
             logger.error(f"Error converting Word document: {str(e)}")
             sys.exit(1)
 
+    # Handle Excel documents (XLS/XLSX) first
+    if input_extension in [".xls", ".xlsx"]:
+        logger.debug(f"Detected Excel file with extension: {input_extension}")
+        if not check_excel_support():
+            logger.info("Installing Excel document support...")
+            if not install_excel_support():
+                logger.error("Failed to install Excel document support")
+                sys.exit(1)
+            logger.info("Excel document support installed successfully")
+
+        try:
+            from openpyxl import load_workbook
+        except ImportError:
+            logger.error("Failed to import openpyxl")
+            sys.exit(1)
+
+        try:
+            logger.debug(f"Loading Excel workbook from path: {input_path}")
+            workbook: "Workbook" = load_workbook(input_path, data_only=True)
+
+            if output_format == "text":
+                logger.debug(f"Starting Excel to text conversion for {input_path}")
+                # Extract text from Excel workbook
+                full_text: List[str] = []
+                logger.debug(f"Processing Excel workbook with {len(workbook.worksheets)} sheets")
+                for sheet in workbook.worksheets:
+                    logger.debug(f"Processing sheet: {sheet.title}")
+                    full_text.append(f"Sheet: {sheet.title}\n")
+                    row_count = 0
+                    for row in sheet.iter_rows():
+                        row_text: List[str] = []
+                        for cell in row:
+                            if cell.value is not None:
+                                row_text.append(str(cell.value).strip())
+                        if row_text:
+                            full_text.append(" | ".join(row_text))
+                            row_count += 1
+                    logger.debug(f"Processed {row_count} rows in sheet {sheet.title}")
+
+                logger.debug(f"Attempting to write output to: {output_path}")
+                try:
+                    output_path.write_text("\n".join(full_text))
+                    logger.debug(f"Successfully wrote {len(full_text)} lines of text")
+                    logger.info(f"Successfully converted Excel document to text: {output_path}")
+                    return
+                except Exception as e:
+                    logger.error(f"Failed to write output file: {str(e)}")
+                    raise
+            else:
+                logger.error(f"Unsupported output format {output_format} for Excel documents")
+                sys.exit(1)
+        except Exception as e:
+            logger.error(f"Error converting Excel document: {str(e)}")
+            sys.exit(1)
+
     # Handle basic text files
     elif input_extension in TEXT_EXTENSIONS or output_format == "text":
         logger.info(f"Starting text file conversion from {input_path} to {output_path}")
@@ -1856,11 +1911,6 @@ def convert_document(args: argparse.Namespace) -> None:
         error_msg = "Failed to decode file with any supported encoding"
         logger.error(error_msg)
         raise UnicodeDecodeError(error_msg)
-
-    # Word document handling is now at the top of the file
-
-    # Handle Excel documents (XLS/XLSX)
-    if input_extension in [".xls", ".xlsx"]:
         if not check_excel_support():
             logger.info("Installing Excel document support...")
             if not install_excel_support():
@@ -1878,10 +1928,14 @@ def convert_document(args: argparse.Namespace) -> None:
             workbook: "Workbook" = load_workbook(input_path, data_only=True)
 
             if output_format == "text":
+                logger.debug(f"Starting Excel to text conversion for {input_path}")
                 # Extract text from Excel workbook
                 full_text: List[str] = []
+                logger.debug(f"Processing Excel workbook with {len(workbook.worksheets)} sheets")
                 for sheet in workbook.worksheets:
+                    logger.debug(f"Processing sheet: {sheet.title}")
                     full_text.append(f"Sheet: {sheet.title}\n")
+                    row_count = 0
                     for row in sheet.iter_rows():
                         row_text: List[str] = []
                         for cell in row:
@@ -1889,9 +1943,17 @@ def convert_document(args: argparse.Namespace) -> None:
                                 row_text.append(str(cell.value).strip())
                         if row_text:
                             full_text.append(" | ".join(row_text))
+                            row_count += 1
+                    logger.debug(f"Processed {row_count} rows in sheet {sheet.title}")
 
-                output_path.write_text("\n".join(full_text))
-                logger.info(f"Successfully converted Excel document to text: {output_path}")
+                logger.debug(f"Attempting to write output to: {output_path}")
+                try:
+                    output_path.write_text("\n".join(full_text))
+                    logger.debug(f"Successfully wrote {len(full_text)} lines of text")
+                    logger.info(f"Successfully converted Excel document to text: {output_path}")
+                except Exception as e:
+                    logger.error(f"Failed to write output file: {str(e)}")
+                    raise
 
             elif output_format == "csv":
                 # Convert active sheet to CSV
