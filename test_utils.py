@@ -42,9 +42,10 @@ def run_with_progress(command: List[str], desc: str, total: Optional[int] = None
     
     # Use spinner below the overall progress bar
     with tqdm(desc=desc, 
-             bar_format='{desc}: {spinner}',
+             bar_format='{desc} {spinner}',
              position=1,
-             leave=False) as pbar:
+             leave=False,
+             ascii=True) as pbar:
         while process.poll() is None:
             pbar.update(1)
             time.sleep(0.1)
@@ -60,9 +61,10 @@ def run_with_progress(command: List[str], desc: str, total: Optional[int] = None
 def show_spinner(desc: str, duration: float) -> None:
     """Show a spinner for a fixed duration."""
     with tqdm(desc=desc, 
-             bar_format='{desc}: {spinner}',
+             bar_format='{desc} {spinner}',
              position=1,
-             leave=False) as pbar:
+             leave=False,
+             ascii=True) as pbar:
         start_time = time.time()
         while time.time() - start_time < duration:
             pbar.update(1)

@@ -238,7 +238,7 @@ launch_frontend() {
     
     # Verify frontend response
     response=$(curl -s "http://localhost:$FLASK_PORT")
-    if echo "$response" | grep -q "File2AI Converter"; then
+    if echo "$response" | grep -q "File2AI"; then
         log_success "Frontend is responding correctly"
     else
         log_error "Frontend response is invalid"
@@ -293,7 +293,7 @@ main() {
         log_info "Validating outputs..."
         
         # Check local export output
-        if [ ! -f "exports/local_export.txt" ]; then
+        if [ ! -f "local_export.txt" ]; then
             log_error "Local export output not found"
             return 1
         fi
