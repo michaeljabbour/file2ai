@@ -6,9 +6,6 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Initialize progress tracking
-python -c "from test_utils import init_overall_progress; init_overall_progress(10)"
-
 # Logging functions
 log_success() { echo -e "${GREEN}✓ $1${NC}" >&2; }
 log_error()   { echo -e "${RED}✗ $1${NC}" >&2; }
@@ -55,9 +52,9 @@ clean_old_artifacts() {
     for dir in "${cleanup_dirs[@]}"; do
         if [ -e "$dir" ]; then
             log_info "Removing $dir..."
-            rm -rf "$dir" 2>/dev/null || {
-                log_warn "Failed to remove $dir - it may be in use or require different permissions"
-                log_warn "You may need to remove it manually: rm -rf $dir"
+            sudo rm -rf "$dir" 2>/dev/null || {
+                log_error "Failed to remove $dir even with sudo"
+                return 1
             }
         fi
     done
@@ -75,15 +72,49 @@ create_directories() {
                 exit 1
             }
         fi
-        chmod 777 "$dir" || log_warn "Failed to set permissions on $dir"
+        sudo chmod 777 "$dir" || {
+            log_error "Failed to set permissions on $dir"
+            return 1
+        }
     done
 }
 
 # Create test files
 create_test_files() {
     log_info "Creating test files..."
-    # Create test files with progress bar
-    python -c "from test_utils import create_test_files; create_test_files('test_files')" || log_warn "Failed to create some test files"
+    # First ensure tqdm is available
+    python3 -c "import tqdm" 2>/dev/null || {
+        log_warn "tqdm not available, falling back to basic progress"
+        for script in "${TEST_CREATION_SCRIPTS[@]}"; do
+            log_info "Running $(basename "$script")..."
+            python3 "$script" || log_warn "Failed to run $script"
+        done
+        return
+    }
+    
+    # Use tqdm if available
+    python3 - <<EOF
+from tqdm import tqdm
+import subprocess
+import sys
+import os
+
+scripts = [
+    "tests/create_test_pdf.py",
+    "tests/create_test_doc.py",
+    "tests/create_test_excel.py",
+    "tests/create_test_ppt.py",
+    "tests/create_test_html.py"
+]
+
+with tqdm(scripts, desc="Creating test files", unit="file") as pbar:
+    for script in pbar:
+        pbar.set_postfix_str(f"Running {os.path.basename(script)}")
+        try:
+            subprocess.run([sys.executable, script], check=True)
+        except subprocess.CalledProcessError:
+            print(f"\nWarning: Failed to run {script}", file=sys.stderr)
+EOF
     
     # Copy created files to exports directory
     for script in "${TEST_CREATION_SCRIPTS[@]}"; do
@@ -138,8 +169,13 @@ backup_test_files() {
 # Set up virtual environment and install dependencies
 setup_environment() {
     log_info "Creating fresh virtual environment..."
+    sudo rm -rf venv 2>/dev/null
     python3 -m venv venv || {
         log_error "Failed to create virtual environment"
+        return 1
+    }
+    sudo chown -R $USER:$USER venv || {
+        log_error "Failed to set venv ownership"
         return 1
     }
     source venv/bin/activate || {
@@ -148,41 +184,120 @@ setup_environment() {
     }
     log_success "Virtual environment created and activated"
     
-    # Install dependencies directly first
-    pip install --upgrade pip || {
-        log_error "Failed to upgrade pip"
-        return 1
-    }
-    pip install -e . || {
-        log_error "Failed to install package"
+    # First install pip and build tools
+    log_info "Upgrading pip and installing build tools..."
+    python3 -m pip install --upgrade pip setuptools wheel || {
+        log_error "Failed to upgrade pip and install build tools"
         return 1
     }
     
-    # Now we can use progress utils since dependencies are installed
-    python -c "from test_utils import install_deps_with_progress; install_deps_with_progress(['-e .[test,web]'])" || {
-        log_error "Failed to install test dependencies"
+    # Install tqdm for progress bars
+    python3 -m pip install tqdm || {
+        log_error "Failed to install tqdm"
         return 1
     }
-    log_success "Installation complete"
+    
+    # Now use Python for the main package installation
+    python3 - <<EOF
+import subprocess
+import sys
+import importlib.util
+from tqdm import tqdm
+
+def run_pip_install(cmd, desc):
+    print(f"\n{desc}...")
+    process = subprocess.run(cmd, capture_output=True, text=True)
+    if process.stdout:
+        print(process.stdout)
+    if process.returncode != 0:
+        print(f"\nError during {desc}:", file=sys.stderr)
+        print(process.stderr, file=sys.stderr)
+        sys.exit(1)
+    elif process.stderr:
+        print("\nWarnings during installation:", file=sys.stderr)
+        print(process.stderr, file=sys.stderr)
+    return process.stdout
+
+def verify_package(package):
+    spec = importlib.util.find_spec(package)
+    if spec is None:
+        raise ImportError(f"Package {package} not found")
+    return True
+
+# First install core dependencies
+print("\nInstalling core dependencies...")
+run_pip_install(
+    [sys.executable, "-m", "pip", "install", "-v", "gitpython", "flask", "pytest"],
+    "Installing core dependencies"
+)
+
+# Then install the package with all extras
+print("\nInstalling package in editable mode with all extras...")
+run_pip_install(
+    [sys.executable, "-m", "pip", "install", "-v", "-e", ".[test,web]"],
+    "Installing package with extras"
+)
+
+# Verify all critical dependencies
+critical_packages = {
+    'pytest': 'pytest',           # For testing
+    'flask': 'flask',            # For web interface
+    'gitpython': 'git',          # For git operations
+    'tqdm': 'tqdm',             # For progress bars
+    'python_docx': 'docx',       # For Word documents
+    'openpyxl': 'openpyxl',     # For Excel files
+    'python_pptx': 'pptx',      # For PowerPoint files
+    'weasyprint': 'weasyprint', # For HTML/PDF conversion
+    'bs4': 'bs4'               # For HTML parsing
+}
+
+print("\nVerifying all dependencies...")
+missing_packages = []
+with tqdm(critical_packages.items(), desc="Checking dependencies") as pbar:
+    for package_name, import_name in pbar:
+        pbar.set_postfix_str(f"Checking {package_name}")
+        try:
+            if not verify_package(import_name):
+                missing_packages.append(package_name)
+        except ImportError:
+            missing_packages.append(package_name)
+
+if missing_packages:
+    print("\nError: The following packages are missing:", file=sys.stderr)
+    for package in missing_packages:
+        print(f"  - {package}", file=sys.stderr)
+    print("\nTry running: pip install -e .[test,web]", file=sys.stderr)
+    sys.exit(1)
+
+print("\nAll dependencies installed successfully!")
+EOF
 }
 
 # Run pytest with proper configuration
 run_tests() {
     log_info "Running pytest..."
-    if ! command -v pytest &> /dev/null; then
+    if ! python3 -c "import pytest" 2>/dev/null; then
         log_error "pytest not found. Please install test dependencies first."
         return 1
     fi
 
-    # Run pytest with tqdm progress bar
-    python -c "from test_utils import run_with_progress; exit(run_with_progress(
-        ['python', '-m', 'pytest', 'test_file2ai.py', '-v', '--tb=short', '--show-capture=no'],
-        'Running tests'
-    ))" || {
+    # Run pytest with coverage
+    python3 -m pytest test_file2ai.py -v --tb=short --show-capture=no --cov=file2ai --cov-report=term-missing || {
         log_error "Some tests failed!"
         return 1
     }
     log_success "All tests passed!"
+}
+
+# Main execution
+clean_old_artifacts
+create_directories
+setup_environment || exit 1
+create_test_files
+verify_test_files
+backup_test_files
+run_tests || exit 1
+launch_frontend || exit 1
 }
 
 # Launch and test frontend
@@ -247,6 +362,9 @@ launch_frontend() {
     
     # Test form submission
     log_info "Testing form submission..."
+    # Create a test file for upload
+    echo "Test content" > "$PROJECT_ROOT/exports/test_upload.txt"
+    
     test_response=$(curl -s -X POST -F "command=convert" -F "file=@$PROJECT_ROOT/exports/test_upload.txt" "http://localhost:$FLASK_PORT")
     if echo "$test_response" | grep -q "job_id"; then
         log_success "Form submission working correctly"
@@ -264,7 +382,7 @@ show_progress() {
     local percentage=$((current * 100 / total))
     local filled=$((width * current / total))
     local empty=$((width - filled))
-    printf "\r${GREEN}Overall Progress:${NC} [%${filled}s%${empty}s] %d%%" "█" " " "$percentage"
+    printf "\r${GREEN}Overall Progress:${NC} [%${filled}s%${empty}s] %d%%\n" "█" " " "$percentage"
 }
 
 # Main execution with progress tracking
@@ -293,8 +411,8 @@ main() {
         log_info "Validating outputs..."
         
         # Check local export output
-        if [ ! -f "local_export.txt" ]; then
-            log_error "Local export output not found"
+        if [ ! -f "exports/local_export.txt" ] && [ ! -f "local_export.txt" ]; then
+            log_error "Local export output not found in either exports/ or current directory"
             return 1
         fi
         

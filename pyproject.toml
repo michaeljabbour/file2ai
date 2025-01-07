@@ -57,9 +57,10 @@ web = [
 # - weasyprint: HTML/PDF conversion
 
 [tool.setuptools]
-packages = ["file2ai"]
-package-dir = {"file2ai" = "."}
-py-modules = ["file2ai"]
+py-modules = ["file2ai"]  # Single-file module
+
+[tool.setuptools.packages.find]
+exclude = ["exports*", "logs*", "tests*", "venv*", "*.egg-info"]
 
 [tool.black]
 line-length = 100
@@ -68,5 +69,7 @@ include = '\.pyi?$'
 
 [tool.pytest.ini_options]
 addopts = "-v"
-testpaths = ["tests"]
-norecursedirs = ["exports", "logs", "venv", "__pycache__"]
+testpaths = ["."]
+norecursedirs = ["exports", "logs", "venv", "__pycache__", "tests/backup"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]

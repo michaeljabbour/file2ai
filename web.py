@@ -449,12 +449,37 @@ def serve_react(path):
 
 @app.route("/", methods=["POST"])
 def handle_api():
-    """Handle API requests for file conversion and exports"""
-    # Debug logging
-    logger.info("Received API request")
-    print("Form data:", request.form)
-    print("Files:", request.files)
-    print("Headers:", request.headers)
+    """Handle API requests for file conversion and exports.
+    
+    Accepts POST requests with the following parameters:
+    - command: str, either 'convert' or 'export'
+    - file: list of files (for convert command)
+    - format: str, output format (text, pdf, html, docx, xlsx, pptx)
+    - pages: str, optional page range for PDF conversion
+    - brightness: float, optional image brightness (0.1-2.0)
+    - contrast: float, optional image contrast (0.1-2.0)
+    - resolution: int, optional image resolution (72-1200 DPI)
+    - repo_url: str, optional GitHub repository URL (for export command)
+    - branch: str, optional repository branch (for export command)
+    - token: str, optional GitHub token (for export command)
+    - local_dir: str, optional local directory path (for export command)
+    
+    Returns:
+        JSON response with:
+        - On success: {"job_id": str}
+        - On error: {"error": str}, with appropriate HTTP status code
+        
+    Security:
+        - Enforces 50MB file size limit
+        - Validates file extensions and MIME types
+        - Rejects suspicious file types
+        - Cleans up temporary files
+    """
+    # Security logging
+    logger.info("Received API request from %s", request.remote_addr)
+    logger.debug("Form data: %s", request.form)
+    logger.debug("Files: %s", request.files)
+    logger.debug("Headers: %s", request.headers)
     
     command = request.form.get("command", "export")
     print("Command:", command)
@@ -475,13 +500,52 @@ def handle_api():
         if not request.files:
             return jsonify({"error": "No files selected"}), 400
 
-        files = {
-            f.filename: f
-            for f in request.files.getlist("file")
-            if f.filename
+        # Define security limits
+        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB limit
+        ALLOWED_EXTENSIONS = {'.txt', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.html', '.htm'}
+        SUSPICIOUS_EXTENSIONS = {'.exe', '.bat', '.cmd', '.sh', '.js', '.php', '.py'}
+        ALLOWED_MIMETYPES = {
+            'text/plain', 'application/pdf',
+            'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'text/html'
         }
+        
+        # Validate and filter files
+        files = {}
+        for f in request.files.getlist("file"):
+            if not f.filename:
+                continue
+                
+            # Check file size
+            f.seek(0, 2)  # Seek to end
+            size = f.tell()
+            f.seek(0)  # Reset to beginning
+            if size > MAX_FILE_SIZE:
+                logger.warning(f"Rejected oversized file: {f.filename} ({size} bytes)")
+                return jsonify({"error": f"File {f.filename} exceeds maximum size of 50MB"}), 400
+                
+            # Check file extension and MIME type
+            ext = Path(f.filename).suffix.lower()
+            mime_type = f.content_type
+            
+            if ext in SUSPICIOUS_EXTENSIONS:
+                logger.warning(f"Rejected suspicious file type: {f.filename}")
+                return jsonify({"error": f"File type not allowed: {ext}"}), 400
+                
+            if ext not in ALLOWED_EXTENSIONS:
+                logger.warning(f"Rejected unsupported file type: {f.filename}")
+                return jsonify({"error": f"Unsupported file type: {ext}"}), 400
+                
+            if mime_type not in ALLOWED_MIMETYPES:
+                logger.warning(f"Rejected file with invalid MIME type: {f.filename} ({mime_type})")
+                return jsonify({"error": f"Invalid file type detected"}), 400
+                
+            files[f.filename] = f
+            
         if not files:
-            return jsonify({"error": "No files selected"}), 400
+            return jsonify({"error": "No valid files selected"}), 400
 
         options = ConversionOptions(
             format=request.form.get("format", "text"),
@@ -619,7 +683,25 @@ def download_files(job_id):
 
 @app.route("/cleanup/<job_id>")
 def cleanup_job(job_id):
-    """Clean up job files and data"""
+    """Clean up temporary files and job data after completion.
+    
+    Args:
+        job_id: str, UUID of the job to clean up
+        
+    Returns:
+        JSON response with:
+        - success: bool, True if cleanup successful
+        - error: str, error message if cleanup failed
+        
+    Status Codes:
+        - 200: Success
+        - 404: Job not found
+        
+    Security:
+        - Only removes files associated with the job
+        - Uses secure path validation
+        - Maintains audit log of cleanup operations
+    """
     if job_id not in conversion_jobs:
         return (jsonify({"error": "Job not found"}), 404)
 

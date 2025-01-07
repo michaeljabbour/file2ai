@@ -7,8 +7,8 @@ import logging
 from pathlib import Path
 import sys
 from unittest.mock import patch, MagicMock, Mock
-import file2ai
 from file2ai import (
+    parse_args,
     is_text_file,
     validate_github_url,
     export_files_to_single_file,
@@ -35,7 +35,7 @@ def test_parse_args_repo(monkeypatch):
     monkeypatch.setattr(
         sys, "argv", ["file2ai.py", "--repo-url", "https://github.com/owner/repo.git"]
     )
-    args = file2ai.parse_args()
+    args = parse_args()
     assert args.repo_url == "https://github.com/owner/repo.git"
     assert args.local_dir is None
 
@@ -43,7 +43,7 @@ def test_parse_args_repo(monkeypatch):
 def test_parse_args_local(monkeypatch):
     """Test argument parsing with local directory."""
     monkeypatch.setattr(sys, "argv", ["file2ai.py", "--local-dir", "/path/to/dir"])
-    args = file2ai.parse_args()
+    args = parse_args()
     assert args.local_dir == "/path/to/dir"
     assert args.repo_url is None
 
@@ -54,7 +54,7 @@ def test_parse_args_interactive(monkeypatch):
     input_iter = iter(inputs)
     monkeypatch.setattr("builtins.input", lambda _: next(input_iter))
     monkeypatch.setattr("sys.argv", ["file2ai.py"])
-    args = file2ai.parse_args()
+    args = parse_args()
     assert args.repo_url == "https://github.com/owner/repo.git"
     assert args.local_dir is None
 
@@ -142,7 +142,7 @@ def test_text_export_basic(tmp_path, caplog):
 def test_format_argument(format_arg, monkeypatch):
     """Test that --format argument is correctly parsed."""
     monkeypatch.setattr(sys, "argv", ["file2ai.py", "--local-dir", ".", "--format", format_arg])
-    args = file2ai.parse_args()
+    args = parse_args()
     assert args.format == format_arg
 
 
@@ -247,7 +247,7 @@ def test_deep_url_handling():
         "sys.argv",
         ["file2ai.py", "--repo-url-sub", "https://github.com/owner/repo/tree/main/path/to/dir"],
     ):
-        args = file2ai.parse_args()
+        args = parse_args()
         assert args.repo_url == "https://github.com/owner/repo/tree/main/path/to/dir"
         assert args.repo_url_sub is True
 
@@ -256,7 +256,7 @@ def test_deep_url_handling():
         "sys.argv",
         ["file2ai.py", "--repo-url", "https://github.com/owner/repo/tree/main/path/to/dir"],
     ):
-        args = file2ai.parse_args()
+        args = parse_args()
         assert args.repo_url == "https://github.com/owner/repo/tree/main/path/to/dir"
         assert args.repo_url_sub is False
 
@@ -271,7 +271,7 @@ def test_deep_url_handling():
             "https://github.com/owner/repo/tree/main/path/to/dir",
         ],
     ):
-        args = file2ai.parse_args()
+        args = parse_args()
         assert args.repo_url == "https://github.com/owner/repo/tree/main/path/to/dir"
         assert args.repo_url_sub is True
         assert args.branch == "dev"
@@ -555,7 +555,7 @@ def test_branch_handling(tmp_path, caplog):
     with patch("subprocess.run", side_effect=mock_clone):
         # Test default branch with URL only
         with patch("sys.argv", ["file2ai.py", "--repo-url", "https://github.com/owner/repo.git"]):
-            args = file2ai.parse_args()
+            args = parse_args()
             with patch("file2ai.EXPORTS_DIR", str(exports_dir)):
                 clone_and_export(args)
                 assert "Using default branch" in caplog.text
@@ -571,7 +571,7 @@ def test_branch_handling(tmp_path, caplog):
                 "https://github.com/owner/repo.git",
             ],
         ):
-            args = file2ai.parse_args()
+            args = parse_args()
             with patch("file2ai.EXPORTS_DIR", str(exports_dir)):
                 clone_and_export(args)
                 assert "Checked out branch: test-branch" in caplog.text
@@ -652,7 +652,7 @@ def test_subdirectory_handling(tmp_path, caplog):
             "sys.argv",
             ["file2ai.py", "--repo-url-sub", "https://github.com/owner/repo/tree/main/subdir"],
         ):
-            args = file2ai.parse_args()
+            args = parse_args()
             with patch("file2ai.EXPORTS_DIR", str(exports_dir)):
                 clone_and_export(args)
                 assert "Exporting from subdirectory: subdir" in caplog.text
@@ -662,7 +662,7 @@ def test_subdirectory_handling(tmp_path, caplog):
             "sys.argv",
             ["file2ai.py", "--repo-url-sub", "https://github.com/owner/repo/tree/main/nonexistent"],
         ):
-            args = file2ai.parse_args()
+            args = parse_args()
             with patch("file2ai.EXPORTS_DIR", str(exports_dir)):
                 with pytest.raises(SystemExit):
                     clone_and_export(args)
@@ -673,7 +673,7 @@ def test_subdirectory_handling(tmp_path, caplog):
             "sys.argv",
             ["file2ai.py", "--repo-url", "https://github.com/owner/repo/tree/main/subdir"],
         ):
-            args = file2ai.parse_args()
+            args = parse_args()
             with patch("file2ai.EXPORTS_DIR", str(exports_dir)):
                 clone_and_export(args)
                 assert "Exporting from repository root" in caplog.text
@@ -724,25 +724,21 @@ def test_logging_setup(tmp_path, caplog):
 
 def test_docx_dependency_management(monkeypatch, caplog):
     """Test python-docx dependency checking and installation."""
-    from importlib.util import find_spec
+    # Mock check_package_support to simulate missing docx
+    def mock_check_package_support(package):
+        return False if package == "python-docx" else True
 
-    # Mock importlib.util.find_spec to simulate missing docx
-    def mock_find_spec(name):
-        return None if name == "docx" else find_spec(name)
-
-    monkeypatch.setattr(importlib.util, "find_spec", mock_find_spec)
-
-    # Mock successful pip install
-    def mock_check_call(*args, **kwargs):
-        return 0
-
-    monkeypatch.setattr(subprocess, "check_call", mock_check_call)
+    # Mock check_package_support at module level
+    import file2ai
+    monkeypatch.setattr(file2ai, "check_package_support", mock_check_package_support)
 
     # Test dependency checking
     assert check_docx_support() is False
 
-    # Test installation
+    # Mock successful package installation
+    monkeypatch.setattr(file2ai, "check_package_support", lambda x: True)
     assert install_docx_support() is True
+    assert check_docx_support() is True
 
 
 # TODO: Rewrite this test to properly handle Word document conversion
@@ -758,10 +754,11 @@ def test_word_to_text_conversion(tmp_path, caplog):
 """
 
 
-# TODO: Fix mock implementation to properly simulate docx file operations:
-# 1. Create proper MockDocument class that simulates file read/write
-# 2. Add proper error simulation for file access issues
-# 3. Test both successful and failed conversions
+# TODO: Fix test_word_conversion_errors by:
+# 1. Create proper mock Document class that simulates python-docx behavior
+# 2. Add proper file content simulation for docx files
+# 3. Test both successful and failed document loading scenarios
+# 4. Verify proper error messages are logged
 @pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper docx file simulation")
 def test_word_conversion_errors(tmp_path, caplog, monkeypatch):
     """Test error handling in Word document conversion."""
@@ -789,7 +786,7 @@ def test_word_conversion_errors(tmp_path, caplog, monkeypatch):
         with patch(
             "sys.argv", ["file2ai.py", "convert", "--input", str(test_doc), "--format", "text"]
         ):
-            args = file2ai.parse_args()
+            args = parse_args()
             convert_document(args)
 
     assert "Error converting Word document" in caplog.text
@@ -797,31 +794,28 @@ def test_word_conversion_errors(tmp_path, caplog, monkeypatch):
 
 def test_excel_dependency_management(monkeypatch, caplog):
     """Test openpyxl dependency checking and installation."""
-    from importlib.util import find_spec
+    # Mock check_package_support to simulate missing openpyxl
+    def mock_check_package_support(package):
+        return False if package == "openpyxl" else True
 
-    # Mock importlib.util.find_spec to simulate missing openpyxl
-    def mock_find_spec(name):
-        return None if name == "openpyxl" else find_spec(name)
-
-    monkeypatch.setattr(importlib.util, "find_spec", mock_find_spec)
-
-    # Mock successful pip install
-    def mock_check_call(*args, **kwargs):
-        return 0
-
-    monkeypatch.setattr(subprocess, "check_call", mock_check_call)
+    # Mock check_package_support at module level
+    import file2ai
+    monkeypatch.setattr(file2ai, "check_package_support", mock_check_package_support)
 
     # Test dependency checking
     assert check_excel_support() is False
 
-    # Test installation
+    # Mock successful package installation
+    monkeypatch.setattr(file2ai, "check_package_support", lambda x: True)
     assert install_excel_support() is True
+    assert check_excel_support() is True
 
 
-# TODO: Fix mock implementation for Excel workbook:
-# 1. Create proper cell value types (string, number, date)
-# 2. Add sheet navigation simulation
-# 3. Test formula evaluation with data_only mode
+# TODO: Fix test_excel_to_text_conversion by:
+# 1. Implement proper MockWorkbook class with complete worksheet structure
+# 2. Add realistic cell value types (strings, numbers, dates)
+# 3. Test multi-sheet workbooks
+# 4. Verify text output format matches expectations
 @pytest.mark.skip(reason="Skipping due to mock implementation issues - mock workbook needs proper content structure")
 def test_excel_to_text_conversion(tmp_path, caplog, monkeypatch):
     """Test Excel document to text conversion."""
@@ -857,7 +851,7 @@ def test_excel_to_text_conversion(tmp_path, caplog, monkeypatch):
     with patch(
         "sys.argv", ["file2ai.py", "convert", "--input", str(test_excel), "--format", "text"]
     ):
-        args = file2ai.parse_args()
+        args = parse_args()
         convert_document(args)
 
     # Check output file
@@ -909,7 +903,7 @@ def test_excel_to_csv_conversion(tmp_path, caplog, monkeypatch):
     with patch(
         "sys.argv", ["file2ai.py", "convert", "--input", str(test_excel), "--format", "csv"]
     ):
-        args = file2ai.parse_args()
+        args = parse_args()
         convert_document(args)
 
     # Check output file
@@ -927,6 +921,11 @@ def test_excel_to_csv_conversion(tmp_path, caplog, monkeypatch):
     shutil.rmtree(exports_dir)
 
 
+# TODO: Fix test_excel_conversion_errors by:
+# 1. Create proper file handling simulation for Excel files
+# 2. Test various error scenarios (corrupt file, permission denied)
+# 3. Verify error messages are properly logged
+# 4. Add tests for unsupported format conversions
 @pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper file handling simulation")
 def test_excel_conversion_errors(tmp_path, caplog, monkeypatch):
     """Test error handling in Excel document conversion."""
@@ -955,7 +954,7 @@ def test_excel_conversion_errors(tmp_path, caplog, monkeypatch):
     with patch(
         "sys.argv", ["file2ai.py", "convert", "--input", str(test_excel), "--format", "pdf"]
     ):
-        args = file2ai.parse_args()
+        args = parse_args()
         with pytest.raises(SystemExit):
             convert_document(args)
 
@@ -972,7 +971,7 @@ def test_excel_conversion_errors(tmp_path, caplog, monkeypatch):
         with patch(
             "sys.argv", ["file2ai.py", "convert", "--input", str(test_excel), "--format", "csv"]
         ):
-            args = file2ai.parse_args()
+            args = parse_args()
             convert_document(args)
 
     assert "Error converting Excel document" in caplog.text
@@ -991,31 +990,23 @@ def test_excel_conversion_errors(tmp_path, caplog, monkeypatch):
 
 def test_pptx_dependency_management(monkeypatch, caplog):
     """Test python-pptx dependency checking and installation."""
-    from importlib.util import find_spec
+    # Mock check_package_support to simulate missing pptx
+    def mock_check_package_support(package):
+        return False if package == "python-pptx" else True
 
-    # Mock importlib.util.find_spec to simulate missing pptx
-    def mock_find_spec(name):
-        return None if name == "pptx" else find_spec(name)
-
-    monkeypatch.setattr(importlib.util, "find_spec", mock_find_spec)
-
-    # Mock successful pip install
-    def mock_check_call(*args, **kwargs):
-        return 0
-
-    monkeypatch.setattr(subprocess, "check_call", mock_check_call)
+    # Mock check_package_support at module level
+    import file2ai
+    monkeypatch.setattr(file2ai, "check_package_support", mock_check_package_support)
 
     # Test dependency checking
     assert check_pptx_support() is False
 
-    # Test installation
+    # Mock successful package installation
+    monkeypatch.setattr(file2ai, "check_package_support", lambda x: True)
     assert install_pptx_support() is True
+    assert check_pptx_support() is True
 
 
-# TODO: Fix PowerPoint mock implementation:
-# 1. Add proper slide layout simulation
-# 2. Include text frame and shape hierarchy
-# 3. Test different slide types (title, content, etc.)
 @pytest.mark.skip(reason="Skipping due to mock implementation issues - mock presentation needs proper slide content")
 def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
     """Test PowerPoint document to text conversion."""
@@ -1054,7 +1045,7 @@ def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
 
     # Convert the document
     with patch("sys.argv", ["file2ai.py", "convert", "--input", str(test_ppt), "--format", "text"]):
-        args = file2ai.parse_args()
+        args = parse_args()
         convert_document(args)
 
     # Check output file
@@ -1084,10 +1075,6 @@ def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
 #     pass
 
 
-# TODO: Improve PowerPoint error simulation:
-# 1. Test file access permission errors
-# 2. Test corrupt file handling
-# 3. Test missing dependency scenarios
 @pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper error simulation")
 def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
     """Test error handling in PowerPoint document conversion."""
@@ -1115,7 +1102,7 @@ def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
             with patch(
                 "sys.argv", ["file2ai.py", "convert", "--input", str(test_ppt), "--format", "text"]
             ):
-                args = file2ai.parse_args()
+                args = parse_args()
                 convert_document(args)
 
     assert "Failed to install PowerPoint document support" in caplog.text
@@ -1151,31 +1138,23 @@ def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
 
 def test_html_dependency_management(monkeypatch, caplog):
     """Test beautifulsoup4 dependency checking and installation."""
-    from importlib.util import find_spec
+    # Mock check_package_support to simulate missing bs4 and weasyprint
+    def mock_check_package_support(package):
+        return False if package in ["beautifulsoup4", "weasyprint"] else True
 
-    # Mock importlib.util.find_spec to simulate missing bs4
-    def mock_find_spec(name):
-        return None if name == "bs4" else find_spec(name)
-
-    monkeypatch.setattr(importlib.util, "find_spec", mock_find_spec)
-
-    # Mock successful pip install
-    def mock_check_call(*args, **kwargs):
-        return 0
-
-    monkeypatch.setattr(subprocess, "check_call", mock_check_call)
+    # Mock check_package_support at module level
+    import file2ai
+    monkeypatch.setattr(file2ai, "check_package_support", mock_check_package_support)
 
     # Test dependency checking
     assert check_html_support() is False
 
-    # Test installation
+    # Mock successful package installation
+    monkeypatch.setattr(file2ai, "check_package_support", lambda x: True)
     assert install_html_support() is True
+    assert check_html_support() is True
 
 
-# TODO: Fix HTML to text conversion test:
-# 1. Add proper file count verification
-# 2. Test nested HTML structure handling
-# 3. Verify text content preservation
 @pytest.mark.skip(reason="Skipping due to implementation issues - needs proper file count handling")
 def test_html_to_text_conversion(tmp_path, caplog):
     """Test HTML to text conversion."""
@@ -1219,10 +1198,6 @@ def test_html_to_text_conversion(tmp_path, caplog):
     shutil.rmtree(exports_dir)
 
 
-# TODO: Fix HTML to PDF conversion test:
-# 1. Add proper PDF content verification
-# 2. Test image embedding
-# 3. Verify PDF structure and metadata
 @pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper PDF content simulation")
 def test_html_to_pdf_conversion(tmp_path, caplog):
     """Test HTML to PDF conversion."""
@@ -1275,10 +1250,6 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
     shutil.rmtree(exports_dir)
 
 
-# TODO: Fix HTML to image conversion test:
-# 1. Add proper image file verification
-# 2. Test multi-page conversion
-# 3. Verify image quality settings
 @pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper image file simulation")
 def test_html_to_image_conversion(tmp_path, caplog):
     """Test HTML to JPG image conversion."""
@@ -1377,10 +1348,6 @@ def test_html_to_image_conversion(tmp_path, caplog):
     shutil.rmtree(exports_dir)
 
 
-# TODO: Fix MHTML conversion test:
-# 1. Add proper file count verification
-# 2. Test embedded resource handling
-# 3. Verify content extraction
 @pytest.mark.skip(reason="Skipping due to implementation issues - needs proper file count handling")
 def test_mhtml_conversion(tmp_path, caplog):
     """Test MHTML file conversion."""
@@ -1426,10 +1393,11 @@ Content-Type: text/html; charset="utf-8"
     shutil.rmtree(exports_dir)
 
 
-# TODO: Fix HTML conversion error tests:
-# 1. Test malformed HTML handling
-# 2. Verify dependency error cases
-# 3. Test resource access errors
+# TODO: Fix test_html_conversion_errors by:
+# 1. Implement proper error simulation for HTML files
+# 2. Test various failure scenarios (malformed HTML, missing resources)
+# 3. Verify error messages are properly logged
+# 4. Add tests for unsupported conversion formats
 @pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper error simulation")
 def test_html_conversion_errors(tmp_path, caplog):
     """Test HTML conversion error handling."""
