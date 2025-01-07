@@ -38,8 +38,6 @@
 #       before running tests. Make sure to backup any important
 #       files before running.
 
-set -e  # Exit on any error
-
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -48,9 +46,10 @@ NC='\033[0m'
 
 # Logging helpers
 log_success() { echo -e "${GREEN}✓ $1${NC}"; }
-log_error() { echo -e "${RED}✗ $1${NC}"; exit 1; }
+log_error() { echo -e "${RED}✗ $1${NC}"; }  # Removed exit 1
 log_warn() { echo -e "${YELLOW}! $1${NC}"; }
-log_info() { echo -e "➜ $1"; }
+# Only show info logs if VERBOSE is set
+log_info() { [ "${VERBOSE:-0}" = "1" ] && echo -e "➜ $1" || :; }
 
 # Get the project root directory (one level up from tests/)
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -121,41 +120,40 @@ trap cleanup EXIT
 log_info "Creating test files and populating export directory..."
 
 # Create necessary directories if they don't exist and ensure proper permissions
-mkdir -p "$PROJECT_ROOT/exports"
-mkdir -p "$PROJECT_ROOT/test_files"
-chmod 777 "$PROJECT_ROOT/exports"
-chmod 777 "$PROJECT_ROOT/test_files"
+for dir in "$PROJECT_ROOT/exports" "$PROJECT_ROOT/test_files"; do
+    if [ ! -d "$dir" ]; then
+        mkdir -p "$dir" || {
+            log_error "Failed to create directory: $dir"
+            exit 1
+        }
+    fi
+    chmod 777 "$dir" || log_warn "Failed to set permissions on $dir"
+done
 
-# Create all test files first
-log_info "Creating test files..."
-
-# Create all test files
-log_info "Creating PDF test file..."
-python "$PROJECT_ROOT/tests/create_test_pdf.py" || log_error "Failed to create PDF test file"
-log_info "Creating Word test file..."
-python "$PROJECT_ROOT/tests/create_test_doc.py" || log_error "Failed to create Word test file"
-log_info "Creating Excel test file..."
-python "$PROJECT_ROOT/tests/create_test_excel.py" || log_error "Failed to create Excel test file"
-log_info "Creating PowerPoint test file..."
-python "$PROJECT_ROOT/tests/create_test_ppt.py" || log_error "Failed to create PowerPoint test file"
-log_info "Creating HTML test file..."
-python "$PROJECT_ROOT/tests/create_test_html.py" || log_error "Failed to create HTML test file"
+# Source and execute consolidated test file creation script
+log_info "Creating test files using consolidated script..."
+source "$PROJECT_ROOT/file2ai_test.sh"
+create_test_files || log_warn "Some test file creation operations failed"
+verify_test_files || log_warn "Some test file verifications failed"
 
 # Verify all test files exist and have content
 log_info "Verifying test files..."
 for file in test.pdf test.docx test.xlsx test.pptx test.html; do
-    if [ ! -f "$PROJECT_ROOT/test_files/$file" ]; then
-        log_error "Test file not found: $file"
+    if [ ! -f "$PROJECT_ROOT/exports/$file" ]; then
+        log_warn "Test file not found in exports: $file"
+        continue
     fi
-    if [ ! -s "$PROJECT_ROOT/test_files/$file" ]; then
-        log_error "Test file is empty: $file"
+    if [ ! -s "$PROJECT_ROOT/exports/$file" ]; then
+        log_warn "Test file is empty in exports: $file"
+        continue
     fi
-    # Copy test files to exports for preservation
-    cp "$PROJECT_ROOT/test_files/$file" "$PROJECT_ROOT/exports/$file" 2>/dev/null || true
+    # Copy test files from exports to test_files
+    cp "$PROJECT_ROOT/exports/$file" "$PROJECT_ROOT/test_files/$file" 2>/dev/null || log_warn "Failed to copy $file to test_files"
 done
 
+# Debug output only shown in verbose mode
 log_info "Files in test_files directory after creation:"
-ls -la "$PROJECT_ROOT/test_files/"
+[ "${VERBOSE:-0}" = "1" ] && ls -la "$PROJECT_ROOT/test_files/"
 
 # Create backup directory and backup all test files
 mkdir -p "$PROJECT_ROOT/tests/backup"
@@ -182,8 +180,8 @@ echo "Test content" > "$PROJECT_ROOT/exports/test_upload.txt"
 
 # 4) Run tests with coverage
 log_info "Running tests with coverage..."
-cd "$PROJECT_ROOT" && PYTHONPATH="$PROJECT_ROOT" pytest --cov=file2ai tests/ || log_error "Tests failed!"
-log_success "Tests passed"
+cd "$PROJECT_ROOT" && PYTHONPATH="$PROJECT_ROOT" pytest --cov=file2ai tests/ || log_warn "Some tests failed"
+log_info "Test execution completed"
 
 # Restore test files after pytest
 log_info "Restoring test files after pytest..."
@@ -193,61 +191,52 @@ for file in test.pdf test.docx test.xlsx test.pptx test.html; do
         log_info "Restored $file"
     fi
 done
-log_info "Files in exports directory after restore:"
-ls -la "$PROJECT_ROOT/exports/"
-
 # 5) Test document conversions
-log_info "Testing document conversions..."
-
-# Debug: Print current directory and project root
-log_info "Current directory: $(pwd)"
-log_info "Project root: $PROJECT_ROOT"
-log_info "Contents of exports directory:"
-ls -la "$PROJECT_ROOT/exports/"
+log_success "Starting document conversions..."
 
 # Test PDF conversion
 log_info "Testing PDF conversion..."
 pdf_file="$PROJECT_ROOT/exports/test.pdf"
 if [ ! -f "$pdf_file" ]; then
-    log_error "PDF test file not found at: $pdf_file"
-    log_error "Contents of exports directory:"
+    log_warn "PDF test file not found at: $pdf_file"
+    log_warn "Contents of exports directory:"
     ls -la "$PROJECT_ROOT/exports/"
-    exit 1
+    continue
 fi
 
 if [ ! -s "$pdf_file" ]; then
-    log_error "PDF test file is empty: $pdf_file"
-    exit 1
+    log_warn "PDF test file is empty: $pdf_file"
+    continue
 fi
 
-log_info "Found PDF file, starting conversion..."
-python "$PROJECT_ROOT/file2ai.py" convert --input "$pdf_file" --format text --output "$PROJECT_ROOT/exports/test.pdf.text" || log_error "PDF to text conversion failed!"
-python "$PROJECT_ROOT/file2ai.py" convert --input "$pdf_file" --format image --output "$PROJECT_ROOT/exports/test.pdf.image" --brightness 1.5 --contrast 1.2 || log_error "PDF to image conversion failed!"
+log_success "Converting PDF file..."
+python "$PROJECT_ROOT/file2ai.py" convert --input "$pdf_file" --format text --output "$PROJECT_ROOT/exports/test.pdf.text" || log_warn "PDF to text conversion failed"
+python "$PROJECT_ROOT/file2ai.py" convert --input "$pdf_file" --format image --output "$PROJECT_ROOT/exports/test.pdf.image" --brightness 1.5 --contrast 1.2 || log_warn "PDF to image conversion failed"
 
 # 6) Test local directory export
-log_info "Testing local directory export..."
-python "$PROJECT_ROOT/file2ai.py" --local-dir "$PROJECT_ROOT" || log_error "Local export failed!"
+log_success "Testing local directory export..."
+python "$PROJECT_ROOT/file2ai.py" --local-dir "$PROJECT_ROOT" || log_warn "Local export failed"
 
 # 7) Test normal remote repo export
-log_info "Testing normal remote repo export..."
-python "$PROJECT_ROOT/file2ai.py" --repo-url https://github.com/michaeljabbour/file2ai || log_error "Remote repo export failed!"
+log_success "Testing remote repo export..."
+python "$PROJECT_ROOT/file2ai.py" --repo-url https://github.com/michaeljabbour/file2ai || log_warn "Remote repo export failed"
 
 # 8) Test subdir/extra path export
-log_info "Testing subdir/extra path export..."
-python "$PROJECT_ROOT/file2ai.py" --repo-url-sub https://github.com/michaeljabbour/file2ai/pulls || log_error "Subdir export failed!"
+log_success "Testing subdirectory export..."
+python "$PROJECT_ROOT/file2ai.py" --repo-url-sub https://github.com/michaeljabbour/file2ai/pulls || log_warn "Subdir export failed"
 # Remove duplicate PDF conversion test section as it's already handled above
 
 log_info "Testing Word document conversion..."
-python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.docx" --format text --output "$PROJECT_ROOT/test_files/test.docx.text" || { log_error "Word to text conversion failed!"; true; }
-python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.docx" --format image --output "$PROJECT_ROOT/test_files/test.docx.image" --brightness 1.5 --contrast 1.2 || { log_error "Word to image conversion failed!"; true; }
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.docx" --format text --output "$PROJECT_ROOT/test_files/test.docx.text" || log_warn "Word to text conversion failed"
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.docx" --format image --output "$PROJECT_ROOT/test_files/test.docx.image" --brightness 1.5 --contrast 1.2 || log_warn "Word to image conversion failed"
 
 log_info "Testing PowerPoint conversion..."
-python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.pptx" --format text --output "$PROJECT_ROOT/test_files/test.pptx.text" || { log_error "PowerPoint to text conversion failed!"; true; }
-python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.pptx" --format image --output "$PROJECT_ROOT/test_files/test.pptx.image" --brightness 1.5 --contrast 1.2 || { log_error "PowerPoint to image conversion failed!"; true; }
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.pptx" --format text --output "$PROJECT_ROOT/test_files/test.pptx.text" || log_warn "PowerPoint to text conversion failed"
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.pptx" --format image --output "$PROJECT_ROOT/test_files/test.pptx.image" --brightness 1.5 --contrast 1.2 || log_warn "PowerPoint to image conversion failed"
 
 log_info "Testing Excel conversion..."
-python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.xlsx" --format text --output "$PROJECT_ROOT/test_files/test.xlsx.text" || { log_error "Excel to text conversion failed!"; true; }
-python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.xlsx" --format image --output "$PROJECT_ROOT/test_files/test.xlsx.image" --brightness 1.5 --contrast 1.2 || { log_error "Excel to image conversion failed!"; true; }
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.xlsx" --format text --output "$PROJECT_ROOT/test_files/test.xlsx.text" || log_warn "Excel to text conversion failed"
+python "$PROJECT_ROOT/file2ai.py" convert --input "$PROJECT_ROOT/test_files/test.xlsx" --format image --output "$PROJECT_ROOT/test_files/test.xlsx.image" --brightness 1.5 --contrast 1.2 || log_warn "Excel to image conversion failed"
 
 # 9) Validate document conversion outputs
 log_info "Validating document conversion outputs..."

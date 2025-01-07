@@ -40,12 +40,12 @@ def create_test_excel():
 
     # Ensure we're using absolute paths from project root
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    exports_dir = os.path.join(project_root, "exports")
+    test_files_dir = os.path.join(project_root, "test_files")
 
-    # Create exports directory if it doesn't exist
-    os.makedirs(exports_dir, exist_ok=True)
+    # Create test_files directory if it doesn't exist
+    os.makedirs(test_files_dir, exist_ok=True)
 
-    output_path = os.path.join(exports_dir, "test.xlsx")
+    output_path = os.path.join(test_files_dir, "test.xlsx")
     wb.save(output_path)
     print(f"Created sample Excel file at: {output_path}")
 

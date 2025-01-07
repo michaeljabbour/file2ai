@@ -28,18 +28,13 @@ dependencies = [
     "python-docx",
     "openpyxl",
     "weasyprint",
-    "beautifulsoup4"
-]
-
-[project.optional-dependencies]
-test = [
+    "beautifulsoup4",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-mock",
     "fpdf>=1.7.2",
-    "python-pptx>=0.6.21"
-]
-web = [
+    "python-pptx>=0.6.21",
+    "requests>=2.31.0",
     "flask>=2.0.0"
 ]
 

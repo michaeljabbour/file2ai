@@ -29,12 +29,12 @@ def create_test_html():
 
     # Ensure we're using absolute paths from project root
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    exports_dir = os.path.join(project_root, "exports")
+    test_files_dir = os.path.join(project_root, "test_files")
 
-    # Create exports directory if it doesn't exist
-    os.makedirs(exports_dir, exist_ok=True)
+    # Create test_files directory if it doesn't exist
+    os.makedirs(test_files_dir, exist_ok=True)
 
-    output_path = os.path.join(exports_dir, "test.html")
+    output_path = os.path.join(test_files_dir, "test.html")
     with open(output_path, "w") as f:
         f.write(html_content)
     print(f"Test HTML file created successfully at: {output_path}")
