@@ -37,5 +37,17 @@ exports/
 uploads/
 logs/
 file2ai.egg-info/
+images/
+test.docx
+tests/images/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+.coverage
+venv/
+logs/
+exports/
+test_files/
+*.pyc/
 .coverage
 .python-version
