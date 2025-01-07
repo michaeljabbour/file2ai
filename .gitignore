@@ -18,6 +18,10 @@ build/
 
 # Test files and outputs
 test_files/
+tests/backup/*.docx
+tests/backup/*.pdf
+tests/backup/*.pptx
+tests/backup/*.xlsx
 exports/
 logs/
 
