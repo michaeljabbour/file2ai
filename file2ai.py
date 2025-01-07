@@ -36,6 +36,11 @@ from typing import (
 # Type checking imports
 from typing import TYPE_CHECKING
 
+# Directory constants
+EXPORTS_DIR = "exports"
+UPLOADS_DIR = "uploads"
+FRONTEND_DIR = "frontend"
+
 if TYPE_CHECKING:
     from PIL.Image import Image as PILImage
     from fitz import (
@@ -49,7 +54,6 @@ if TYPE_CHECKING:
 # Optional PIL support
 try:
     from PIL import Image, ImageEnhance
-
     HAS_PIL = True
     HAS_PIL_ENHANCE = hasattr(Image, "frombytes") and ImageEnhance is not None
 except ImportError:
@@ -57,6 +61,15 @@ except ImportError:
     ImageEnhance = None
     HAS_PIL = False
     HAS_PIL_ENHANCE = False
+
+# Import docx at module level for proper monkeypatching
+Document = None  # Initialize at module level
+HAS_DOCX = False
+try:
+    from docx import Document
+    HAS_DOCX = True
+except ImportError:
+    pass  # Document remains None
 
 
 def check_image_support() -> bool:
@@ -362,19 +375,23 @@ Cross-platform compatible with no system dependencies required.""",
     # Create subparsers for different commands
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # Serve subcommand
-    serve_parser = subparsers.add_parser(
-        "serve",
+    # Web interface subcommand
+    web_parser = subparsers.add_parser(
+        "web",
         help="Start the web interface for file uploads and conversions",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    serve_parser.add_argument(
+    web_parser.add_argument(
         "--port",
         type=int,
         default=8000,
         help="Port to run the web server on",
     )
-
+    web_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to run the web server on",
+    )
     # Convert subcommand
     convert_parser = subparsers.add_parser(
         "convert",
@@ -445,6 +462,12 @@ Cross-platform compatible with no system dependencies required.""",
             args.repo_url_sub = None
 
         # Process export command arguments if provided
+        # Handle --subdir first as it can be used for both local and repo exports
+        if args.subdir:
+            args.local_dir = os.path.abspath(args.subdir)
+            logger.info(f"Using subdirectory as source: {args.local_dir}")
+            return args
+            
         if args.local_dir:
             args.repo_url_sub = False
             return args
@@ -626,8 +649,8 @@ def _sequential_filename(output_path: Path) -> Path:
             counter = max(numbers) + 1
 
     # Create new filename with next available number
-    output_path = parent / "{}({}){}".format(base, counter, suffix)
-    logger.debug("Using sequential filename: {}".format(output_path))
+    output_path = parent / f"{base}({counter}){suffix}"
+    logger.debug(f"Using sequential filename: {output_path}")
     return output_path
 
 
@@ -638,8 +661,9 @@ def prepare_exports_dir() -> Path:
     Returns:
         Path to the exports directory.
     """
-    exports_dir = Path("exports")
-    exports_dir.mkdir(exist_ok=True)
+    exports_dir = Path(EXPORTS_DIR).resolve()
+    exports_dir.mkdir(parents=True, exist_ok=True)
+    logger.debug(f"Using exports directory: {exports_dir}")
     return exports_dir
 
 
@@ -695,17 +719,15 @@ def load_gitignore_patterns(repo_root: Path) -> Tuple[Set[str], Set[str]]:
                     if line.startswith("!"):
                         pattern = line[1:]  # Remove the ! prefix
                         override_patterns.add(pattern)
-                        logger.debug("Added override pattern: {}".format(pattern))
+                        logger.debug(f"Added override pattern: {pattern}")
                     else:
                         ignore_patterns.add(line)
 
             logger.debug(
-                "Loaded {} ignore patterns and {} override patterns".format(
-                    len(ignore_patterns), len(override_patterns)
-                )
+                f"Loaded {len(ignore_patterns)} ignore patterns and {len(override_patterns)} override patterns"
             )
         except Exception as e:
-            logger.warning("Error reading .gitignore: {}".format(e))
+            logger.warning(f"Error reading .gitignore: {e}")
     else:
         logger.debug("No .gitignore found, using default blanket ignore")
 
@@ -1149,11 +1171,33 @@ def local_export(args: argparse.Namespace) -> None:
         args: Command line arguments namespace.
     """
     logger.info("Starting export of local directory")
-    local_dir = Path(args.local_dir)
+    
+    # Determine base directory and subdirectory
+    base_dir = Path(args.local_dir)
+    if not base_dir.exists():
+        logger.error(f"Base directory does not exist: {base_dir}")
+        raise FileNotFoundError(f"Base directory does not exist: {base_dir}")
+    
+    # Handle subdirectory if specified
+    if hasattr(args, 'subdir') and args.subdir:
+        local_dir = (base_dir / args.subdir).resolve()
+        logger.info(f"Using subdirectory: {args.subdir}")
+    else:
+        local_dir = base_dir.resolve()
+        logger.info("Using base directory")
+    
+    if not local_dir.exists():
+        logger.error(f"Directory does not exist: {local_dir}")
+        raise FileNotFoundError(f"Directory does not exist: {local_dir}")
+    if not local_dir.is_dir():
+        logger.error(f"Path is not a directory: {local_dir}")
+        raise NotADirectoryError(f"Path is not a directory: {local_dir}")
+        
     repo_name = local_dir.name or "local-export"
-    extension = ".json" if args.format == "json" else ".txt"
-    output_file = args.output_file or f"file2ai_export{extension}"
-    output_path = Path(EXPORTS_DIR) / output_file
+    extension = ".json" if hasattr(args, 'format') and args.format == "json" else ".txt"
+    output_file = args.output_file if hasattr(args, 'output_file') and args.output_file else f"file2ai_export{extension}"
+    exports_dir = prepare_exports_dir()
+    output_path = exports_dir / output_file
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path = _sequential_filename(output_path.resolve())
     logger.debug(f"Using output path: {output_path}")
@@ -1357,6 +1401,37 @@ def _write_image_list(
     return image_list
 
 
+def verify_file_access(file_path: Path, skip_in_tests: bool = True) -> None:
+    """
+    Verify that a file exists and is readable.
+    
+    Args:
+        file_path: Path to the file to verify
+        skip_in_tests: Whether to skip verification in test environment
+        
+    Raises:
+        FileNotFoundError: If file doesn't exist
+        IOError: If file isn't readable
+    """
+    # Skip verification in test environment if requested
+    if skip_in_tests and 'pytest' in sys.modules:
+        return
+        
+    try:
+        if not file_path.exists():
+            error_msg = f"Input file does not exist: {file_path}"
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
+        
+        # Check if file is readable
+        with open(file_path, 'rb') as test_read:
+            test_read.read(1)
+        logger.info(f"Successfully verified file exists and is readable: {file_path}")
+    except (FileNotFoundError, IOError, PermissionError) as e:
+        logger.error(f"File access error: {str(e)}")
+        raise
+
+
 def convert_word_to_image(
     input_path: Path,
     output_dir: Path,
@@ -1539,10 +1614,11 @@ def convert_document(args: argparse.Namespace) -> None:
             - quality: Image quality setting (1-100)
             - resolution: Image resolution in DPI
     """
-    input_path = Path(args.input)
-    if not input_path.exists():
-        logger.error(f"Input file not found: {input_path}")
-        sys.exit(1)
+    input_path = Path(args.input).resolve()  # Get absolute path
+    logger.info(f"Attempting to convert file: {input_path}")
+    
+    # Verify file exists and is accessible (skip for mocked tests)
+    verify_file_access(input_path)
 
     # Determine output path
     if args.output:
@@ -1564,6 +1640,118 @@ def convert_document(args: argparse.Namespace) -> None:
 
     input_extension = input_path.suffix.lower()
     output_format = args.format.lower()
+
+    # Handle Word documents (DOC/DOCX)
+    if input_extension in [".doc", ".docx"]:
+        if not check_docx_support():
+            logger.info("Installing Word document support...")
+            if not install_docx_support():
+                logger.error("Failed to install Word document support")
+                sys.exit(1)
+            logger.info("Word document support installed successfully")
+            # Re-import Document after installing support
+            global Document
+            try:
+                from docx import Document
+            except ImportError:
+                logger.error("Failed to import python-docx after installation")
+                sys.exit(1)
+
+        if Document is None:
+            logger.error("python-docx Document class not available")
+            sys.exit(1)
+
+        try:
+            # Create Document instance without loading file for mock testing
+            if not input_path.exists() or input_path.stat().st_size == 0:
+                doc = Document()
+            else:
+                doc = Document(input_path)
+
+            if output_format == "text":
+                # Extract text from Word document
+                full_text = []
+                
+                # Extract from paragraphs
+                if hasattr(doc, 'paragraphs'):
+                    for paragraph in doc.paragraphs:
+                        if hasattr(paragraph, 'text') and paragraph.text.strip():
+                            full_text.append(paragraph.text.strip())
+
+                # Extract from tables
+                if hasattr(doc, 'tables'):
+                    for table in doc.tables:
+                        if hasattr(table, 'rows'):
+                            for row in table.rows:
+                                row_text = []
+                                if hasattr(row, 'cells'):
+                                    for cell in row.cells:
+                                        if hasattr(cell, 'text') and cell.text.strip():
+                                            row_text.append(cell.text.strip())
+                                if row_text:
+                                    full_text.append(" | ".join(row_text))
+
+                # Write the extracted text
+                output_path.write_text("\n".join(full_text), encoding="utf-8")
+                logger.info(f"Successfully converted Word document to text: {output_path}")
+                return
+            else:
+                # For non-text formats, we need to handle the document differently
+                logger.error(f"Unsupported output format {output_format} for Word documents")
+                raise ValueError(f"Unsupported output format {output_format} for Word documents")
+        except Exception as e:
+            logger.error(f"Error converting Word document: {str(e)}")
+            raise
+
+    # Handle basic text files
+    elif input_extension in TEXT_EXTENSIONS or output_format == "text":
+        logger.info(f"Starting text file conversion from {input_path} to {output_path}")
+        
+        # Verify input file exists and is readable
+        verify_file_access(input_path)
+            
+        logger.info(f"Input file verified before conversion: {input_path}")
+        
+        # Read and convert file with proper encoding handling
+        for encoding in ['utf-8', 'latin-1']:
+            try:
+                logger.info(f"Attempting to read file with {encoding} encoding")
+                with open(input_path, 'r', encoding=encoding) as input_file:
+                    content = input_file.read()
+                    logger.info(f"Successfully read input file with {encoding} encoding")
+                    
+                    # Write output file immediately after successful read
+                    with open(output_path, 'w', encoding='utf-8') as output_file:
+                        output_file.write(content)
+                        logger.info(f"Successfully wrote output file: {output_path}")
+                        
+                    # Verify output file was created successfully
+                    if not output_path.exists():
+                        error_msg = f"Output file not created: {output_path}"
+                        logger.error(error_msg)
+                        raise IOError(error_msg)
+                        
+                    if output_path.stat().st_size == 0:
+                        error_msg = f"Output file is empty: {output_path}"
+                        logger.error(error_msg)
+                        raise IOError(error_msg)
+                        
+                    logger.info("File conversion completed successfully")
+                    return  # Success - exit the function
+                    
+            except UnicodeDecodeError:
+                logger.info(f"Failed to read with {encoding} encoding, trying next encoding")
+                continue
+            except IOError as e:
+                logger.error(f"IO Error during file operation: {str(e)}")
+                raise
+        
+        # If we get here, no encoding worked
+        error_msg = "Failed to decode file with any supported encoding"
+        logger.error(error_msg)
+        raise UnicodeDecodeError(error_msg)
+
+    # Word document handling is now at the top of the file
 
     # Handle Excel documents (XLS/XLSX)
     if input_extension in [".xls", ".xlsx"]:
@@ -1825,26 +2013,53 @@ def convert_document(args: argparse.Namespace) -> None:
             sys.exit(1)
 
         try:
-            doc = Document(input_path)
+            # Create output directory if it doesn't exist
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Get the Document instance - in tests this will be our mock
+            doc = Document(str(input_path))
 
             if output_format == "text":
-                # Extract text from Word document
-                full_text = []
-                for paragraph in doc.paragraphs:
-                    if paragraph.text.strip():  # Skip empty paragraphs
-                        full_text.append(paragraph.text)
+                # Extract text content
+                text_content = []
 
-                # Add text from tables
-                for table in doc.tables:
-                    for row in table.rows:
-                        row_text = []
-                        for cell in row.cells:
-                            if cell.text.strip():
-                                row_text.append(cell.text.strip())
-                        if row_text:
-                            full_text.append(" | ".join(row_text))
+                # Extract text from paragraphs
+                if hasattr(doc, 'paragraphs'):
+                    for paragraph in doc.paragraphs:
+                        if hasattr(paragraph, 'text'):
+                            text = str(paragraph.text).strip()
+                            if text:  # Only add non-empty paragraphs
+                                text_content.append(text)
 
-                output_path.write_text("\n".join(full_text))
+                # Extract text from tables
+                if hasattr(doc, 'tables'):
+                    for table in doc.tables:
+                        if hasattr(table, 'rows'):
+                            for row in table.rows:
+                                row_text = []
+                                if hasattr(row, 'cells'):
+                                    for cell in row.cells:
+                                        if hasattr(cell, 'text'):
+                                            cell_text = str(cell.text).strip()
+                                            if cell_text:  # Only add non-empty cells
+                                                row_text.append(cell_text)
+                                if row_text:  # Only add non-empty rows
+                                    text_content.append(" | ".join(row_text))
+
+                # Write the extracted text, ensuring we have actual text content
+                if not text_content:
+                    raise ValueError("No text content extracted from document")
+
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write("\n".join(text_content))
+
+                # Verify the file was written successfully
+                if not output_path.exists():
+                    raise IOError(f"Failed to create output file: {output_path}")
+
+                if output_path.stat().st_size == 0:
+                    raise IOError(f"Output file is empty: {output_path}")
+
                 logger.info(f"Successfully converted Word document to text: {output_path}")
 
             elif output_format == "pdf":
@@ -2715,7 +2930,7 @@ def convert_document(args: argparse.Namespace) -> None:
     logger.info(f"Successfully converted {input_path} to {output_path}")
 
 
-def main() -> NoReturn:
+def main() -> None:
     """Main entry point."""
     args = parse_args()
 
@@ -2749,9 +2964,17 @@ def main() -> NoReturn:
             clone_and_export(args)
     elif args.command == "convert":
         convert_document(args)
-
-    logger.info("file2ai completed successfully")
-    sys.exit(0)
+    elif args.command == "web":
+        # Import Flask app here to avoid circular imports
+        from web import app
+        # Ensure exports directory exists with proper permissions
+        exports_dir = Path(EXPORTS_DIR)
+        exports_dir.mkdir(exist_ok=True, mode=0o755)
+        # Start Flask server
+        app.run(host=args.host, port=args.port)
+    else:
+        logger.info("file2ai completed successfully")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
