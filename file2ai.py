@@ -8,6 +8,28 @@ file.
 
 from __future__ import annotations
 
+__all__ = [
+    "parse_args",
+    "is_text_file",
+    "validate_github_url",
+    "export_files_to_single_file",
+    "parse_github_url",
+    "build_auth_url",
+    "prepare_exports_dir",
+    "clone_and_export",
+    "local_export",
+    "check_docx_support",
+    "install_docx_support",
+    "check_excel_support",
+    "install_excel_support",
+    "check_pptx_support",
+    "install_pptx_support",
+    "check_html_support",
+    "install_html_support",
+    "convert_document",
+    "setup_logging",
+]
+
 import argparse
 import fnmatch
 import importlib.util
@@ -37,7 +59,6 @@ from typing import (
 from typing import TYPE_CHECKING
 
 # Directory constants
-EXPORTS_DIR = "exports"
 UPLOADS_DIR = "uploads"
 FRONTEND_DIR = "frontend"
 
@@ -69,7 +90,8 @@ try:
     from docx import Document
     HAS_DOCX = True
 except ImportError:
-    pass  # Document remains None
+    Document = None  # Ensure Document is None on import failure
+    HAS_DOCX = False
 
 
 def check_image_support() -> bool:
@@ -83,19 +105,18 @@ def check_image_enhance_support() -> bool:
 
 
 def install_image_support() -> bool:
-    """Install Pillow package for image processing."""
-    success = install_package_support("Pillow")
-    if success:
-        global Image, ImageEnhance, HAS_PIL, HAS_PIL_ENHANCE
-        try:
-            from PIL import Image, ImageEnhance
-
-            HAS_PIL = True
-            HAS_PIL_ENHANCE = hasattr(Image, "frombytes") and ImageEnhance is not None
-        except ImportError:
-            HAS_PIL = False
-            HAS_PIL_ENHANCE = False
-    return success
+    """Check if Pillow package is available."""
+    global Image, ImageEnhance, HAS_PIL, HAS_PIL_ENHANCE
+    try:
+        from PIL import Image, ImageEnhance
+        HAS_PIL = True
+        HAS_PIL_ENHANCE = hasattr(Image, "frombytes") and ImageEnhance is not None
+        return True
+    except ImportError:
+        HAS_PIL = False
+        HAS_PIL_ENHANCE = False
+        logger.error("Pillow not found. Please install dependencies first.")
+        return False
 
 
 def check_package_support(package: str) -> bool:
@@ -107,37 +128,87 @@ def check_package_support(package: str) -> bool:
     Returns:
         bool: True if package is available, False otherwise
     """
-    return importlib.util.find_spec(package) is not None
+    # Handle package name mappings (e.g., python-docx -> docx)
+    package_map = {
+        'python-docx': 'docx',
+        'python-pptx': 'pptx',
+        'beautifulsoup4': 'bs4',
+        'pymupdf': 'fitz',
+        'weasyprint': 'weasyprint',
+        'openpyxl': 'openpyxl'
+    }
+    import_name = package_map.get(package, package)
+    
+    try:
+        # First try to import the module
+        __import__(import_name)
+        return True
+    except ImportError as e:
+        logger.debug(f"Failed to import {import_name}: {str(e)}")
+        # If import fails, check if package is installed but not importable
+        spec = importlib.util.find_spec(import_name)
+        if spec is not None:
+            logger.warning(f"Package {package} is installed but cannot be imported")
+        return False
 
 
 def install_package_support(package: str) -> bool:
-    """Install a Python package.
+    """Install a Python package if not already available.
 
     Args:
         package: Name of the package to install
 
     Returns:
-        bool: True if installation successful, False otherwise
+        bool: True if package is available or successfully installed, False otherwise
     """
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", package],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+    if check_package_support(package):
         return True
+    try:
+        logger.info(f"Installing {package}...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", package])
+        importlib.invalidate_caches()  # Ensure the newly installed package is detected
+        
+        # Try importing after installation
+        package_map = {
+            'python-docx': 'docx',
+            'python-pptx': 'pptx',
+            'beautifulsoup4': 'bs4',
+            'pymupdf': 'fitz',
+            'weasyprint': 'weasyprint',
+            'openpyxl': 'openpyxl'
+        }
+        import_name = package_map.get(package, package)
+        try:
+            __import__(import_name)
+            return True
+        except ImportError as e:
+            logger.error(f"Failed to import {import_name} after installation: {str(e)}")
+            return False
     except subprocess.CalledProcessError:
+        logger.error(f"Failed to install {package}")
         return False
 
 
 def check_docx_support() -> bool:
     """Check if python-docx is available for Word document support."""
-    return check_package_support("docx")
+    global HAS_DOCX
+    result = check_package_support("python-docx")
+    HAS_DOCX = result
+    return result
 
 
 def install_docx_support() -> bool:
-    """Install python-docx package for Word document support."""
-    return install_package_support("python-docx")
+    """Install python-docx package if not already available."""
+    global Document, HAS_DOCX
+    if install_package_support("python-docx"):
+        try:
+            from docx import Document
+            test_doc = Document()  # Verify we can create a document
+            HAS_DOCX = True
+            return True
+        except (ImportError, Exception):
+            pass
+    return False
 
 
 def check_excel_support() -> bool:
@@ -146,8 +217,15 @@ def check_excel_support() -> bool:
 
 
 def install_excel_support() -> bool:
-    """Install openpyxl package for Excel document support."""
-    return install_package_support("openpyxl")
+    """Install openpyxl package if not already available."""
+    if install_package_support("openpyxl"):
+        try:
+            import openpyxl
+            test_wb = openpyxl.Workbook()  # Verify we can create a workbook
+            return True
+        except (ImportError, Exception):
+            pass
+    return False
 
 
 def check_pptx_support() -> bool:
@@ -156,8 +234,15 @@ def check_pptx_support() -> bool:
 
 
 def install_pptx_support() -> bool:
-    """Install python-pptx package for PowerPoint document support."""
-    return install_package_support("python-pptx")
+    """Install python-pptx package if not already available."""
+    if install_package_support("python-pptx"):
+        try:
+            from pptx import Presentation
+            test_prs = Presentation()  # Verify we can create a presentation
+            return True
+        except (ImportError, Exception):
+            pass
+    return False
 
 
 class CommitInfo(TypedDict, total=False):
@@ -178,7 +263,7 @@ MIN_PYTHON_VERSION: Tuple[int, int] = (3, 7)
 DEFAULT_ENCODING: str = "utf-8"
 LAUNCHER_DIR_NAME: str = "launchers"
 LOGS_DIR: str = "logs"
-EXPORTS_DIR: str = "exports"
+EXPORTS_DIR: str = "exports"  # Used throughout the codebase for export operations
 
 # File extension sets
 TEXT_EXTENSIONS: Set[str] = {
@@ -228,17 +313,10 @@ logger = logging.getLogger(__name__)
 
 
 def install_gitpython_quietly() -> None:
-    """Install GitPython package quietly using pip."""
-    logger.info("Installing dependencies... (this may take a moment)")
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "gitpython", "--quiet"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as e:
-        logger.error("Failed to install GitPython: %s", e)
+    """Check if GitPython package is available."""
+    logger.info("Checking GitPython dependency...")
+    if not check_package_support("git"):
+        logger.error("GitPython not found. Please install dependencies first.")
         raise SystemExit(1)
 
 
@@ -332,7 +410,7 @@ Usage:
        file2ai.py FILE [--format FORMAT] [options]
 
     3. Web Interface:
-       file2ai.py serve [--port PORT]
+       file2ai.py web [--host HOST] [--port PORT]
 
 Supported formats for conversion: pdf, text, image, docx, csv, html
 Cross-platform compatible with no system dependencies required.""",
@@ -1196,12 +1274,12 @@ def local_export(args: argparse.Namespace) -> None:
     repo_name = local_dir.name or "local-export"
     extension = ".json" if hasattr(args, 'format') and args.format == "json" else ".txt"
     output_file = args.output_file if hasattr(args, 'output_file') and args.output_file else f"file2ai_export{extension}"
-    exports_dir = prepare_exports_dir()
-    output_path = exports_dir / output_file
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path = _sequential_filename(output_path.resolve())
+    
+    # Get exports directory and construct output path
+    exports_dir = prepare_exports_dir()  # Already resolved in prepare_exports_dir
+    output_path = _sequential_filename(exports_dir / output_file)  # No need to resolve again
     logger.debug(f"Using output path: {output_path}")
-    logger.debug(f"Exports directory: {EXPORTS_DIR}")
+    logger.debug(f"Exports directory: {exports_dir}")
 
     # Check if local_dir is a git repository
     git_path = local_dir / ".git"
@@ -1309,7 +1387,16 @@ def check_html_support() -> bool:
 
 def install_html_support() -> bool:
     """Install required HTML packages (beautifulsoup4 and weasyprint)."""
-    return install_package_support("beautifulsoup4") and install_package_support("weasyprint")
+    if install_package_support("beautifulsoup4") and install_package_support("weasyprint"):
+        try:
+            import bs4  # noqa: F401
+            import weasyprint  # noqa: F401
+            return True
+        except ImportError:
+            logger.error("Failed to import bs4 or weasyprint after installation")
+            return False
+    logger.error("Failed to install bs4 or weasyprint")
+    return False
 
 
 def check_pymupdf_support() -> bool:

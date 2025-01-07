@@ -40,15 +40,14 @@ def run_with_progress(command: List[str], desc: str, total: Optional[int] = None
         universal_newlines=True,
     )
     
-    # Use spinner below the overall progress bar
+    # Use simple progress indicator
     with tqdm(desc=desc, 
-             bar_format='{desc} {spinner}',
+             total=1,
              position=1,
-             leave=False,
-             ascii=True) as pbar:
+             leave=False) as pbar:
         while process.poll() is None:
-            pbar.update(1)
             time.sleep(0.1)
+        pbar.update(1)
     
     # Update overall progress
     global _overall_progress
@@ -60,15 +59,12 @@ def run_with_progress(command: List[str], desc: str, total: Optional[int] = None
 
 def show_spinner(desc: str, duration: float) -> None:
     """Show a spinner for a fixed duration."""
-    with tqdm(desc=desc, 
-             bar_format='{desc} {spinner}',
+    with tqdm(desc=desc,
+             total=1,
              position=1,
-             leave=False,
-             ascii=True) as pbar:
-        start_time = time.time()
-        while time.time() - start_time < duration:
-            pbar.update(1)
-            time.sleep(0.1)
+             leave=False) as pbar:
+        time.sleep(duration)
+        pbar.update(1)
 
 def create_test_files(test_dir: str) -> None:
     """Create test files with progress tracking."""
