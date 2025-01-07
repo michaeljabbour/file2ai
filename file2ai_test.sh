@@ -6,12 +6,15 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Initialize progress tracking
+python -c "from test_utils import init_overall_progress; init_overall_progress(10)"
+
 # Logging functions
-log_success() { echo -e "${GREEN}✓ $1${NC}"; }
-log_error()   { echo -e "${RED}✗ $1${NC}"; }
-log_warn()    { echo -e "${YELLOW}! $1${NC}"; }
+log_success() { echo -e "${GREEN}✓ $1${NC}" >&2; }
+log_error()   { echo -e "${RED}✗ $1${NC}" >&2; }
+log_warn()    { echo -e "${YELLOW}! $1${NC}" >&2; }
 # Only show info logs if VERBOSE is set
-log_info()    { [ "${VERBOSE:-0}" = "1" ] && echo -e "➜ $1" || :; }
+log_info()    { [ "${VERBOSE:-0}" = "1" ] && echo -e "➜ $1" >&2 || :; }
 
 # Set up project root
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,13 +38,18 @@ clean_old_artifacts() {
         "venv"
         "logs"
         "exports"
-        "test_files"
-        "launchers"
         "__pycache__"
         "*.egg-info"
         ".coverage"
         ".pytest_cache"
     )
+    
+    # Preserve test files and scripts
+    mkdir -p tests/backup
+    if [ -d "tests" ]; then
+        cp -r tests/create_test_*.py tests/backup/ 2>/dev/null || true
+        cp -r tests/backup/*.{pdf,docx,xlsx,pptx,html} tests/backup/ 2>/dev/null || true
+    fi
     
     # Clean up each directory
     for dir in "${cleanup_dirs[@]}"; do
@@ -74,10 +82,11 @@ create_directories() {
 # Create test files
 create_test_files() {
     log_info "Creating test files..."
+    # Create test files with progress bar
+    python -c "from test_utils import create_test_files; create_test_files('test_files')" || log_warn "Failed to create some test files"
+    
+    # Copy created files to exports directory
     for script in "${TEST_CREATION_SCRIPTS[@]}"; do
-        log_info "Running $script..."
-        python "$script" || log_warn "Failed to create test file using $script"
-        
         # Get the output file name from the script name
         case "$script" in
             *create_test_pdf.py)  file_name="test.pdf" ;;
@@ -139,10 +148,19 @@ setup_environment() {
     }
     log_success "Virtual environment created and activated"
     
-    log_info "Installing file2ai in editable mode with all dependencies..."
-    pip install --upgrade pip || log_error "Failed to upgrade pip"
-    pip install -e ".[test,web]" || {
-        log_error "Failed to install file2ai with dependencies"
+    # Install dependencies directly first
+    pip install --upgrade pip || {
+        log_error "Failed to upgrade pip"
+        return 1
+    }
+    pip install -e . || {
+        log_error "Failed to install package"
+        return 1
+    }
+    
+    # Now we can use progress utils since dependencies are installed
+    python -c "from test_utils import install_deps_with_progress; install_deps_with_progress(['-e .[test,web]'])" || {
+        log_error "Failed to install test dependencies"
         return 1
     }
     log_success "Installation complete"
@@ -156,8 +174,11 @@ run_tests() {
         return 1
     fi
 
-    # Run pytest with progress bar and minimal output
-    python -m pytest tests/test_file2ai.py -v --tb=short --show-capture=no || {
+    # Run pytest with tqdm progress bar
+    python -c "from test_utils import run_with_progress; exit(run_with_progress(
+        ['python', '-m', 'pytest', 'test_file2ai.py', '-v', '--tb=short', '--show-capture=no'],
+        'Running tests'
+    ))" || {
         log_error "Some tests failed!"
         return 1
     }
@@ -166,8 +187,11 @@ run_tests() {
 
 # Launch and test frontend
 launch_frontend() {
-    log_info "Installing Flask if not present..."
-    pip install flask || log_error "Failed to install Flask"
+    log_info "Verifying web dependencies..."
+    python -c "import flask" || {
+        log_error "Flask not found. Make sure to install with pip install -e .[test,web]"
+        return 1
+    }
     
     log_info "Launching frontend server..."
     mkdir -p logs
@@ -232,7 +256,7 @@ launch_frontend() {
     fi
 }
 
-# Show progress bar
+# Show overall progress
 show_progress() {
     local current=$1
     local total=$2
@@ -240,12 +264,50 @@ show_progress() {
     local percentage=$((current * 100 / total))
     local filled=$((width * current / total))
     local empty=$((width - filled))
-    printf "\rProgress: [%${filled}s%${empty}s] %d%%" "" "" "$percentage"
+    printf "\r${GREEN}Overall Progress:${NC} [%${filled}s%${empty}s] %d%%" "█" " " "$percentage"
 }
 
 # Main execution with progress tracking
 main() {
-    local total_steps=8
+    # Test exports and validation
+    test_exports() {
+        log_info "Testing local and remote exports..."
+        
+        # Test local directory export
+        python file2ai.py --local-dir test_files --output-file exports/local_export.txt || {
+            log_error "Local directory export failed"
+            return 1
+        }
+        
+        # Test document conversion
+        python file2ai.py convert --input test_files/test.pdf --format text || {
+            log_error "Document conversion failed"
+            return 1
+        }
+        
+        log_success "Export tests completed"
+    }
+
+    # Validate outputs
+    validate_outputs() {
+        log_info "Validating outputs..."
+        
+        # Check local export output
+        if [ ! -f "exports/local_export.txt" ]; then
+            log_error "Local export output not found"
+            return 1
+        fi
+        
+        # Check converted files
+        if [ ! -f "exports/test.txt" ]; then
+            log_error "Converted text file not found"
+            return 1
+        fi
+        
+        log_success "Output validation completed"
+    }
+
+    local total_steps=10
     local current_step=0
 
     show_progress $current_step $total_steps
@@ -275,6 +337,14 @@ main() {
     show_progress $current_step $total_steps
 
     run_tests
+    ((current_step++))
+    show_progress $current_step $total_steps
+
+    test_exports
+    ((current_step++))
+    show_progress $current_step $total_steps
+
+    validate_outputs
     ((current_step++))
     show_progress $current_step $total_steps
 

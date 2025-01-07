@@ -24,18 +24,27 @@ classifiers = [
     "Operating System :: OS Independent"
 ]
 dependencies = [
-    "gitpython",
-    "python-docx",
-    "openpyxl",
-    "weasyprint",
-    "beautifulsoup4",
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "pytest-mock",
-    "fpdf>=1.7.2",
-    "python-pptx>=0.6.21",
-    "requests>=2.31.0",
-    "flask>=2.0.0"
+    "gitpython>=3.1.40",  # For git repository operations
+    "python-docx>=0.8.11",  # For Word document support
+    "openpyxl>=3.1.2",  # For Excel document support
+    "weasyprint>=60.1",  # For HTML/PDF conversion
+    "beautifulsoup4>=4.12.2",  # For HTML parsing
+    "fpdf>=1.7.2",  # For PDF generation
+    "python-pptx>=0.6.21",  # For PowerPoint support
+    "requests>=2.31.0",  # For HTTP operations
+    "pillow>=10.1.0",  # For image processing
+    "pymupdf>=1.23.7"  # For PDF-to-image conversion
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",  # For testing
+    "pytest-cov>=4.0",  # For test coverage
+    "pytest-mock",  # For mocking in tests
+    "tqdm>=4.66.1",  # For progress bars in test scripts
+]
+web = [
+    "flask>=2.0.0",  # For web interface
 ]
 
 [project.urls]
@@ -48,7 +57,8 @@ dependencies = [
 # - weasyprint: HTML/PDF conversion
 
 [tool.setuptools]
-# We only have a single Python module called 'file2ai.py'
+packages = ["file2ai"]
+package-dir = {"file2ai" = "."}
 py-modules = ["file2ai"]
 
 [tool.black]
