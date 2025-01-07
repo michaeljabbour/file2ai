@@ -33,15 +33,15 @@ dependencies = [
     "python-pptx>=0.6.21",  # For PowerPoint support
     "requests>=2.31.0",  # For HTTP operations
     "pillow>=10.1.0",  # For image processing
-    "pymupdf>=1.23.7"  # For PDF-to-image conversion
+    "pymupdf>=1.23.7",  # For PDF-to-image conversion
+    "tqdm>=4.66.1"  # For progress bars
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest>=7.0",  # For testing
     "pytest-cov>=4.0",  # For test coverage
-    "pytest-mock",  # For mocking in tests
-    "tqdm>=4.66.1",  # For progress bars in test scripts
+    "pytest-mock"  # For mocking in tests
 ]
 web = [
     "flask>=2.0.0",  # For web interface

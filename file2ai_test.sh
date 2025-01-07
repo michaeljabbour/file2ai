@@ -274,7 +274,7 @@ main() {
         log_info "Testing local and remote exports..."
         
         # Test local directory export
-        python file2ai.py --local-dir test_files --output-file exports/local_export.txt || {
+        python file2ai.py --local-dir test_files --output-file local_export.txt || {
             log_error "Local directory export failed"
             return 1
         }
