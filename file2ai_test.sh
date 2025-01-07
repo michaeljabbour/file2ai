@@ -52,8 +52,8 @@ clean_old_artifacts() {
     for dir in "${cleanup_dirs[@]}"; do
         if [ -e "$dir" ]; then
             log_info "Removing $dir..."
-            sudo rm -rf "$dir" 2>/dev/null || {
-                log_error "Failed to remove $dir even with sudo"
+            rm -rf "$dir" 2>/dev/null || {
+                log_error "Failed to remove $dir"
                 return 1
             }
         fi
@@ -72,10 +72,11 @@ create_directories() {
                 exit 1
             }
         fi
-        sudo chmod 777 "$dir" || {
-            log_error "Failed to set permissions on $dir"
+        # Ensure directory is writable by the current user
+        if [ ! -w "$dir" ]; then
+            log_error "Directory $dir is not writable"
             return 1
-        }
+        fi
     done
 }
 
@@ -169,13 +170,9 @@ backup_test_files() {
 # Set up virtual environment and install dependencies
 setup_environment() {
     log_info "Creating fresh virtual environment..."
-    sudo rm -rf venv 2>/dev/null
+    rm -rf venv 2>/dev/null
     python3 -m venv venv || {
         log_error "Failed to create virtual environment"
-        return 1
-    }
-    sudo chown -R $USER:$USER venv || {
-        log_error "Failed to set venv ownership"
         return 1
     }
     source venv/bin/activate || {
@@ -298,7 +295,6 @@ verify_test_files
 backup_test_files
 run_tests || exit 1
 launch_frontend || exit 1
-}
 
 # Launch and test frontend
 launch_frontend() {
