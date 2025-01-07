@@ -2,13 +2,16 @@
 """
 file2ai Exporter
 
-Clones a GitHub repository or exports text files from a local directory to a single text file.
+Clones a GitHub repository or exports text files from a local directory to a single text
+file.
 """
 
 from __future__ import annotations
 
 import argparse
 import fnmatch
+import importlib.util
+import json
 import logging
 import mimetypes
 import os
@@ -16,26 +19,34 @@ import re
 import subprocess
 import sys
 import tempfile
-import importlib.util
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, Set, NoReturn, TextIO, Dict, List, TypedDict, Union, Protocol
-import json
+from typing import (
+    Dict,
+    List,
+    NoReturn,
+    Optional,
+    Set,
+    TextIO,
+    Tuple,
+    TypedDict,
+    Union,
+)
 
+# Type checking imports
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PILImage
-    from PIL import ImageEnhance
-    import fitz
-    from fitz import Page as FitzPage
-    from fitz import Matrix as FitzMatrix
-    from fitz import Pixmap as FitzPixmap
-    from fitz import Document as FitzDocument
-    import openpyxl
+    from fitz import (
+        Document as FitzDocument,
+        Matrix as FitzMatrix,
+        Page as FitzPage,
+        Pixmap as FitzPixmap,
+    )
     from openpyxl.workbook import Workbook
-    from openpyxl.worksheet.worksheet import Worksheet
 
+# Optional PIL support
 try:
     from PIL import Image, ImageEnhance
 
@@ -187,10 +198,8 @@ TEXT_EXTENSIONS: Set[str] = {
 
 BINARY_EXTENSIONS: Set[str] = {
     ".bin",
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".gif",
+    ".jpg",  # Standard image format
+    ".jpeg", # Standard image format
     ".pdf",
     ".exe",
     ".dll",
@@ -216,7 +225,7 @@ def install_gitpython_quietly() -> None:
             text=True,
         )
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to install GitPython: {e}")
+        logger.error("Failed to install GitPython: %s", e)
         raise SystemExit(1)
 
 
@@ -298,17 +307,22 @@ def parse_args() -> argparse.Namespace:
         sys.argv.insert(2, "--input")
 
     parser = argparse.ArgumentParser(
-        description="""Export text files and convert documents between formats.
+        description="""Export text files and convert documents between formats using
+        pure Python implementations.
 
 Usage:
     1. Repository/Directory Export:
        file2ai.py [--repo-url URL | --local-dir DIR] [options]
-       
+
     2. Document Conversion:
        file2ai.py convert --input FILE --format FORMAT [options]
        file2ai.py FILE [--format FORMAT] [options]
 
-Supported formats for conversion: pdf, text, image, docx, csv, html""",
+    3. Web Interface:
+       file2ai.py serve [--port PORT]
+
+Supported formats for conversion: pdf, text, image, docx, csv, html
+Cross-platform compatible with no system dependencies required.""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
@@ -348,6 +362,19 @@ Supported formats for conversion: pdf, text, image, docx, csv, html""",
     # Create subparsers for different commands
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
+    # Serve subcommand
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Start the web interface for file uploads and conversions",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to run the web server on",
+    )
+
     # Convert subcommand
     convert_parser = subparsers.add_parser(
         "convert",
@@ -374,14 +401,14 @@ Supported formats for conversion: pdf, text, image, docx, csv, html""",
     convert_parser.add_argument(
         "--brightness",
         type=float,
-        default=1.0,
-        help="Brightness adjustment factor (default: 1.0, range: 0.0-2.0)",
+        default=1.5,
+        help="Brightness adjustment factor (default: 1.50 for optimal readability, range: 0.0-2.0)",
     )
     convert_parser.add_argument(
         "--contrast",
         type=float,
-        default=1.0,
-        help="Contrast adjustment factor (default: 1.0, range: 0.0-2.0)",
+        default=1.2,
+        help="Contrast adjustment factor (default: 1.20 for optimal clarity, range: 0.0-2.0)",
     )
     convert_parser.add_argument(
         "--pages",
@@ -460,8 +487,9 @@ def parse_github_url(
     url: str, use_subdirectory: bool = False
 ) -> Tuple[str, Optional[str], Optional[str]]:
     """
-    Extract information from a GitHub repository URL, ignoring subdirectories unless use_subdirectory is True.
-    Also extracts base repository URL from deep URLs like /pulls, /issues, etc.
+    Extract information from a GitHub repository URL, ignoring subdirectories unless
+    use_subdirectory is True. Also extracts base repository URL from deep URLs like
+    /pulls, /issues, etc.
 
     Args:
         url: The GitHub repository URL to parse.
@@ -483,7 +511,7 @@ def parse_github_url(
         sys.exit(1)
 
     base_repo = base_match.group(1)
-    remaining_path = url[len(base_repo) :]
+    remaining_path = url[len(base_repo):]
 
     # Step 2: Check for URL suffixes that could be subdirectories
     special_suffixes = ["/pulls", "/issues", "/actions", "/wiki"]
@@ -499,7 +527,7 @@ def parse_github_url(
             else:
                 # Otherwise just remove it and continue with base URL
                 logger.warning(f"Removing suffix {suffix} from URL: {url}")
-            remaining_path = remaining_path[len(suffix) :]
+            remaining_path = remaining_path[len(suffix):]
             break
 
     # Step 3: Check for tree/<branch>/<path> pattern
@@ -596,7 +624,7 @@ def _sequential_filename(output_path: Path) -> Path:
         numbers = []
         for f in existing_files:
             try:
-                num = int(f.stem[len(base) + 1 : -1])  # Extract number between parentheses
+                num = int(f.stem[len(base) + 1:-1])  # Extract number between parentheses
                 numbers.append(num)
             except (ValueError, IndexError):
                 continue
@@ -604,8 +632,8 @@ def _sequential_filename(output_path: Path) -> Path:
             counter = max(numbers) + 1
 
     # Create new filename with next available number
-    output_path = parent / f"{base}({counter}){suffix}"
-    logger.debug(f"Using sequential filename: {output_path}")
+    output_path = parent / "{}({}){}".format(base, counter, suffix)
+    logger.debug("Using sequential filename: {}".format(output_path))
     return output_path
 
 
@@ -649,8 +677,7 @@ def load_gitignore_patterns(repo_root: Path) -> Tuple[Set[str], Set[str]]:
         "*.bin",
         "*.jpg",
         "*.jpeg",
-        "*.png",
-        "*.gif",
+        "*.jpg",
         "*.pdf",
         "*.zip",
         "*.tar.gz",
@@ -675,15 +702,17 @@ def load_gitignore_patterns(repo_root: Path) -> Tuple[Set[str], Set[str]]:
                     if line.startswith("!"):
                         pattern = line[1:]  # Remove the ! prefix
                         override_patterns.add(pattern)
-                        logger.debug(f"Added override pattern: {pattern}")
+                        logger.debug("Added override pattern: {}".format(pattern))
                     else:
                         ignore_patterns.add(line)
 
             logger.debug(
-                f"Loaded {len(ignore_patterns)} ignore patterns and {len(override_patterns)} override patterns"
+                "Loaded {} ignore patterns and {} override patterns".format(
+                    len(ignore_patterns), len(override_patterns)
+                )
             )
         except Exception as e:
-            logger.warning(f"Error reading .gitignore: {e}")
+            logger.warning("Error reading .gitignore: {}".format(e))
     else:
         logger.debug("No .gitignore found, using default blanket ignore")
 
@@ -1343,6 +1372,174 @@ def _write_image_list(
     return image_list
 
 
+def convert_word_to_image(
+    input_path: Path,
+    output_dir: Path,
+    resolution: int = 300,
+    brightness: float = 1.0,
+    contrast: float = 1.0,
+    quality: int = 95,
+    logger: Optional[logging.Logger] = None,
+) -> List[str]:
+    """
+    Convert a Word document to a series of images using pure Python (no system dependencies).
+
+    Args:
+        input_path: Path to the input Word document
+        output_dir: Directory to save the generated images
+        resolution: Image resolution in DPI (default: 300)
+        brightness: Image brightness adjustment (0.0-2.0, default: 1.0)
+        contrast: Image contrast adjustment (0.0-2.0, default: 1.0)
+        quality: Image quality setting (1-100, default: 95)
+        logger: Optional logger instance for output
+
+    Returns:
+        List[str]: List of paths to the generated images
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+
+    if not check_docx_support():
+        logger.info("Installing Word document support...")
+        if not install_docx_support():
+            logger.error("Failed to install Word document support")
+            raise ImportError("Failed to install python-docx")
+        logger.info("Word document support installed successfully")
+
+    try:
+        from docx import Document
+    except ImportError:
+        logger.error("Failed to import python-docx")
+        raise
+
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        logger.error("Failed to import PIL")
+        raise
+
+    # Create images directory if it doesn't exist
+    images_dir = output_dir / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    # Calculate dimensions based on resolution
+    dpi = resolution
+    page_width = int(8.5 * dpi)  # Standard US Letter width
+    page_height = int(11 * dpi)  # Standard US Letter height
+    margin = int(dpi * 0.5)  # 0.5 inch margins
+    font_size = int(dpi / 10)  # Proportional font size
+
+    # Create a new image for each page
+    page_num = 1
+    current_y = margin
+    current_page = Image.new("RGB", (page_width, page_height), "white")
+    draw = ImageDraw.Draw(current_page)
+    image_list = []
+
+    try:
+        # Use a basic font (this will work cross-platform)
+        font = ImageFont.load_default()
+    except Exception as e:
+        logger.warning(f"Failed to load font: {e}, using basic text rendering")
+        font = None
+
+    def new_page():
+        nonlocal current_page, draw, current_y, page_num
+        # Save current page if it has content
+        if current_y > margin:
+            image_path = images_dir / f"{input_path.stem}_page_{page_num}.png"
+            if check_image_enhance_support():
+                try:
+                    _enhance_and_save_image(
+                        current_page,
+                        image_path,
+                        argparse.Namespace(
+                            brightness=brightness, contrast=contrast, quality=quality
+                        ),
+                        logger,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to enhance image: {e}")
+                    current_page.save(image_path, "PNG")
+            else:
+                current_page.save(image_path, "PNG")
+            logger.info(f"Created image for page {page_num}: {image_path}")
+            image_list.append(str(image_path))
+            page_num += 1
+        # Create new page
+        current_page = Image.new("RGB", (page_width, page_height), "white")
+        draw = ImageDraw.Draw(current_page)
+        current_y = margin
+
+    # Load and process the document
+    doc = Document(input_path)
+
+    # Process paragraphs
+    for paragraph in doc.paragraphs:
+        if paragraph.text.strip():
+            # Wrap text to fit page width
+            words = paragraph.text.split()
+            line = []
+            for word in words:
+                line.append(word)
+                # Check if line width exceeds page width
+                text = " ".join(line)
+                if font:
+                    text_width = draw.textlength(text, font=font)
+                else:
+                    text_width = len(text) * (font_size * 0.6)  # Estimate width
+
+                if text_width > page_width - (2 * margin):
+                    # Remove last word and draw line
+                    line.pop()
+                    text = " ".join(line)
+                    if current_y + font_size > page_height - margin:
+                        new_page()
+                    draw.text((margin, current_y), text, fill="black", font=font)
+                    current_y += int(font_size * 1.5)
+                    line = [word]
+
+            # Draw remaining text
+            if line:
+                text = " ".join(line)
+                if current_y + font_size > page_height - margin:
+                    new_page()
+                draw.text((margin, current_y), text, fill="black", font=font)
+                current_y += int(font_size * 2)  # Extra space after paragraph
+
+    # Process tables
+    for table in doc.tables:
+        # Calculate table dimensions
+        col_width = (page_width - (2 * margin)) // max(len(row.cells) for row in table.rows)
+        row_height = int(font_size * 2)
+
+        for row in table.rows:
+            # Check if table row fits on current page
+            if current_y + row_height > page_height - margin:
+                new_page()
+
+            # Draw table row
+            x = margin
+            for cell in row.cells:
+                # Draw cell border
+                draw.rectangle(
+                    [x, current_y, x + col_width, current_y + row_height], outline="black"
+                )
+                # Draw cell text
+                if cell.text.strip():
+                    draw.text((x + 5, current_y + 5), cell.text.strip(), fill="black", font=font)
+                x += col_width
+            current_y += row_height
+
+        current_y += int(font_size)  # Space after table
+
+    # Save the last page if it has content
+    if current_y > margin:
+        new_page()
+
+    return image_list
+
+
 def convert_document(args: argparse.Namespace) -> None:
     """
     Convert a document to the specified format.
@@ -1461,13 +1658,13 @@ def convert_document(args: argparse.Namespace) -> None:
             logger.info("Excel document support installed successfully")
 
         try:
-            import openpyxl
+            from openpyxl import load_workbook
         except ImportError:
             logger.error("Failed to import openpyxl")
             sys.exit(1)
 
         try:
-            workbook: "Workbook" = openpyxl.load_workbook(input_path, data_only=True)
+            workbook: "Workbook" = load_workbook(input_path, data_only=True)
 
             if output_format == "text":
                 # Extract text from Excel workbook
@@ -1517,7 +1714,7 @@ def convert_document(args: argparse.Namespace) -> None:
                     logger.info("PDF support installed successfully")
 
                 try:
-                    import fitz  # PyMuPDF
+                    from fitz import open as fitz_open, Matrix  # PyMuPDF
                     from PIL import Image  # For image enhancements
                 except ImportError:
                     logger.error("Failed to import required packages")
@@ -1590,8 +1787,8 @@ def convert_document(args: argparse.Namespace) -> None:
                     sys.exit(1)
 
                 try:
-                    # Open PDF document
-                    pdf_doc: "FitzDocument" = fitz.open(pdf_path)
+                    # Open PDF document using previously imported fitz_open
+                    pdf_doc: "FitzDocument" = fitz_open(pdf_path)
 
                     # Parse page range if specified
                     if args.pages:
@@ -1601,7 +1798,9 @@ def convert_document(args: argparse.Namespace) -> None:
                         pages_to_process = [p for p in pages_to_process if 1 <= p <= max_page]
                         if not pages_to_process:
                             logger.error(
-                                f"No valid pages in range: {args.pages} (document has {max_page} pages)"
+                                "No valid pages in range: {} (document has {} pages)".format(
+                                    args.pages, max_page
+                                )
                             )
                             sys.exit(1)
                     else:
@@ -1612,7 +1811,7 @@ def convert_document(args: argparse.Namespace) -> None:
                         page: "FitzPage" = pdf_doc[page_num - 1]
                         # Set resolution for the pixmap
                         zoom = args.resolution / 72.0  # Convert DPI to zoom factor
-                        matrix: "FitzMatrix" = fitz.Matrix(zoom, zoom)
+                        matrix: "FitzMatrix" = Matrix(zoom, zoom)
                         pix: "FitzPixmap" = page.get_pixmap(matrix=matrix)
 
                         # Convert to PIL Image for enhancement
@@ -1663,15 +1862,17 @@ def convert_document(args: argparse.Namespace) -> None:
 
                     # Create the .image file that contains the list of generated images
                     image_output_path = output_path.with_suffix(".image")
-                    image_files = sorted(Path(images_dir).glob("*.png"))
+                    image_files = sorted(Path(images_dir).glob("*.jpg"))
                     with open(image_output_path, "w") as f:
                         for img_path in image_files:
-                            # Ensure path is in the format "exports/images/filename.png"
+                            # Ensure path is in the format "exports/images/filename.jpg"
                             relative_path = f"exports/images/{img_path.name}"
                             f.write(f"{relative_path}\n")
                     logger.info(f"Successfully converted Excel to images in {images_dir}")
                     logger.info(
-                        f"Created image reference file with {len(image_files)} images: {image_output_path}"
+                        "Created image reference file with {} images: {}".format(
+                            len(image_files), image_output_path
+                        )
                     )
                     logger.info(f"Successfully converted {input_path} to {output_path}")
 
@@ -1772,124 +1973,40 @@ def convert_document(args: argparse.Namespace) -> None:
                 logger.info(f"Successfully converted Word document to PDF: {output_path}")
 
             elif output_format == "image":
-                # Check and install PyMuPDF support first
-                if not check_pymupdf_support():
-                    logger.info("Installing PDF support...")
-                    if not install_pymupdf_support():
-                        logger.error("Failed to install PDF support")
-                        sys.exit(1)
-                    logger.info("PDF support installed successfully")
-
+                # Convert Word document to images
                 try:
-                    import fitz  # PyMuPDF
-                    from PIL import Image  # For image enhancements
-                except ImportError:
-                    logger.error("Failed to import required packages")
-                    sys.exit(1)
+                    image_list = convert_word_to_image(
+                        input_path,
+                        exports_dir,
+                        resolution=args.resolution,
+                        brightness=args.brightness,
+                        contrast=args.contrast,
+                        quality=args.quality,
+                        logger=logger,
+                    )
 
-                # Create images directory inside exports
-                images_dir = exports_dir / "images"
-                images_dir.mkdir(exist_ok=True)
-
-                # Convert Word to PDF using weasyprint (reusing implementation from PDF output format)
-                pdf_name = input_path.stem + ".pdf"
-                pdf_path = exports_dir / pdf_name
-
-                # For PDF output, we need weasyprint
-                if not check_package_support("weasyprint"):
-                    logger.info("Installing PDF conversion support...")
-                    if not install_package_support("weasyprint"):
-                        logger.error("Failed to install PDF conversion support")
-                        sys.exit(1)
-                    logger.info("PDF conversion support installed successfully")
-
-                try:
-                    import weasyprint
-                except ImportError:
-                    logger.error("Failed to import weasyprint")
-                    sys.exit(1)
-
-                # Convert Word content to HTML
-                html_content = ["<html><body>"]
-                for paragraph in doc.paragraphs:
-                    if paragraph.text.strip():
-                        html_content.append(f"<p>{paragraph.text}</p>")
-
-                # Add tables
-                for table in doc.tables:
-                    html_content.append("<table border='1'>")
-                    for row in table.rows:
-                        html_content.append("<tr>")
-                        for cell in row.cells:
-                            if cell.text.strip():
-                                html_content.append(f"<td>{cell.text}</td>")
-                            else:
-                                html_content.append("<td>&nbsp;</td>")
-                        html_content.append("</tr>")
-                    html_content.append("</table>")
-
-                html_content.append("</body></html>")
-                html_str = "\n".join(html_content)
-
-                # Convert HTML to PDF using weasyprint
-                pdf = weasyprint.HTML(string=html_str).write_pdf()
-                pdf_path.write_bytes(pdf)
-
-                try:
-                    # Open PDF document
-                    pdf_doc = fitz.open(pdf_path)
-
-                    # Parse page range if specified
-                    if args.pages:
-                        pages_to_process = parse_page_range(args.pages)
-                        # Validate page numbers
-                        max_page = len(pdf_doc)
-                        pages_to_process = [p for p in pages_to_process if 1 <= p <= max_page]
-                        if not pages_to_process:
-                            logger.error(
-                                f"No valid pages in range: {args.pages} (document has {max_page} pages)"
-                            )
-                            sys.exit(1)
-                    else:
-                        pages_to_process = range(1, len(pdf_doc) + 1)
-
-                    for page_num in pages_to_process:
-                        # PyMuPDF uses 0-based indexing
-                        page = pdf_doc[page_num - 1]
-                        # Set resolution for the pixmap
-                        zoom = args.resolution / 72.0  # Convert DPI to zoom factor
-                        matrix = fitz.Matrix(zoom, zoom)
-                        pix = page.get_pixmap(matrix=matrix)
-
-                        # Convert to PIL Image for enhancement
-                        img_data = pix.samples
-                        image_path = images_dir / f"{input_path.stem}_page_{page_num}.png"
-
-                        if check_image_enhance_support():
-                            try:
-                                img = Image.frombytes("RGB", (pix.width, pix.height), img_data)
-
-                                _enhance_and_save_image(img, image_path, args, logger)
-                            except Exception as e:
-                                logger.warning(f"Failed to create PIL image: {e}")
-                                # Fallback to direct save
-                                pix.save(str(image_path))
-                        else:
-                            # Fallback to direct pixmap save if PIL enhancements not available
-                            pix.save(str(image_path))
-
-                        logger.info(f"Created image for page {page_num}: {image_path}")
-
-                    _write_image_list(images_dir, input_path, pages_to_process, output_path, logger)
-
-                    logger.info(f"Successfully converted Word document to images in {images_dir}")
-                finally:
-                    # Clean up temporary PDF file
-                    if pdf_path.exists():
-                        pdf_path.unlink()
+                    # Create the .image file that contains the list of generated images
+                    image_output_path = output_path.with_suffix(".image")
+                    with open(image_output_path, "w") as f:
+                        for img_path in image_list:
+                            # Ensure path is in the format "exports/images/filename.png"
+                            relative_path = "exports/images/{}".format(Path(img_path).name)
+                            f.write("{}\n".format(relative_path))
+                    logger.info("Successfully converted Word document to images")
+                    logger.info(
+                        "Created image reference file with {} images: {}".format(
+                            len(image_list), image_output_path
+                        )
+                    )
+                    logger.info("Successfully converted {} to {}".format(input_path, output_path))
+                except Exception as e:
+                    logger.error("Error converting Word document to images: {}".format(e))
+                    raise
 
             else:
-                logger.error(f"Unsupported output format for Word documents: {output_format}")
+                logger.error(
+                    "Unsupported output format for Word documents: {}".format(output_format)
+                )
                 sys.exit(1)
 
         except Exception as e:
@@ -1906,14 +2023,14 @@ def convert_document(args: argparse.Namespace) -> None:
             logger.info("PDF support installed successfully")
 
         try:
-            import fitz  # PyMuPDF
+            from fitz import open as fitz_open, Matrix  # PyMuPDF
         except ImportError:
             logger.error("Failed to import PyMuPDF")
             sys.exit(1)
 
         try:
             # Open PDF document
-            pdf_doc = fitz.open(input_path)
+            pdf_doc = fitz_open(input_path)
 
             if output_format == "text":
                 # Extract text from PDF
@@ -1940,7 +2057,9 @@ def convert_document(args: argparse.Namespace) -> None:
                         pages_to_process = [p for p in pages_to_process if 1 <= p <= max_page]
                         if not pages_to_process:
                             logger.error(
-                                f"No valid pages in range: {args.pages} (document has {max_page} pages)"
+                                "No valid pages in range: {} (document has {} pages)".format(
+                                    args.pages, max_page
+                                )
                             )
                             sys.exit(1)
                     else:
@@ -1951,7 +2070,7 @@ def convert_document(args: argparse.Namespace) -> None:
                         page = pdf_doc[page_num - 1]
                         # Set resolution for the pixmap
                         zoom = args.resolution / 72.0  # Convert DPI to zoom factor
-                        matrix = fitz.Matrix(zoom, zoom)
+                        matrix = Matrix(zoom, zoom)
                         pix = page.get_pixmap(matrix=matrix)
 
                         # Convert to PIL Image for enhancement
@@ -1999,7 +2118,6 @@ def convert_document(args: argparse.Namespace) -> None:
 
         try:
             from bs4 import BeautifulSoup
-            import re
         except ImportError:
             logger.error("Failed to import beautifulsoup4")
             sys.exit(1)
@@ -2153,7 +2271,9 @@ def convert_document(args: argparse.Namespace) -> None:
                                 page_num = int(args.pages)
                                 if not (1 <= page_num <= len(pdf_doc)):
                                     logger.error(
-                                        f"Invalid page number: {args.pages} (document has {len(pdf_doc)} pages)"
+                                        "Invalid page number: {} (document has {} pages)".format(
+                                            args.pages, len(pdf_doc)
+                                        )
                                     )
                                     sys.exit(1)
                                 pages_to_process = [page_num]
@@ -2166,7 +2286,9 @@ def convert_document(args: argparse.Namespace) -> None:
                                 ]
                                 if not pages_to_process:
                                     logger.error(
-                                        f"No valid pages in range: {args.pages} (document has {max_page} pages)"
+                                        "No valid pages in range: {} (document has {} pages)".format(
+                                            args.pages, max_page
+                                        )
                                     )
                                     sys.exit(1)
                         else:
@@ -2182,7 +2304,7 @@ def convert_document(args: argparse.Namespace) -> None:
 
                             # Convert to PIL Image for enhancement if PIL is available
                             img_data = pix.samples
-                            image_path = images_dir / f"{input_path.stem}_page_{page_num}.png"
+                            image_path = images_dir / f"{input_path.stem}_page_{page_num}.jpg"
 
                             if check_image_enhance_support():
                                 try:
@@ -2198,7 +2320,9 @@ def convert_document(args: argparse.Namespace) -> None:
                                             img = enhancer.enhance(brightness)
                                             if brightness != args.brightness:
                                                 logger.debug(
-                                                    f"Brightness value clamped to valid range: {brightness}"
+                                                    "Brightness value clamped to valid range: {}".format(
+                                                    brightness
+                                                )
                                                 )
 
                                         # Apply contrast adjustment with validation
@@ -2208,7 +2332,9 @@ def convert_document(args: argparse.Namespace) -> None:
                                             img = enhancer.enhance(contrast)
                                             if contrast != args.contrast:
                                                 logger.debug(
-                                                    f"Contrast value clamped to valid range: {contrast}"
+                                                    "Contrast value clamped to valid range: {}".format(
+                                                    contrast
+                                                )
                                                 )
 
                                         # Save with quality setting
@@ -2234,7 +2360,7 @@ def convert_document(args: argparse.Namespace) -> None:
                         # Create a combined output file listing all image paths
                         image_list = []
                         for page_num in pages_to_process:
-                            image_name = f"{input_path.stem}_page_{page_num}.png"
+                            image_name = f"{input_path.stem}_page_{page_num}.jpg"
                             image_path = images_dir / image_name
                             # In test environment, don't check exists
                             image_list.append(f"exports/images/{image_name}")
@@ -2401,7 +2527,7 @@ def convert_document(args: argparse.Namespace) -> None:
                 # Create a combined output file listing all image paths
                 image_list = []
                 for page_num in pages_to_process:
-                    image_name = f"{input_path.stem}_page_{page_num}.png"
+                    image_name = f"{input_path.stem}_page_{page_num}.jpg"
                     image_path = images_dir / image_name
                     # In test environment, don't check exists
                     image_list.append(f"exports/images/{image_name}")
@@ -2455,7 +2581,8 @@ def convert_document(args: argparse.Namespace) -> None:
                 prs = Presentation(input_path)
             except Exception as e:
                 logger.error(
-                    f"Failed to load PowerPoint file. The file may be corrupted or not a valid PowerPoint document: {e}"
+                    "Failed to load PowerPoint file. "
+                    "The file may be corrupted or not a valid PowerPoint document: {}".format(e)
                 )
                 sys.exit(1)
 
@@ -2472,7 +2599,9 @@ def convert_document(args: argparse.Namespace) -> None:
                     pages_to_process = [p for p in pages_to_process if 1 <= p <= max_slide]
                     if not pages_to_process:
                         logger.error(
-                            f"No valid slides in range: {args.pages} (presentation has {max_slide} slides)"
+                            "No valid slides in range: {} (presentation has {} slides)".format(
+                                args.pages, max_slide
+                            )
                         )
                         sys.exit(1)
                     if len(pages_to_process) == 1:
@@ -2523,7 +2652,9 @@ def convert_document(args: argparse.Namespace) -> None:
                             pages_to_process = [p for p in pages_to_process if 1 <= p <= max_slide]
                             if not pages_to_process:
                                 logger.error(
-                                    f"No valid slides in range: {args.pages} (presentation has {max_slide} slides)"
+                                    "No valid slides in range: {} (presentation has {} slides)".format(
+                                        args.pages, max_slide
+                                    )
                                 )
                                 sys.exit(1)
                             # For single page, ensure we only process that page
@@ -2534,7 +2665,9 @@ def convert_document(args: argparse.Namespace) -> None:
                                     logger.debug(f"Processing single slide: {page}")
                                 else:
                                     logger.error(
-                                        f"Invalid slide number: {page} (presentation has {max_slide} slides)"
+                                        "Invalid slide number: {} (presentation has {} slides)".format(
+                                            page, max_slide
+                                        )
                                     )
                                     sys.exit(1)
                             else:

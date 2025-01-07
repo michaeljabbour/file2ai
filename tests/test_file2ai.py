@@ -1,8 +1,8 @@
-import json
 import pytest
 import shutil
 import subprocess
 import importlib.util
+import logging
 from pathlib import Path
 import sys
 from unittest.mock import patch, MagicMock, Mock
@@ -10,7 +10,6 @@ from file2ai import (
     parse_args,
     is_text_file,
     validate_github_url,
-    export_files_to_json,
     export_files_to_single_file,
     parse_github_url,
     build_auth_url,
@@ -472,7 +471,6 @@ def test_local_export(tmp_path, caplog):
 
 def test_branch_handling(tmp_path, caplog):
     """Test branch checkout behavior."""
-    from argparse import Namespace
     import logging
     import subprocess
 
@@ -574,8 +572,6 @@ def test_branch_handling(tmp_path, caplog):
 
 def test_subdirectory_handling(tmp_path, caplog):
     """Test subdirectory export behavior."""
-    from argparse import Namespace
-    import logging
     import subprocess
 
     caplog.set_level(logging.INFO)
@@ -704,7 +700,6 @@ def test_logging_setup(tmp_path, caplog):
 
 def test_docx_dependency_management(monkeypatch, caplog):
     """Test python-docx dependency checking and installation."""
-    import logging
     from importlib.util import find_spec
 
     # Mock importlib.util.find_spec to simulate missing docx
@@ -820,7 +815,6 @@ def test_word_conversion_errors(tmp_path, caplog, monkeypatch):
 
 def test_excel_dependency_management(monkeypatch, caplog):
     """Test openpyxl dependency checking and installation."""
-    import logging
     from importlib.util import find_spec
 
     # Mock importlib.util.find_spec to simulate missing openpyxl
@@ -1009,7 +1003,6 @@ def test_excel_conversion_errors(tmp_path, caplog, monkeypatch):
 
 def test_pptx_dependency_management(monkeypatch, caplog):
     """Test python-pptx dependency checking and installation."""
-    import logging
     from importlib.util import find_spec
 
     # Mock importlib.util.find_spec to simulate missing pptx
@@ -1035,7 +1028,7 @@ def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
     """Test PowerPoint document to text conversion."""
     import logging
     import sys
-    from unittest.mock import Mock, patch, MagicMock
+    from unittest.mock import Mock, patch
 
     # Mock Presentation class and pptx module
     class MockShape:
@@ -1102,7 +1095,7 @@ def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
     """Test error handling in PowerPoint document conversion."""
     import logging
     import sys
-    from unittest.mock import Mock, patch, MagicMock
+    from unittest.mock import Mock, patch
 
     setup_logging()
     caplog.set_level(logging.ERROR)
@@ -1160,7 +1153,6 @@ def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
 
 def test_html_dependency_management(monkeypatch, caplog):
     """Test beautifulsoup4 dependency checking and installation."""
-    import logging
     from importlib.util import find_spec
 
     # Mock importlib.util.find_spec to simulate missing bs4
@@ -1184,7 +1176,6 @@ def test_html_dependency_management(monkeypatch, caplog):
 
 def test_html_to_text_conversion(tmp_path, caplog):
     """Test HTML to text conversion."""
-    import logging
 
     # Create a test HTML file
     test_html = """<!DOCTYPE html>
@@ -1227,7 +1218,6 @@ def test_html_to_text_conversion(tmp_path, caplog):
 
 def test_html_to_pdf_conversion(tmp_path, caplog):
     """Test HTML to PDF conversion."""
-    import logging
 
     # Create a test HTML file with an image
     test_html = """<!DOCTYPE html>
@@ -1235,7 +1225,7 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
 <head><title>Test Document</title></head>
 <body>
     <h1>Test Heading</h1>
-    <img src="test.png" alt="Test Image">
+    <img src="test.jpg" alt="Test Image">
 </body>
 </html>"""
 
@@ -1243,7 +1233,7 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
     test_file.write_text(test_html)
 
     # Create a test image
-    test_image = tmp_path / "test.png"
+    test_image = tmp_path / "test.jpg"
     from PIL import Image
 
     img = Image.new("RGB", (100, 100), color="red")
@@ -1278,8 +1268,7 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
 
 
 def test_html_to_image_conversion(tmp_path, caplog):
-    """Test HTML to image conversion."""
-    import logging
+    """Test HTML to JPG image conversion."""
 
     # Create a test HTML file
     test_html = """<!DOCTYPE html>
@@ -1344,8 +1333,8 @@ def test_html_to_image_conversion(tmp_path, caplog):
     images_dir.mkdir(exist_ok=True, parents=True)
 
     # Create mock image files
-    (images_dir / "test_page_1.png").touch()
-    (images_dir / "test_page_2.png").touch()
+    (images_dir / "test_page_1.jpg").touch()
+    (images_dir / "test_page_2.jpg").touch()
 
     # Mock Path.exists() for image files
     def mock_exists(self):
@@ -1355,21 +1344,21 @@ def test_html_to_image_conversion(tmp_path, caplog):
             return True
         if path_str.endswith(".image"):
             return True
-        if path_str.endswith(("test_page_1.png", "test_page_2.png")):
+        if path_str.endswith(("test_page_1.jpg", "test_page_2.jpg")):
             return True
         return False
 
     with patch.object(Path, "exists", mock_exists):
         # Verify image files exist
-        assert (images_dir / "test_page_1.png").exists()
-        assert (images_dir / "test_page_2.png").exists()
+        assert (images_dir / "test_page_1.jpg").exists()
+        assert (images_dir / "test_page_2.jpg").exists()
 
         # Verify the list file exists and contains correct paths
         list_files = list(exports_dir.glob("test*.image"))
         assert len(list_files) == 1
         content = list_files[0].read_text()
-        assert "exports/images/test_page_1.png" in content
-    assert "exports/images/test_page_2.png" in content
+        assert "exports/images/test_page_1.jpg" in content
+    assert "exports/images/test_page_2.jpg" in content
 
     # Clean up
     shutil.rmtree(exports_dir)
@@ -1377,7 +1366,6 @@ def test_html_to_image_conversion(tmp_path, caplog):
 
 def test_mhtml_conversion(tmp_path, caplog):
     """Test MHTML file conversion."""
-    import logging
 
     # Create a test MHTML file
     mhtml_content = """From: <Saved by file2ai>
@@ -1422,7 +1410,6 @@ Content-Type: text/html; charset="utf-8"
 
 def test_html_conversion_errors(tmp_path, caplog):
     """Test HTML conversion error handling."""
-    import logging
 
     # Create a test HTML file
     test_file = tmp_path / "test.html"
