@@ -3,11 +3,22 @@ from pathlib import Path
 import os
 import sys
 import uuid
+import socket
 import threading
 from datetime import datetime
 import logging
 from typing import Dict, Optional, List, TypedDict, Union
 from werkzeug.datastructures import FileStorage
+
+# Configure logging
+logging.basicConfig(
+    level=os.getenv('LOG_LEVEL', 'INFO'),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 def gather_all_files(base_dir: str) -> List[str]:
     """Recursively gather all files from a directory.
@@ -74,23 +85,33 @@ from file2ai import EXPORTS_DIR, UPLOADS_DIR, FRONTEND_DIR, prepare_exports_dir
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path='')
 app.secret_key = os.urandom(24)  # For flash messages
 
+# Set up directories with proper permissions
+directories = {
+    'uploads': Path(UPLOADS_DIR),
+    'exports': Path(EXPORTS_DIR),
+    'frontend': Path(FRONTEND_DIR)
+}
+
 # Ensure required directories exist with proper permissions
 prepare_exports_dir()  # Use the existing function from file2ai.py
-UPLOADS_FOLDER = Path(UPLOADS_DIR)
-FRONTEND_FOLDER = Path(FRONTEND_DIR)
 
-for folder in [UPLOADS_FOLDER, FRONTEND_FOLDER]:
-    folder.mkdir(exist_ok=True, mode=0o755)
+for name, path in directories.items():
+    try:
+        # Create directory with proper permissions
+        path.mkdir(exist_ok=True, mode=0o755)
+        # Verify directory exists and is writable
+        if not path.exists():
+            raise IOError(f"Failed to create directory: {path}")
+        if not os.access(str(path), os.W_OK):
+            raise IOError(f"Directory not writable: {path}")
+        logger.info(f"Created/verified directory: {path}")
+    except Exception as e:
+        logger.error(f"Failed to create {name} directory: {e}")
+        sys.exit(1)
 
 # Global job tracking
 conversion_jobs = {}
 job_events = {}
-
-# Ensure directories exist
-UPLOAD_FOLDER = Path("uploads")
-UPLOAD_FOLDER.mkdir(exist_ok=True)
-EXPORTS_FOLDER = Path("exports")
-EXPORTS_FOLDER.mkdir(exist_ok=True)
 
 
 def process_job(
@@ -159,7 +180,7 @@ def process_job(
                 output_path = None
                 try:
                     # Save uploaded file
-                    input_path = UPLOAD_FOLDER / filename
+                    input_path = Path(UPLOADS_DIR) / filename
                     # Read file content into memory first
                     file_content = file_data.read()
                     # Create and write to file
@@ -181,7 +202,7 @@ def process_job(
 
                     # Create output path
                     out_filename = f"{filename}.{output_format}"
-                    output_path = EXPORTS_FOLDER / out_filename
+                    output_path = Path(EXPORTS_DIR) / out_filename
                     logger.info(f"Converting {input_path} to {output_path} with format {output_format}")
 
                     # Create args namespace
@@ -258,7 +279,7 @@ def process_job(
                     repo_name = str(repo_url).rstrip("/").split("/")[-1].replace(".git", "")
                     format_ext = str(options.get("format", "text"))
                     filename = f"{repo_name}_export.{format_ext}"
-                    output_path = EXPORTS_FOLDER / filename
+                    output_path = Path(EXPORTS_DIR) / filename
 
                     # Create args namespace for repository export
                     args = Namespace(
@@ -302,7 +323,7 @@ def process_job(
                     dir_name = Path(str(local_dir)).name
                     format_ext = str(options.get("format", "text"))
                     filename = f"{dir_name}_export.{format_ext}"
-                    output_path = EXPORTS_FOLDER / filename
+                    output_path = Path(EXPORTS_DIR) / filename
 
                     # Create args namespace for local export
                     args = Namespace(
@@ -722,9 +743,24 @@ def cleanup_job(job_id):
     return jsonify({"status": "cleaned"})
 
 
+def load_env_file():
+    """Load environment variables from .env file if it exists."""
+    env_path = Path(__file__).parent / '.env'
+    if env_path.exists():
+        logger.info("Loading environment from .env file")
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    key, value = line.split('=', 1)
+                    os.environ[key.strip()] = value.strip()
+
 if __name__ == "__main__":
     # Set up logging for the web server
     setup_logging(operation="web", context="server")
+    
+    # Load environment variables
+    load_env_file()
 
     # Try multiple ports starting from default (8000)
     start_port = int(os.environ.get("FLASK_RUN_PORT", 8000))
@@ -733,7 +769,21 @@ if __name__ == "__main__":
     for port in range(start_port, max_port + 1):
         try:
             logger.info(f"Attempting to start server on port {port}...")
-            app.run(debug=True, host="0.0.0.0", port=port)
+            # Configure environment-specific settings
+            flask_env = os.environ.get("FLASK_ENV", "development")
+            debug_mode = flask_env == "development"
+            log_level = os.environ.get("LOG_LEVEL", "INFO" if flask_env == "production" else "DEBUG")
+            
+            # Set logging level based on environment
+            logging.getLogger().setLevel(log_level)
+            
+            # Run app with environment-specific configuration
+            app.run(
+                debug=debug_mode,
+                host="0.0.0.0",
+                port=port,
+                use_reloader=debug_mode
+            )
             break  # If successful, exit the loop
         except OSError as e:
             if "Address already in use" in str(e):

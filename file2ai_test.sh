@@ -315,8 +315,11 @@ launch_frontend() {
     port=8000
     max_port=8020
     server_started=false
+    final_port=""
     
     while [ $port -le $max_port ] && [ "$server_started" = false ]; do
+        # Clear any previous status messages
+        printf "\033[2K\r"
         log_info "Attempting to start server on port $port..."
         
         # Check if port is in use
@@ -324,20 +327,29 @@ launch_frontend() {
             FLASK_APP="$PROJECT_ROOT/web.py" FLASK_RUN_PORT=$port python "$PROJECT_ROOT/web.py" > logs/frontend.log 2>&1 &
             FRONTEND_PID=$!
             
-            # Wait for server to start
-            for i in {1..5}; do
-                if curl -s "http://localhost:$port" > /dev/null; then
-                    server_started=true
-                    export FLASK_PORT=$port
-                    log_success "Frontend server is running on port $port"
-                    break
+            # Wait for server to start with improved verification
+            server_ready=false
+            for i in {1..10}; do  # Increased wait time
+                if curl -s "http://localhost:$port" > /dev/null 2>&1; then
+                    # Double check to ensure server is stable
+                    sleep 1
+                    if curl -s "http://localhost:$port" > /dev/null 2>&1; then
+                        server_ready=true
+                        server_started=true
+                        export FLASK_PORT=$port
+                        log_success "Frontend server is running on port $port"
+                        break
+                    fi
                 fi
-                sleep 1
+                sleep 2  # Increased delay between checks
             done
             
-            if [ "$server_started" = false ]; then
+            if [ "$server_ready" = false ]; then
                 kill $FRONTEND_PID 2>/dev/null
-                log_warn "Server startup attempt failed on port $port"
+                # Only show warning if process actually failed
+                if ! ps -p $FRONTEND_PID > /dev/null 2>&1; then
+                    log_warn "Server startup attempt failed on port $port"
+                fi
             fi
         else
             log_info "Port $port is in use, trying next port..."
@@ -347,8 +359,13 @@ launch_frontend() {
     done
     
     if [ "$server_started" = false ]; then
-        log_error "Failed to start frontend server on any available port. Check logs/frontend.log for details"
+        log_error "Failed to start frontend server on any available port (tried ports $port through $max_port)"
+        log_error "Check logs/frontend.log for details"
         return 1
+    else
+        # Log success to both console and log file
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Frontend server successfully started on port $FLASK_PORT" >> logs/frontend.log
+        log_success "Frontend server successfully started on port $FLASK_PORT"
     fi
     
     # Verify frontend response
@@ -374,7 +391,7 @@ launch_frontend() {
     fi
 }
 
-# Show overall progress
+# Show overall progress without interfering with tqdm
 show_progress() {
     local current=$1
     local total=$2
@@ -382,7 +399,17 @@ show_progress() {
     local percentage=$((current * 100 / total))
     local filled=$((width * current / total))
     local empty=$((width - filled))
-    printf "\r${GREEN}Overall Progress:${NC} [%${filled}s%${empty}s] %d%%\n" "█" " " "$percentage"
+    
+    # Clear the line before printing
+    printf "\033[2K"  # Clear the entire line
+    
+    # Print progress without newline to avoid conflicts with tqdm
+    printf "\r${GREEN}Overall Progress:${NC} [%${filled}s%${empty}s] %d%%" "█" " " "$percentage"
+    
+    # Only print newline on completion
+    if [ "$current" -eq "$total" ]; then
+        echo
+    fi
 }
 
 # Main execution with progress tracking

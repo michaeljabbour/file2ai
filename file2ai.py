@@ -42,6 +42,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime
+from zipfile import BadZipFile  # For Word document error handling
 from pathlib import Path
 from typing import (
     Dict,
@@ -1750,10 +1751,24 @@ def convert_document(args: argparse.Namespace) -> None:
 
         try:
             # Create Document instance without loading file for mock testing
-            if not input_path.exists() or input_path.stat().st_size == 0:
-                doc = Document()
-            else:
+            if not input_path.exists():
+                logger.error(f"Error converting Word document: Input file does not exist: {input_path}")
+                sys.exit(1)
+            elif input_path.stat().st_size == 0:
+                logger.error(f"Error converting Word document: Input file is empty: {input_path}")
+                sys.exit(1)
+            
+            try:
                 doc = Document(input_path)
+            except BadZipFile as e:
+                logger.error(f"Error converting Word document: {str(e)}")
+                sys.exit(1)
+            except PermissionError as e:
+                logger.error(f"Error converting Word document: {str(e)}")
+                sys.exit(1)
+            except Exception as e:
+                logger.error(f"Error converting Word document: {str(e)}")
+                sys.exit(1)
 
             if output_format == "text":
                 # Extract text from Word document
@@ -1779,16 +1794,20 @@ def convert_document(args: argparse.Namespace) -> None:
                                     full_text.append(" | ".join(row_text))
 
                 # Write the extracted text
-                output_path.write_text("\n".join(full_text), encoding="utf-8")
-                logger.info(f"Successfully converted Word document to text: {output_path}")
-                return
+                try:
+                    output_path.write_text("\n".join(full_text), encoding="utf-8")
+                    logger.info(f"Successfully converted Word document to text: {output_path}")
+                    return
+                except PermissionError as e:
+                    logger.error(f"Error writing output file: {str(e)}")
+                    sys.exit(1)
             else:
                 # For non-text formats, we need to handle the document differently
                 logger.error(f"Unsupported output format {output_format} for Word documents")
-                raise ValueError(f"Unsupported output format {output_format} for Word documents")
+                sys.exit(1)
         except Exception as e:
             logger.error(f"Error converting Word document: {str(e)}")
-            raise
+            sys.exit(1)
 
     # Handle basic text files
     elif input_extension in TEXT_EXTENSIONS or output_format == "text":

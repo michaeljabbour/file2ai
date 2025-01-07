@@ -68,8 +68,22 @@ target-version = ['py38', 'py39', 'py310', 'py311', 'py312', 'py313']
 include = '\.pyi?$'
 
 [tool.pytest.ini_options]
-addopts = "-v"
+addopts = "-v --cov=. --cov-report=term-missing"
 testpaths = ["."]
 norecursedirs = ["exports", "logs", "venv", "__pycache__", "tests/backup"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["."]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "pass",
+]
