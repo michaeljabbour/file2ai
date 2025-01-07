@@ -64,7 +64,6 @@ def create_test_pdf(output_path):
 
 if __name__ == "__main__":
     import sys
-    import os
 
     # Ensure we're using absolute paths from project root
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
