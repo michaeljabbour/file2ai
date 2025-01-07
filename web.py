@@ -8,6 +8,36 @@ from datetime import datetime
 import logging
 from typing import Dict, Optional, List, TypedDict, Union
 from werkzeug.datastructures import FileStorage
+
+def gather_all_files(base_dir: str) -> List[str]:
+    """Recursively gather all files from a directory.
+    
+    Args:
+        base_dir: Base directory to start gathering files from
+        
+    Returns:
+        List of absolute paths to all files in the directory tree
+    """
+    all_files = []
+    try:
+        base_path = Path(base_dir)
+        if not base_path.exists():
+            raise IOError(f"Directory not found: {base_dir}")
+        if not base_path.is_dir():
+            raise IOError(f"Not a directory: {base_dir}")
+            
+        for p in base_path.rglob('*'):
+            if p.is_file():
+                # Skip hidden files and common ignore patterns
+                if not any(part.startswith('.') for part in p.parts):
+                    all_files.append(str(p.resolve()))
+                    
+        logger.info(f"Found {len(all_files)} files in {base_dir}")
+    except Exception as e:
+        logger.error(f"Error gathering files from {base_dir}: {e}")
+        raise
+        
+    return all_files
 from file2ai import (
     convert_document,
     clone_and_export,
@@ -299,6 +329,13 @@ def process_job(
 
                     # Export local directory
                     try:
+                        # Get list of files to process
+                        directory_files = []
+                        if isinstance(files, dict):
+                            directory_files = files.get("directory_files", [])
+                        if not directory_files:
+                            raise IOError(f"No files found in directory: {local_dir}")
+                            
                         # Verify input directory exists and is readable
                         input_dir = Path(str(local_dir))
                         if not input_dir.exists():
@@ -307,6 +344,8 @@ def process_job(
                             raise IOError(f"Not a directory: {input_dir}")
                         if not os.access(str(input_dir), os.R_OK):
                             raise IOError(f"Directory not readable: {input_dir}")
+                            
+                        logger.info(f"Processing {len(directory_files)} files from directory: {input_dir}")
                             
                         # Handle subdir if specified
                         if args.subdir:
@@ -401,9 +440,8 @@ def serve_react(path):
         try:
             mimetype = None
             if path.endswith('.js'):
-                mimetype = 'text/babel'  # Required for Babel to transform JSX
+                mimetype = 'application/javascript'
                 response = send_from_directory("frontend", path, mimetype=mimetype)
-                response.headers['Content-Type'] = mimetype
                 app.logger.info(f"Serving JS file with mimetype: {mimetype}")
                 return response
             elif path.endswith('.html'):
@@ -498,8 +536,20 @@ def handle_api():
             if not Path(dir_path).exists():
                 return jsonify({"error": f"Directory not found: {dir_path}"}), 400
                 
+            # Gather all files from directory
+            try:
+                directory_files = gather_all_files(dir_path)
+            except Exception as e:
+                return jsonify({"error": f"Error scanning directory: {str(e)}"}), 400
+                
+            if not directory_files:
+                return jsonify({"error": f"No files found in directory: {dir_path}"}), 400
+                
             options["local_dir"] = dir_path
-            files = {"local_dir": dir_path}
+            files = {
+                "local_dir": dir_path,
+                "directory_files": directory_files
+            }
 
         else:
             return jsonify({

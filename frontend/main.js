@@ -39,7 +39,8 @@ function File2AI() {
         setProgress(data.progress || 0);
         if (data.status === "completed") {
           setStatus("completed");
-          // Download attempt, e.g. window.location = `/download/${jobId}`;
+          // Trigger file download
+          window.location.href = `/download/${jobId}`;
         } else if (data.status === "failed") {
           setStatus("failed");
           setError(data.errors?.join("\n") || "Conversion failed");
@@ -149,6 +150,7 @@ function File2AI() {
             </p>
             <input
               type="file"
+              devinid="directory-input"
               webkitdirectory="true"
               directory="true"
               onChange={(e) => {
@@ -175,6 +177,7 @@ function File2AI() {
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
         <button
           type="button"
+          devinid="file-tab"
           style={{
             background: selectedTab === "file" ? "#0074d9" : "#ccc",
           }}
@@ -184,6 +187,7 @@ function File2AI() {
         </button>
         <button
           type="button"
+          devinid="repo-tab"
           style={{
             background: selectedTab === "repo" ? "#0074d9" : "#ccc",
           }}
@@ -193,6 +197,7 @@ function File2AI() {
         </button>
         <button
           type="button"
+          devinid="local-tab"
           style={{
             background: selectedTab === "local" ? "#0074d9" : "#ccc",
           }}

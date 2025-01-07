@@ -29,7 +29,32 @@ TEST_CREATION_SCRIPTS=(
 # Clean up old artifacts
 clean_old_artifacts() {
     log_info "Cleaning up old artifacts..."
-    rm -rf exports/* test_files/* 2>/dev/null || true
+    
+    # Define directories to clean up
+    cleanup_dirs=(
+        "venv"
+        "logs"
+        "exports"
+        "test_files"
+        "launchers"
+        "__pycache__"
+        "*.egg-info"
+        ".coverage"
+        ".pytest_cache"
+    )
+    
+    # Clean up each directory
+    for dir in "${cleanup_dirs[@]}"; do
+        if [ -e "$dir" ]; then
+            log_info "Removing $dir..."
+            rm -rf "$dir" 2>/dev/null || {
+                log_warn "Failed to remove $dir - it may be in use or require different permissions"
+                log_warn "You may need to remove it manually: rm -rf $dir"
+            }
+        fi
+    done
+    
+    log_success "Cleanup complete"
 }
 
 # Create necessary directories
@@ -101,6 +126,28 @@ backup_test_files() {
     done
 }
 
+# Set up virtual environment and install dependencies
+setup_environment() {
+    log_info "Creating fresh virtual environment..."
+    python3 -m venv venv || {
+        log_error "Failed to create virtual environment"
+        return 1
+    }
+    source venv/bin/activate || {
+        log_error "Failed to activate virtual environment"
+        return 1
+    }
+    log_success "Virtual environment created and activated"
+    
+    log_info "Installing file2ai in editable mode with all dependencies..."
+    pip install --upgrade pip || log_error "Failed to upgrade pip"
+    pip install -e ".[test,web]" || {
+        log_error "Failed to install file2ai with dependencies"
+        return 1
+    }
+    log_success "Installation complete"
+}
+
 # Run pytest with proper configuration
 run_tests() {
     log_info "Running pytest..."
@@ -117,6 +164,74 @@ run_tests() {
     log_success "All tests passed!"
 }
 
+# Launch and test frontend
+launch_frontend() {
+    log_info "Installing Flask if not present..."
+    pip install flask || log_error "Failed to install Flask"
+    
+    log_info "Launching frontend server..."
+    mkdir -p logs
+    
+    # Try ports starting from 8000 up to 8020
+    port=8000
+    max_port=8020
+    server_started=false
+    
+    while [ $port -le $max_port ] && [ "$server_started" = false ]; do
+        log_info "Attempting to start server on port $port..."
+        
+        # Check if port is in use
+        if ! lsof -i :$port > /dev/null 2>&1; then
+            FLASK_APP="$PROJECT_ROOT/web.py" FLASK_RUN_PORT=$port python "$PROJECT_ROOT/web.py" > logs/frontend.log 2>&1 &
+            FRONTEND_PID=$!
+            
+            # Wait for server to start
+            for i in {1..5}; do
+                if curl -s "http://localhost:$port" > /dev/null; then
+                    server_started=true
+                    export FLASK_PORT=$port
+                    log_success "Frontend server is running on port $port"
+                    break
+                fi
+                sleep 1
+            done
+            
+            if [ "$server_started" = false ]; then
+                kill $FRONTEND_PID 2>/dev/null
+                log_warn "Server startup attempt failed on port $port"
+            fi
+        else
+            log_info "Port $port is in use, trying next port..."
+        fi
+        
+        port=$((port + 1))
+    done
+    
+    if [ "$server_started" = false ]; then
+        log_error "Failed to start frontend server on any available port. Check logs/frontend.log for details"
+        return 1
+    fi
+    
+    # Verify frontend response
+    response=$(curl -s "http://localhost:$FLASK_PORT")
+    if echo "$response" | grep -q "File2AI Converter"; then
+        log_success "Frontend is responding correctly"
+    else
+        log_error "Frontend response is invalid"
+        return 1
+    fi
+    
+    # Test form submission
+    log_info "Testing form submission..."
+    test_response=$(curl -s -X POST -F "command=convert" -F "file=@$PROJECT_ROOT/exports/test_upload.txt" "http://localhost:$FLASK_PORT")
+    if echo "$test_response" | grep -q "job_id"; then
+        log_success "Form submission working correctly"
+    else
+        log_error "Form submission failed"
+        return 1
+    fi
+}
+
 # Show progress bar
 show_progress() {
     local current=$1
@@ -130,7 +245,7 @@ show_progress() {
 
 # Main execution with progress tracking
 main() {
-    local total_steps=6
+    local total_steps=8
     local current_step=0
 
     show_progress $current_step $total_steps
@@ -140,6 +255,10 @@ main() {
     show_progress $current_step $total_steps
 
     create_directories
+    ((current_step++))
+    show_progress $current_step $total_steps
+
+    setup_environment
     ((current_step++))
     show_progress $current_step $total_steps
 
@@ -156,6 +275,10 @@ main() {
     show_progress $current_step $total_steps
 
     run_tests
+    ((current_step++))
+    show_progress $current_step $total_steps
+
+    launch_frontend
     ((current_step++))
     show_progress $current_step $total_steps
     echo # New line after progress bar
