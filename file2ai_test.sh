@@ -73,8 +73,8 @@ clean_old_artifacts() {
         if [ -e "$dir" ]; then
             log_info "Removing $dir..."
             sudo rm -rf "$dir" 2>/dev/null || {
-                log_warn "Failed to remove $dir - it may be in use or require different permissions"
-                log_warn "You may need to remove it manually: sudo rm -rf $dir"
+                log_error "Failed to remove $dir even with sudo"
+                return 1
             }
         fi
     done
@@ -257,7 +257,20 @@ launch_frontend() {
     fi
 }
 
-# Show progress bar
+# Terminal control functions
+save_cursor_position() {
+    printf "\033[s"  # Save cursor position
+}
+
+restore_cursor_position() {
+    printf "\033[u"  # Restore cursor position
+}
+
+clear_progress_line() {
+    printf "\033[1G\033[K"  # Move to beginning of line and clear it
+}
+
+# Show progress bar at the top
 show_progress() {
     local current=$1
     local total=$2
@@ -265,7 +278,12 @@ show_progress() {
     local percentage=$((current * 100 / total))
     local filled=$((width * current / total))
     local empty=$((width - filled))
-    printf "\rProgress: [%${filled}s%${empty}s] %d%%" "" "" "$percentage"
+
+    # Save current position, move to start of progress line, show progress, restore position
+    save_cursor_position
+    printf "\033[1;1H\033[K"  # Move to top and clear line
+    printf "Progress: [%${filled}s%${empty}s] %d%%" "" "" "$percentage"
+    restore_cursor_position
 }
 
 # Main execution with progress tracking
@@ -273,6 +291,9 @@ main() {
     local total_steps=8
     local current_step=0
 
+    # Clear screen and initialize progress bar area
+    clear
+    echo  # Leave blank line for progress bar
     show_progress $current_step $total_steps
 
     clean_old_artifacts
