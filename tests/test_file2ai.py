@@ -83,11 +83,27 @@ def test_validate_github_url():
 def test_text_export_error_handling(tmp_path, caplog):
     """Test text export error handling with invalid files."""
     import logging
-    from file2ai import setup_logging
+    from file2ai import setup_logging, export_files_to_single_file
 
-    setup_logging()
+    # Configure logging for test
     caplog.set_level(logging.DEBUG)
-
+    
+    # Get the file2ai logger and configure it
+    logger = logging.getLogger("file2ai")
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = True
+    
+    # Remove any existing handlers to prevent duplicate logging
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # Add a handler that will capture all messages
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    
     # Create a sample directory with a binary file
     sample_dir = tmp_path / "error_project"
     sample_dir.mkdir()
@@ -296,12 +312,11 @@ def test_prepare_exports_dir(tmp_path):
 def test_clone_and_export_basic(tmp_path, caplog):
     """Test basic repository cloning and export with branch and subdirectory handling."""
     import logging
-    from file2ai import setup_logging
     import subprocess
 
-    setup_logging()
-    logger = logging.getLogger("file2ai")
+    # Configure logging level for this test
     caplog.set_level(logging.INFO)
+    logger = logging.getLogger("file2ai")
 
     # Create a temporary git repository
     repo_dir = tmp_path / "repo"
@@ -355,7 +370,6 @@ def test_clone_and_export_basic(tmp_path, caplog):
 
     # Mock subprocess.run for git clone to use our temp repo
     def mock_clone(*args, **kwargs):
-        nonlocal logger
         cmd = args[0] if args else kwargs.get("args", [])
         if cmd[0] == "git" and cmd[1] == "clone":
             # Copy our temp repo instead of actually cloning
@@ -368,9 +382,9 @@ def test_clone_and_export_basic(tmp_path, caplog):
             shutil.copytree(repo_dir, target, symlinks=True)
             # Verify the .git directory exists
             if not (target / ".git").exists():
-                logger.error(f".git directory not found in {target}")
+                logging.getLogger("file2ai").error(f".git directory not found in {target}")
                 raise RuntimeError("Git repository not properly copied")
-            logger.debug(f"Repository copied to {target}, .git directory verified")
+            logging.getLogger("file2ai").debug(f"Repository copied to {target}, .git directory verified")
         return MagicMock(returncode=0)
 
     with patch("subprocess.run", side_effect=mock_clone):
@@ -425,10 +439,16 @@ def test_clone_and_export_basic(tmp_path, caplog):
 def test_local_export(tmp_path, caplog):
     """Test local directory export."""
     import logging
-    from file2ai import setup_logging
 
-    setup_logging()
-    caplog.set_level(logging.INFO)
+    # Configure logging for test
+    caplog.set_level(logging.DEBUG)
+    logger = logging.getLogger("file2ai")
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = True
+
+    # Remove any existing handlers to prevent duplicate logging
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
 
     # Create a sample directory with files
     local_dir = tmp_path / "local_project"
@@ -449,9 +469,6 @@ def test_local_export(tmp_path, caplog):
 
     # Patch exports directory and ensure it exists
     with patch("file2ai.EXPORTS_DIR", str(exports_dir)):
-        # Add debug logging
-        logger = logging.getLogger("file2ai")
-        logger.setLevel(logging.DEBUG)
         local_export(args)
 
         # Log the expected output path
@@ -703,10 +720,13 @@ def test_logging_setup(tmp_path, caplog):
     from file2ai import setup_logging, LOGS_DIR
 
     # Configure caplog
-    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.DEBUG)
 
-    # Setup logging
-    setup_logging()
+    # Setup logging with debug enabled
+    setup_logging(debug=True)
+
+    # Get logger after setup
+    logger = logging.getLogger("file2ai")
 
     # Verify logs directory was created
     log_dir = Path(LOGS_DIR)
@@ -714,12 +734,14 @@ def test_logging_setup(tmp_path, caplog):
     assert log_dir.is_dir()
 
     # Test logging output
-    logger = logging.getLogger("file2ai")
     test_message = "Test log message"
-    logger.info(test_message)
+    logger.info(test_message)  # Use standard logging method
 
-    # Check if message was logged
-    assert any(record.message == test_message for record in caplog.records)
+    # Verify log message was captured
+    assert len(caplog.records) > 0, "No log records were captured"
+    assert any(record.levelname == "INFO" and record.message == test_message 
+              for record in caplog.records), \
+        f"Expected '{test_message}' in log records, but got: {[(r.levelname, r.message) for r in caplog.records]}"
 
 
 def test_docx_dependency_management(monkeypatch, caplog):

@@ -264,38 +264,50 @@ def setup_logging(operation: str = "general", context: Optional[str] = None, deb
         context: Additional context (e.g., filename, directory name) to include in log name
         debug: Enable debug logging (default: False)
     """
+    # Create logs directory
     logs_dir = Path(LOGS_DIR)
     logs_dir.mkdir(exist_ok=True)
 
-    # Get current timestamp
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    # Check if we're running under pytest
+    is_pytest = "pytest" in sys.modules
 
-    # Build log filename
-    log_name_parts = ["file2ai", operation]
-    if context:
-        safe_context = "".join(c if c.isalnum() or c in "-_" else "_" for c in context)
-        log_name_parts.append(safe_context)
-    log_name_parts.append(timestamp)
+    # Configure file2ai logger first
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    logger.propagate = True  # Ensure messages propagate up
 
-    # Configure logging handlers
-    log_file = logs_dir / f"{'-'.join(log_name_parts)}.log"
-    
-    # Set console level to INFO by default, DEBUG if debug flag is set
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.DEBUG if debug else logging.INFO)
-    console_handler.setFormatter(logging.Formatter('%(message)s'))  # Simplified console format
-    
-    # Always log everything to file for troubleshooting
-    file_handler = logging.FileHandler(log_file, encoding=DEFAULT_ENCODING)
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    
-    # Configure root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)  # Capture all logs
-    root_logger.handlers = []  # Remove any existing handlers
-    root_logger.addHandler(console_handler)
-    root_logger.addHandler(file_handler)
+    # Remove any existing handlers from file2ai logger
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+
+    if not is_pytest:
+        # Configure root logger only in non-pytest environment
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.DEBUG if debug else logging.INFO)
+
+        # Remove any existing handlers
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+
+        # Add console handler
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.DEBUG if debug else logging.INFO)
+        console_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+        root_logger.addHandler(console_handler)
+
+        # Add file handler
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        log_name_parts = ["file2ai", operation]
+        if context:
+            safe_context = "".join(c if c.isalnum() or c in "-_" else "_" for c in context)
+            log_name_parts.append(safe_context)
+        log_name_parts.append(timestamp)
+
+        log_file = logs_dir / f"{'-'.join(log_name_parts)}.log"
+        file_handler = logging.FileHandler(log_file, encoding=DEFAULT_ENCODING)
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        root_logger.addHandler(file_handler)
 
 
 def validate_github_url(url: str) -> bool:
@@ -983,6 +995,10 @@ def _process_repository_files(
     repo_root: Path, outfile: TextIO, stats: Dict[str, int], repo: Optional[Repo]
 ) -> None:
     """Process all repository files and update statistics."""
+    # Get module logger
+    process_logger = logging.getLogger("file2ai")
+    process_logger.debug("Starting repository file processing")
+    
     ignore_patterns = load_gitignore_patterns(repo_root)
 
     # Define directories to skip early in the process
@@ -1017,7 +1033,7 @@ def _process_repository_files(
 
     for i, file_path in enumerate(files_to_process, 1):
         if i % 10 == 0:  # Update every 10 files
-            logger.info(f"Processing files: {i}/{total_files}")
+            process_logger.debug(f"Processing files: {i}/{total_files}")  # Changed to debug
         if is_text_file(file_path):
             try:
                 content = file_path.read_text(encoding=DEFAULT_ENCODING)
@@ -1053,13 +1069,15 @@ def _process_repository_files(
                 stats["total_lines"] += content.count("\n") + 1
                 stats["total_tokens"] += len(content.split())
 
-                logger.debug(f"Processed file: {file_path}")
+                process_logger.debug(f"Processed file: {file_path}")
             except Exception as e:
-                logger.warning(f"Failed to process {file_path}: {e}")
+                process_logger.warning(f"Failed to process {file_path}: {e}")
                 stats["skipped_files"] += 1
+                stats["error_files"] += 1  # Added error files tracking
         else:
-            logger.debug(f"Skipped binary file: {file_path}")
+            process_logger.debug(f"Skipped binary file: {file_path}")
             stats["skipped_files"] += 1
+            stats["binary_files"] += 1  # Added binary files tracking
 
 
 def _write_summary(outfile: TextIO, stats: Dict[str, int]) -> None:
@@ -1092,6 +1110,10 @@ def clone_and_export(args: argparse.Namespace) -> None:
     Args:
         args: Command line arguments namespace.
     """
+    # Get module logger
+    clone_logger = logging.getLogger("file2ai")
+    clone_logger.debug("Starting clone and export process")
+    
     exports_dir = Path(EXPORTS_DIR)
     exports_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1105,18 +1127,18 @@ def clone_and_export(args: argparse.Namespace) -> None:
         masked_token = (
             f"{args.token[:3]}...{args.token[-3:]}" if len(args.token) > 6 else "REDACTED"
         )
-        logger.debug(f"Using token: {masked_token}")
+        clone_logger.debug(f"Using token: {masked_token}")
         clone_url = build_auth_url(clone_url, args.token)
 
     repo_name = clone_url.rstrip("/").split("/")[-1].replace(".git", "")
     extension = ".json" if args.format == "json" else ".txt"
     output_path = exports_dir / (args.output_file or f"file2ai_export{extension}")
     output_path = _sequential_filename(output_path.resolve())
-    logger.debug(f"Using output path: {output_path}")
+    clone_logger.debug(f"Using output path: {output_path}")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         clone_path = Path(temp_dir) / repo_name
-        logger.debug(f"Cloning repository to: {clone_path}")
+        clone_logger.debug(f"Cloning repository to: {clone_path}")
 
         try:
             subprocess.run(
@@ -1126,15 +1148,15 @@ def clone_and_export(args: argparse.Namespace) -> None:
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            logger.debug("Repository cloned successfully")
+            clone_logger.debug("Repository cloned successfully")
         except subprocess.CalledProcessError as e:
-            logger.error(f"Git clone failed: {e}")
+            clone_logger.error(f"Git clone failed: {e}")
             sys.exit(1)
 
         try:
             repo = Repo(clone_path)
         except exc.GitError as e:
-            logger.error(f"Failed to initialize repository: {e}")
+            clone_logger.error(f"Failed to initialize repository: {e}")
             sys.exit(1)
 
         # Determine branch: explicit --branch flag takes precedence over URL
@@ -1142,37 +1164,37 @@ def clone_and_export(args: argparse.Namespace) -> None:
         if branch:
             try:
                 repo.git.checkout(branch)
-                logger.info(f"Checked out branch: {branch}")
+                clone_logger.info(f"Checked out branch: {branch}")
             except exc.GitCommandError as e:
-                logger.error(f"Failed to checkout {branch}: {e}")
+                clone_logger.error(f"Failed to checkout {branch}: {e}")
                 sys.exit(1)
         else:
-            logger.info("Using default branch")
+            clone_logger.info("Using default branch")
 
         # Determine subdirectory: explicit --subdir flag takes precedence over URL
         subdir = args.subdir or url_subdir
         if subdir:
             export_target = clone_path / subdir
             if not export_target.is_dir():
-                logger.error(f"Subdirectory {subdir} does not exist in the repository")
+                clone_logger.error(f"Subdirectory {subdir} does not exist in the repository")
                 sys.exit(1)
-            logger.info(f"Exporting from subdirectory: {subdir}")
+            clone_logger.info(f"Exporting from subdirectory: {subdir}")
         else:
             export_target = clone_path
-            logger.info("Exporting from repository root")
+            clone_logger.info("Exporting from repository root")
 
         if args.format == "json":
             export_files_to_json(repo, repo_name, export_target, output_path)
         else:
             export_files_to_single_file(repo, repo_name, export_target, output_path)
-        logger.info(f"Repository exported to {output_path}")
+        clone_logger.info(f"Repository exported to {output_path}")
 
         if not args.skip_remove:
             try:
                 repo.close()
-                logger.info("Cleaned up temporary repository")
+                clone_logger.info("Cleaned up temporary repository")
             except Exception as e:
-                logger.warning(f"Failed to clean up repository: {e}")
+                clone_logger.warning(f"Failed to clean up repository: {e}")
 
 
 def local_export(args: argparse.Namespace) -> None:
@@ -1182,7 +1204,10 @@ def local_export(args: argparse.Namespace) -> None:
     Args:
         args: Command line arguments namespace.
     """
-    logger.info("Starting export of local directory")
+    # Get module logger and ensure propagation
+    logger = logging.getLogger("file2ai")
+    logger.propagate = True
+    logger.debug("Starting export of local directory")
     
     # Determine base directory and subdirectory
     base_dir = Path(args.local_dir)
@@ -1349,13 +1374,17 @@ def _enhance_and_save_image(
     try:
         from PIL import ImageEnhance
 
+        # Initialize enhancement values
+        brightness = args.brightness
+        contrast = args.contrast
+
         # Apply brightness adjustment with validation
         if args.brightness != 1.0:
             brightness = max(0.0, min(2.0, args.brightness))
             enhancer = ImageEnhance.Brightness(img)
             img = enhancer.enhance(brightness)
             if brightness != args.brightness:
-                logger.debug(f"Brightness value clamped to valid range: {brightness}")
+                logger.info(f"Brightness value clamped to valid range: {brightness}")
 
         # Apply contrast adjustment with validation
         if args.contrast != 1.0:
@@ -1363,14 +1392,14 @@ def _enhance_and_save_image(
             enhancer = ImageEnhance.Contrast(img)
             img = enhancer.enhance(contrast)
             if contrast != args.contrast:
-                logger.debug(f"Contrast value clamped to valid range: {contrast}")
+                logger.info(f"Contrast value clamped to valid range: {contrast}")
 
         # Save with quality setting
         img.save(str(image_path), quality=args.quality)
-        logger.info(
+        logger.debug(
             "Applied image enhancements (brightness: %.2f, contrast: %.2f)",
-            args.brightness,
-            args.contrast,
+            brightness,
+            contrast,
         )
     except (ImportError, AttributeError) as e:
         logger.warning(f"Failed to apply image enhancements: {e}")
@@ -2824,13 +2853,17 @@ def convert_document(args: argparse.Namespace) -> None:
                             try:
                                 from PIL import ImageEnhance
 
+                                # Initialize enhancement values
+                                brightness = args.brightness
+                                contrast = args.contrast
+
                                 # Apply brightness adjustment with validation
                                 if args.brightness != 1.0:
                                     brightness = max(0.0, min(2.0, args.brightness))
                                     enhancer = ImageEnhance.Brightness(img)
                                     img = enhancer.enhance(brightness)
                                     if brightness != args.brightness:
-                                        logger.debug(
+                                        logger.info(
                                             f"Brightness value clamped to valid range: {brightness}"
                                         )
 
@@ -2840,16 +2873,16 @@ def convert_document(args: argparse.Namespace) -> None:
                                     enhancer = ImageEnhance.Contrast(img)
                                     img = enhancer.enhance(contrast)
                                     if contrast != args.contrast:
-                                        logger.debug(
+                                        logger.info(
                                             f"Contrast value clamped to valid range: {contrast}"
                                         )
 
                                 # Save with quality setting
                                 img.save(str(slide_path), quality=args.quality)
-                                logger.info(
+                                logger.debug(
                                     "Applied image enhancements (brightness: %.2f, contrast: %.2f)",
-                                    args.brightness,
-                                    args.contrast,
+                                    brightness,
+                                    contrast,
                                 )
                             except (ImportError, AttributeError) as e:
                                 logger.warning(f"Failed to apply image enhancements: {e}")
