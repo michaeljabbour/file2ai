@@ -26,24 +26,49 @@ TEST_CREATION_SCRIPTS=(
     "tests/create_test_html.py"
 )
 
+# Clean up git-related artifacts
+clean_git_artifacts() {
+    log_info "Cleaning up git-related artifacts..."
+    
+    # Define git-specific directories to clean up
+    git_dirs=(
+        "venv"
+        "*.egg-info"
+    )
+    
+    # Clean up each directory with sudo
+    for dir in "${git_dirs[@]}"; do
+        if [ -e "$dir" ]; then
+            log_info "Removing $dir..."
+            sudo rm -rf "$dir" 2>/dev/null || {
+                log_error "Failed to remove $dir - please run 'sudo rm -rf $dir' manually"
+                exit 1
+            }
+        fi
+    done
+    
+    log_success "Git artifacts cleanup complete"
+}
+
 # Clean up old artifacts
 clean_old_artifacts() {
     log_info "Cleaning up old artifacts..."
     
     # Define directories to clean up
     cleanup_dirs=(
-        "venv"
         "logs"
         "exports"
         "test_files"
         "launchers"
         "__pycache__"
-        "*.egg-info"
         ".coverage"
         ".pytest_cache"
     )
     
-    # Clean up each directory
+    # First clean up git artifacts
+    clean_git_artifacts
+    
+    # Then clean up other directories
     for dir in "${cleanup_dirs[@]}"; do
         if [ -e "$dir" ]; then
             log_info "Removing $dir..."
