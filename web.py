@@ -169,21 +169,15 @@ def process_job(
                     
                     # Convert path to absolute path
                     input_path = input_path.resolve()
-                    logger.info(f"Using absolute path for conversion: {input_path}")
-                    
                     # Verify file exists and has content
                     if not input_path.exists():
                         raise IOError(f"File not created: {input_path}")
                     if input_path.stat().st_size == 0:
                         raise IOError(f"File is empty: {input_path}")
                     
-                    logger.info(f"Successfully saved uploaded file to: {input_path}")
-
                     # Create output path
                     out_filename = f"{filename}.{output_format}"
                     output_path = EXPORTS_FOLDER / out_filename
-                    logger.info(f"Converting {input_path} to {output_path} with format {output_format}")
-
                     # Create args namespace
                     args = Namespace(
                             command="convert",
@@ -197,8 +191,6 @@ def process_job(
                     )
 
                     # Convert file
-                    logger.info(f"Starting conversion with args: {args}")
-                    
                     # Verify input file still exists before conversion
                     if not input_path.exists():
                         raise IOError(f"Input file missing before conversion: {input_path}")
@@ -208,7 +200,6 @@ def process_job(
                     if not os.access(str(input_path), os.R_OK):
                         raise IOError(f"Input file not readable: {input_path}")
                         
-                    logger.info(f"Input file verified before conversion: {input_path}")
                     convert_document(args)
                     
                     # Verify output after conversion
@@ -216,13 +207,12 @@ def process_job(
                         raise IOError(f"Output file not created: {output_path}")
                     if output_path.stat().st_size == 0:
                         raise IOError(f"Output file is empty: {output_path}")
-                    logger.info(f"Successfully converted file: {output_path}")
                     output_files.append(output_path)
                     
                     # Update progress
                     progress = ((idx + 1) / total_files) * 100
                     job["progress"] = progress
-                    logger.info(f"Updated progress to {progress}%")
+                    # Progress updated
                 except Exception as e:
                     logger.error(f"Error during conversion: {str(e)}")
                     job["errors"].append("Error converting %s: %s" % (filename, str(e)))

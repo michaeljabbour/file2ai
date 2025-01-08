@@ -229,7 +229,7 @@ logger = logging.getLogger(__name__)
 
 def install_gitpython_quietly() -> None:
     """Install GitPython package quietly using pip."""
-    logger.info("Installing dependencies... (this may take a moment)")
+    logger.debug("Installing dependencies... (this may take a moment)")
     try:
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "gitpython", "--quiet"],
@@ -255,39 +255,47 @@ ensure_gitpython()
 from git import Repo, exc  # noqa: E402
 
 
-def setup_logging(operation: str = "general", context: Optional[str] = None) -> None:
+def setup_logging(operation: str = "general", context: Optional[str] = None, debug: bool = False) -> None:
     """
     Configure logging with file and console output.
 
     Args:
         operation: Type of operation being performed (e.g., 'export', 'convert')
         context: Additional context (e.g., filename, directory name) to include in log name
+        debug: Enable debug logging (default: False)
     """
     logs_dir = Path(LOGS_DIR)
     logs_dir.mkdir(exist_ok=True)
 
-    # Get current timestamp with improved readability
+    # Get current timestamp
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-    # Build log filename with operation and context
+    # Build log filename
     log_name_parts = ["file2ai", operation]
     if context:
-        # Clean context name for safe filename
         safe_context = "".join(c if c.isalnum() or c in "-_" else "_" for c in context)
         log_name_parts.append(safe_context)
     log_name_parts.append(timestamp)
 
-    # Configure logging handlers with full context
+    # Configure logging handlers
     log_file = logs_dir / f"{'-'.join(log_name_parts)}.log"
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[
-            logging.FileHandler(log_file, encoding=DEFAULT_ENCODING),
-            logging.StreamHandler(sys.stdout),
-        ],
-    )
+    
+    # Set console level to INFO by default, DEBUG if debug flag is set
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.DEBUG if debug else logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(message)s'))  # Simplified console format
+    
+    # Always log everything to file for troubleshooting
+    file_handler = logging.FileHandler(log_file, encoding=DEFAULT_ENCODING)
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)  # Capture all logs
+    root_logger.handlers = []  # Remove any existing handlers
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
 
 
 def validate_github_url(url: str) -> bool:
@@ -370,6 +378,11 @@ Cross-platform compatible with no system dependencies required.""",
         choices=["text", "json"],
         default="text",
         help="Choose the output format (text or json). Default is text.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging output",
     )
 
     # Create subparsers for different commands
@@ -1079,7 +1092,6 @@ def clone_and_export(args: argparse.Namespace) -> None:
     Args:
         args: Command line arguments namespace.
     """
-    logger.info(f"Starting export of repository: {args.repo_url}")
     exports_dir = Path(EXPORTS_DIR)
     exports_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1093,7 +1105,7 @@ def clone_and_export(args: argparse.Namespace) -> None:
         masked_token = (
             f"{args.token[:3]}...{args.token[-3:]}" if len(args.token) > 6 else "REDACTED"
         )
-        logger.info(f"Using token: {masked_token}")
+        logger.debug(f"Using token: {masked_token}")
         clone_url = build_auth_url(clone_url, args.token)
 
     repo_name = clone_url.rstrip("/").split("/")[-1].replace(".git", "")
@@ -1104,7 +1116,7 @@ def clone_and_export(args: argparse.Namespace) -> None:
 
     with tempfile.TemporaryDirectory() as temp_dir:
         clone_path = Path(temp_dir) / repo_name
-        logger.info(f"Cloning repository to: {clone_path}")
+        logger.debug(f"Cloning repository to: {clone_path}")
 
         try:
             subprocess.run(
@@ -1114,7 +1126,7 @@ def clone_and_export(args: argparse.Namespace) -> None:
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            logger.info("Repository cloned successfully")
+            logger.debug("Repository cloned successfully")
         except subprocess.CalledProcessError as e:
             logger.error(f"Git clone failed: {e}")
             sys.exit(1)
@@ -1716,11 +1728,11 @@ def convert_document(args: argparse.Namespace) -> None:
     # Handle Excel documents (XLS/XLSX)
     elif input_extension in [".xls", ".xlsx"]:
         if not check_excel_support():
-            logger.info("Installing Excel document support...")
+            logger.debug("Installing Excel document support...")
             if not install_excel_support():
                 logger.error("Failed to install Excel document support")
                 sys.exit(1)
-            logger.info("Excel document support installed successfully")
+            logger.debug("Excel document support installed successfully")
 
         try:
             from openpyxl import load_workbook
@@ -1829,15 +1841,15 @@ def convert_document(args: argparse.Namespace) -> None:
 
                 html_content.append("</body></html>")
                 html_path.write_text("\n".join(html_content))
-                logger.info(f"Generated HTML from Excel: {html_path}")
+                logger.debug(f"Generated HTML from Excel: {html_path}")
 
                 # Convert HTML to PDF using WeasyPrint
                 if not check_html_support():
-                    logger.info("Installing HTML/PDF conversion support...")
+                    logger.debug("Installing HTML/PDF conversion support...")
                     if not install_html_support():
                         logger.error("Failed to install HTML/PDF conversion support")
                         sys.exit(1)
-                    logger.info("HTML/PDF conversion support installed successfully")
+                    logger.debug("HTML/PDF conversion support installed successfully")
 
                 try:
                     import weasyprint
@@ -1896,7 +1908,7 @@ def convert_document(args: argparse.Namespace) -> None:
                                     brightness = max(0.0, min(2.0, args.brightness))
                                     enhancer = ImageEnhance.Brightness(img)
                                     img = enhancer.enhance(brightness)
-                                    logger.info(
+                                    logger.debug(
                                         f"Applied image enhancements (brightness: {brightness:.2f})"
                                     )
 
@@ -1905,23 +1917,23 @@ def convert_document(args: argparse.Namespace) -> None:
                                     contrast = max(0.0, min(2.0, args.contrast))
                                     enhancer = ImageEnhance.Contrast(img)
                                     img = enhancer.enhance(contrast)
-                                    logger.info(
+                                    logger.debug(
                                         f"Applied image enhancements (contrast: {contrast:.2f})"
                                     )
 
-                                logger.info("Successfully applied image enhancements")
+                                logger.debug("Successfully applied image enhancements")
                             except (ImportError, Exception) as e:
                                 logger.error(f"Error applying image enhancements: {e}")
 
                         try:
                             # Save image (enhanced or original)
                             img.save(image_path, "PNG")
-                            logger.info(f"Created image for page {page_num}: {image_path}")
+                            logger.debug(f"Created image for page {page_num}: {image_path}")
                         except Exception as e:
                             logger.error(f"Error saving image: {e}")
                             # Fallback to direct pixmap save if PIL save fails
                             pix.save(image_path)
-                            logger.info(
+                            logger.debug(
                                 f"Created image for page {page_num} (fallback method): {image_path}"
                             )
 
@@ -1933,13 +1945,13 @@ def convert_document(args: argparse.Namespace) -> None:
                             # Ensure path is in the format "exports/images/filename.jpg"
                             relative_path = f"exports/images/{img_path.name}"
                             f.write(f"{relative_path}\n")
-                    logger.info(f"Successfully converted Excel to images in {images_dir}")
-                    logger.info(
+                    logger.debug(f"Successfully converted Excel to images in {images_dir}")
+                    logger.debug(
                         "Created image reference file with {} images: {}".format(
                             len(image_files), image_output_path
                         )
                     )
-                    logger.info(f"Successfully converted {input_path} to {output_path}")
+                    logger.debug(f"Successfully converted {input_path} to {output_path}")
 
                     # Clean up temporary PDF
                     pdf_doc.close()
@@ -1960,11 +1972,11 @@ def convert_document(args: argparse.Namespace) -> None:
     # Handle Word documents (DOC/DOCX)
     elif input_extension in [".doc", ".docx"]:
         if not check_docx_support():
-            logger.info("Installing Word document support...")
+            logger.debug("Installing Word document support...")
             if not install_docx_support():
                 logger.error("Failed to install Word document support")
                 sys.exit(1)
-            logger.info("Word document support installed successfully")
+            logger.debug("Word document support installed successfully")
 
         try:
             from docx import Document
@@ -2020,16 +2032,16 @@ def convert_document(args: argparse.Namespace) -> None:
                 if output_path.stat().st_size == 0:
                     raise IOError(f"Output file is empty: {output_path}")
 
-                logger.info(f"Successfully converted Word document to text: {output_path}")
+                logger.debug(f"Successfully converted Word document to text: {output_path}")
 
             elif output_format == "pdf":
                 # For PDF output, we need weasyprint
                 if not check_package_support("weasyprint"):
-                    logger.info("Installing PDF conversion support...")
+                    logger.debug("Installing PDF conversion support...")
                     if not install_package_support("weasyprint"):
                         logger.error("Failed to install PDF conversion support")
                         sys.exit(1)
-                    logger.info("PDF conversion support installed successfully")
+                    logger.debug("PDF conversion support installed successfully")
 
                 try:
                     import weasyprint
@@ -2062,7 +2074,7 @@ def convert_document(args: argparse.Namespace) -> None:
                 # Convert HTML to PDF
                 pdf = weasyprint.HTML(string=html_str).write_pdf()
                 output_path.write_bytes(pdf)
-                logger.info(f"Successfully converted Word document to PDF: {output_path}")
+                logger.debug(f"Successfully converted Word document to PDF: {output_path}")
 
             elif output_format == "image":
                 # Convert Word document to images
@@ -2084,13 +2096,13 @@ def convert_document(args: argparse.Namespace) -> None:
                             # Ensure path is in the format "exports/images/filename.png"
                             relative_path = "exports/images/{}".format(Path(img_path).name)
                             f.write("{}\n".format(relative_path))
-                    logger.info("Successfully converted Word document to images")
-                    logger.info(
+                    logger.debug("Successfully converted Word document to images")
+                    logger.debug(
                         "Created image reference file with {} images: {}".format(
                             len(image_list), image_output_path
                         )
                     )
-                    logger.info("Successfully converted {} to {}".format(input_path, output_path))
+                    logger.debug("Successfully converted {} to {}".format(input_path, output_path))
                 except Exception as e:
                     logger.error("Error converting Word document to images: {}".format(e))
                     raise
@@ -2108,11 +2120,11 @@ def convert_document(args: argparse.Namespace) -> None:
     elif input_extension == ".pdf":
         # Check and install PyMuPDF support first
         if not check_pymupdf_support():
-            logger.info("Installing PDF support...")
+            logger.debug("Installing PDF support...")
             if not install_pymupdf_support():
                 logger.error("Failed to install PDF support")
                 sys.exit(1)
-            logger.info("PDF support installed successfully")
+            logger.debug("PDF support installed successfully")
 
         try:
             from fitz import open as fitz_open, Matrix  # PyMuPDF
@@ -2202,11 +2214,11 @@ def convert_document(args: argparse.Namespace) -> None:
 
     elif input_extension in [".html", ".mhtml", ".htm"]:
         if not check_html_support():
-            logger.info("Installing HTML document support...")
+            logger.debug("Installing HTML document support...")
             if not install_html_support():
                 logger.error("Failed to install HTML document support")
                 sys.exit(1)
-            logger.info("HTML document support installed successfully")
+            logger.debug("HTML document support installed successfully")
 
         try:
             from bs4 import BeautifulSoup
@@ -2285,11 +2297,11 @@ def convert_document(args: argparse.Namespace) -> None:
             elif output_format == "image":
                 # For image output, we need Pillow
                 if not check_package_support("PIL"):
-                    logger.info("Installing image support...")
+                    logger.debug("Installing image support...")
                     if not install_package_support("Pillow"):
                         logger.error("Failed to install image support")
                         sys.exit(1)
-                    logger.info("Image support installed successfully")
+                    logger.debug("Image support installed successfully")
 
                 try:
                     from PIL import Image
@@ -2335,11 +2347,11 @@ def convert_document(args: argparse.Namespace) -> None:
 
                     # Check and install PyMuPDF support
                     if not check_pymupdf_support():
-                        logger.info("Installing PDF-to-image conversion support...")
+                        logger.debug("Installing PDF-to-image conversion support...")
                         if not install_pymupdf_support():
                             logger.error("Failed to install PDF-to-image conversion support")
                             sys.exit(1)
-                        logger.info("PDF-to-image conversion support installed successfully")
+                        logger.debug("PDF-to-image conversion support installed successfully")
 
                     try:
                         import fitz  # PyMuPDF
@@ -2898,20 +2910,20 @@ def main() -> None:
     if args.command == "convert" and hasattr(args, "input"):
         # For convert command, use input filename as context
         context = Path(args.input).name if args.input else None
-        setup_logging(args.command, context)
+        setup_logging(args.command, context, args.debug)
     elif args.command == "export":
         if args.local_dir:
             # For local directory export, use directory name as context
             context = Path(args.local_dir).name
-            setup_logging(args.command, context)
+            setup_logging(args.command, context, args.debug)
         elif args.repo_url:
             # For repository export, use repository name as context
             repo_name = args.repo_url.rstrip("/").split("/")[-1].replace(".git", "")
-            setup_logging(args.command, repo_name)
+            setup_logging(args.command, repo_name, args.debug)
         else:
-            setup_logging(args.command)
+            setup_logging(args.command, debug=args.debug)
     else:
-        setup_logging(args.command)
+        setup_logging(args.command, debug=args.debug)
 
     logger.info(f"Starting file2ai version {VERSION}")
 
