@@ -758,37 +758,44 @@ def test_word_to_text_conversion(tmp_path, caplog):
 """
 
 
-@pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper docx file simulation")
 def test_word_conversion_errors(tmp_path, caplog, monkeypatch):
     """Test error handling in Word document conversion."""
     import logging
     from unittest.mock import patch
+    import os
 
-    # Mock Document class
+    # First create a valid test Word document
+    from docx import Document as RealDocument
+    test_doc = tmp_path / "test.docx"
+    doc = RealDocument()
+    doc.add_paragraph("Test content")
+    doc.save(str(test_doc))
+
+    # Verify the file exists and is valid
+    assert os.path.exists(test_doc), "Test DOCX file was not created"
+
+    # Mock Document class that raises a specific error
     class MockDocument:
         def __init__(self, file_path=None):
-            raise ImportError("Failed to import python-docx")
+            raise Exception("Mock Word conversion error")
 
         def save(self, path):
-            raise ImportError("Failed to save document")
+            pass
 
-    monkeypatch.setattr("docx.Document", MockDocument)
     setup_logging()
     caplog.set_level(logging.ERROR)
 
-    # Create a test Word document
-    test_doc = tmp_path / "test.docx"
-    test_doc.write_bytes(b"Mock DOCX content")
-
-    # Test conversion with import error
+    # Test conversion with simulated error
     with pytest.raises(SystemExit):
         with patch(
             "sys.argv", ["file2ai.py", "convert", "--input", str(test_doc), "--format", "text"]
         ):
             args = parse_args()
-            convert_document(args)
+            # Patch both import locations to ensure we catch the error
+            with patch("docx.Document", MockDocument), patch("file2ai.Document", MockDocument):
+                convert_document(args)
 
-    assert "Error converting Word document" in caplog.text
+    assert "Failed to create Word document" in caplog.text
 
 
 def test_excel_dependency_management(monkeypatch, caplog):
@@ -814,25 +821,45 @@ def test_excel_dependency_management(monkeypatch, caplog):
     assert install_excel_support() is True
 
 
-@pytest.mark.skip(reason="Skipping due to mock implementation issues - mock workbook needs proper content structure")
 def test_excel_to_text_conversion(tmp_path, caplog, monkeypatch):
     """Test Excel document to text conversion."""
     import logging
     from unittest.mock import Mock, patch
 
-    # Mock Workbook class
+    # Mock Workbook class with proper worksheet and active sheet implementation
     class MockWorkbook:
         def __init__(self):
-            self.active = Mock()
-            self.worksheets = [self.active]
-            self.active.title = "Sheet1"
+            # Create mock cells with proper value property
+            def create_mock_cell(value):
+                cell = Mock()
+                # Set value as a property that returns the actual value
+                type(cell).value = property(lambda self: value)
+                return cell
+            
+            # Create mock rows with proper cell values
             mock_rows = [
-                [Mock(value="Name"), Mock(value="Age"), Mock(value="Notes")],
-                [Mock(value="John Doe"), Mock(value="30"), Mock(value="Regular customer")],
-                [Mock(value="Jane Smith"), Mock(value="25"), Mock(value="VIP, priority service")],
+                [create_mock_cell("Name"), create_mock_cell("Age"), create_mock_cell("Notes")],
+                [create_mock_cell("John Doe"), create_mock_cell("30"), create_mock_cell("Regular customer")],
+                [create_mock_cell("Jane Smith"), create_mock_cell("25"), create_mock_cell("VIP, priority service")],
             ]
+            
+            # Create active sheet with proper row iteration
+            self.active = Mock()
+            self.active.title = "Sheet1"
+            
+            # Create a method that returns the mock rows
+            def iter_rows(self, *args, **kwargs):
+                min_row = kwargs.get('min_row', 1)
+                # Adjust for 1-based indexing in openpyxl
+                start_idx = min_row - 1 if min_row else 0
+                return mock_rows[start_idx:]
+            
+            # Set up the active sheet with the iter_rows method
+            self.active.iter_rows = iter_rows.__get__(self.active, type(self.active))
             self.active.rows = mock_rows
-            self.active.iter_rows = Mock(return_value=mock_rows)
+            
+            # Set up worksheets list with the active sheet
+            self.worksheets = [self.active]
 
     def mock_load_workbook(file_path, data_only=False):
         return MockWorkbook()
@@ -841,9 +868,9 @@ def test_excel_to_text_conversion(tmp_path, caplog, monkeypatch):
     setup_logging()
     caplog.set_level(logging.INFO)
 
-    # Create a test Excel document
+    # Create an empty test Excel document - content will come from mock
     test_excel = tmp_path / "test.xlsx"
-    test_excel.write_bytes(b"Mock Excel content")
+    test_excel.touch()  # Create empty file
 
     # Convert the document
     with patch(
@@ -857,12 +884,24 @@ def test_excel_to_text_conversion(tmp_path, caplog, monkeypatch):
     expected_output = exports_dir / "test.xlsx.text"
     assert expected_output.exists(), f"Expected output file {expected_output} not found"
     output_content = expected_output.read_text()
-
-    # Verify content
-    assert "Name" in output_content
-    assert "John Doe" in output_content
-    assert "Regular customer" in output_content
-
+    
+    # Log the output content for debugging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Excel conversion output:\n{output_content}")
+    
+    # Verify content structure and format
+    expected_lines = [
+        "Sheet: Sheet1",
+        "Name | Age | Notes",
+        "John Doe | 30 | Regular customer",
+        "Jane Smith | 25 | VIP, priority service"
+    ]
+    
+    for expected_line in expected_lines:
+        assert expected_line in output_content, (
+            f"Expected line '{expected_line}' not found in output:\n{output_content}"
+        )
+    
     # Clean up all test files
     if exports_dir.exists():
         shutil.rmtree(exports_dir)
@@ -919,7 +958,6 @@ def test_excel_to_csv_conversion(tmp_path, caplog, monkeypatch):
     shutil.rmtree(exports_dir)
 
 
-@pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper file handling simulation")
 def test_excel_conversion_errors(tmp_path, caplog, monkeypatch):
     """Test error handling in Excel document conversion."""
     import logging
@@ -1004,7 +1042,6 @@ def test_pptx_dependency_management(monkeypatch, caplog):
     assert install_pptx_support() is True
 
 
-@pytest.mark.skip(reason="Skipping due to mock implementation issues - mock presentation needs proper slide content")
 def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
     """Test PowerPoint document to text conversion."""
     import logging
@@ -1072,7 +1109,6 @@ def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
 #     pass
 
 
-@pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper error simulation")
 def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
     """Test error handling in PowerPoint document conversion."""
     import logging
@@ -1156,7 +1192,6 @@ def test_html_dependency_management(monkeypatch, caplog):
     assert install_html_support() is True
 
 
-@pytest.mark.skip(reason="Skipping due to implementation issues - needs proper file count handling")
 def test_html_to_text_conversion(tmp_path, caplog):
     """Test HTML to text conversion."""
 
@@ -1199,7 +1234,6 @@ def test_html_to_text_conversion(tmp_path, caplog):
     shutil.rmtree(exports_dir)
 
 
-@pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper PDF content simulation")
 def test_html_to_pdf_conversion(tmp_path, caplog):
     """Test HTML to PDF conversion."""
 
@@ -1251,7 +1285,6 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
     shutil.rmtree(exports_dir)
 
 
-@pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper image file simulation")
 def test_html_to_image_conversion(tmp_path, caplog):
     """Test HTML to JPG image conversion."""
 
@@ -1349,7 +1382,6 @@ def test_html_to_image_conversion(tmp_path, caplog):
     shutil.rmtree(exports_dir)
 
 
-@pytest.mark.skip(reason="Skipping due to implementation issues - needs proper file count handling")
 def test_mhtml_conversion(tmp_path, caplog):
     """Test MHTML file conversion."""
 
@@ -1394,7 +1426,6 @@ Content-Type: text/html; charset="utf-8"
     shutil.rmtree(exports_dir)
 
 
-@pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper error simulation")
 def test_html_conversion_errors(tmp_path, caplog):
     """Test HTML conversion error handling."""
 

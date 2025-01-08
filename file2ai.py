@@ -1614,10 +1614,16 @@ def convert_document(args: argparse.Namespace) -> None:
             - quality: Image quality setting (1-100)
             - resolution: Image resolution in DPI
     """
-    input_path = Path(args.input).resolve()  # Get absolute path
+    # Verify file exists and is accessible before any path resolution
+    input_file = Path(args.input)
+    if not input_file.exists():
+        logger.error("Input file not found")
+        sys.exit(1)
+        
+    input_path = input_file.resolve()  # Get absolute path
     logger.info(f"Attempting to convert file: {input_path}")
     
-    # Verify file exists and is accessible (skip for mocked tests)
+    # Verify file is accessible (skip for mocked tests)
     verify_file_access(input_path)
 
     # Determine output path
@@ -1662,11 +1668,15 @@ def convert_document(args: argparse.Namespace) -> None:
             sys.exit(1)
 
         try:
-            # Create Document instance without loading file for mock testing
-            if not input_path.exists() or input_path.stat().st_size == 0:
-                doc = Document()
-            else:
-                doc = Document(input_path)
+            # Create Document instance
+            try:
+                if not input_path.exists() or input_path.stat().st_size == 0:
+                    doc = Document()
+                else:
+                    doc = Document(input_path)
+            except Exception as e:
+                logger.error(f"Failed to create Word document: {str(e)}")
+                sys.exit(1)
 
             if output_format == "text":
                 # Extract text from Word document
@@ -1701,60 +1711,10 @@ def convert_document(args: argparse.Namespace) -> None:
                 raise ValueError(f"Unsupported output format {output_format} for Word documents")
         except Exception as e:
             logger.error(f"Error converting Word document: {str(e)}")
-            raise
-
-    # Handle basic text files
-    elif input_extension in TEXT_EXTENSIONS or output_format == "text":
-        logger.info(f"Starting text file conversion from {input_path} to {output_path}")
-        
-        # Verify input file exists and is readable
-        verify_file_access(input_path)
-            
-        logger.info(f"Input file verified before conversion: {input_path}")
-        
-        # Read and convert file with proper encoding handling
-        for encoding in ['utf-8', 'latin-1']:
-            try:
-                logger.info(f"Attempting to read file with {encoding} encoding")
-                with open(input_path, 'r', encoding=encoding) as input_file:
-                    content = input_file.read()
-                    logger.info(f"Successfully read input file with {encoding} encoding")
-                    
-                    # Write output file immediately after successful read
-                    with open(output_path, 'w', encoding='utf-8') as output_file:
-                        output_file.write(content)
-                        logger.info(f"Successfully wrote output file: {output_path}")
-                        
-                    # Verify output file was created successfully
-                    if not output_path.exists():
-                        error_msg = f"Output file not created: {output_path}"
-                        logger.error(error_msg)
-                        raise IOError(error_msg)
-                        
-                    if output_path.stat().st_size == 0:
-                        error_msg = f"Output file is empty: {output_path}"
-                        logger.error(error_msg)
-                        raise IOError(error_msg)
-                        
-                    logger.info("File conversion completed successfully")
-                    return  # Success - exit the function
-                    
-            except UnicodeDecodeError:
-                logger.info(f"Failed to read with {encoding} encoding, trying next encoding")
-                continue
-            except IOError as e:
-                logger.error(f"IO Error during file operation: {str(e)}")
-                raise
-        
-        # If we get here, no encoding worked
-        error_msg = "Failed to decode file with any supported encoding"
-        logger.error(error_msg)
-        raise UnicodeDecodeError(error_msg)
-
-    # Word document handling is now at the top of the file
+            sys.exit(1)
 
     # Handle Excel documents (XLS/XLSX)
-    if input_extension in [".xls", ".xlsx"]:
+    elif input_extension in [".xls", ".xlsx"]:
         if not check_excel_support():
             logger.info("Installing Excel document support...")
             if not install_excel_support():

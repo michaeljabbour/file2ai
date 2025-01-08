@@ -24,18 +24,31 @@ classifiers = [
     "Operating System :: OS Independent"
 ]
 dependencies = [
+    # Core dependencies
     "gitpython",
     "python-docx",
     "openpyxl",
     "weasyprint",
     "beautifulsoup4",
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "pytest-mock",
     "fpdf>=1.7.2",
     "python-pptx>=0.6.21",
     "requests>=2.31.0",
-    "flask>=2.0.0"
+    
+    # Web dependencies
+    "flask>=2.0.0",
+    "flask-cors>=4.0.0",
+    
+    # Test dependencies
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-mock",
+    "pytest-timeout>=2.1.0",
+    
+    # Development dependencies
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+    "flake8>=6.0.0"
 ]
 
 [project.urls]
