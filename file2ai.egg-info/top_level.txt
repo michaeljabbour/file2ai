@@ -1,1 +1,7 @@
+build
 file2ai
+frontend
+images
+test_files
+test_upload
+uploads
