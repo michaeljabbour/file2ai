@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=64.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -24,26 +24,28 @@ classifiers = [
     "Operating System :: OS Independent"
 ]
 dependencies = [
-    "gitpython",
-    "python-docx",
-    "openpyxl",
-    "weasyprint",
-    "beautifulsoup4",
-    "fpdf>=1.7.2",
-    "python-pptx>=0.6.21",
-    "requests>=2.31.0"
+    "gitpython>=3.1.40",  # For git repository operations
+    "python-docx>=0.8.11",  # For Word document support
+    "openpyxl>=3.1.2",  # For Excel document support
+    "weasyprint>=60.1",  # For HTML/PDF conversion
+    "beautifulsoup4>=4.12.2",  # For HTML parsing
+    "fpdf>=1.7.2",  # For PDF generation
+    "python-pptx>=0.6.21",  # For PowerPoint support
+    "requests>=2.31.0",  # For HTTP operations
+    "pillow>=10.1.0",  # For image processing
+    "pymupdf>=1.23.7",  # For PDF-to-image conversion
+    "tqdm>=4.66.1"  # For progress bars
 ]
 
 [project.optional-dependencies]
 test = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "pytest-mock"
+    "pytest>=7.0",  # For testing
+    "pytest-cov>=4.0",  # For test coverage
+    "pytest-mock"  # For mocking in tests
 ]
 web = [
-    "flask>=2.0.0",
-    "werkzeug>=3.0.0",
-    "jinja2>=3.0.0"
+    "flask>=2.0.0",  # For web interface
+>>>>>>> origin/main
 ]
 
 [project.urls]
@@ -56,8 +58,10 @@ web = [
 # - weasyprint: HTML/PDF conversion
 
 [tool.setuptools]
-# We only have a single Python module called 'file2ai.py'
-py-modules = ["file2ai"]
+py-modules = ["file2ai"]  # Single-file module
+
+[tool.setuptools.packages.find]
+exclude = ["exports*", "logs*", "tests*", "venv*", "*.egg-info"]
 
 [tool.black]
 line-length = 100
@@ -65,6 +69,22 @@ target-version = ['py38', 'py39', 'py310', 'py311', 'py312', 'py313']
 include = '\.pyi?$'
 
 [tool.pytest.ini_options]
-addopts = "-v"
-testpaths = ["tests"]
-norecursedirs = ["exports", "logs", "venv", "__pycache__"]
+addopts = "-v --cov=. --cov-report=term-missing"
+testpaths = ["."]
+norecursedirs = ["exports", "logs", "venv", "__pycache__", "tests/backup"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["."]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "pass",
+]

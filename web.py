@@ -3,11 +3,22 @@ from pathlib import Path
 import os
 import sys
 import uuid
+import socket
 import threading
 from datetime import datetime
 import logging
 from typing import Dict, Optional, List, TypedDict, Union
 from werkzeug.datastructures import FileStorage
+
+# Configure logging
+logging.basicConfig(
+    level=os.getenv('LOG_LEVEL', 'INFO'),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 def gather_all_files(base_dir: str) -> List[str]:
     """Recursively gather all files from a directory.
@@ -76,16 +87,44 @@ app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path='')
 app.secret_key = os.urandom(24)  # For flash messages
 app.config['SERVER_NAME'] = 'localhost:8000'  # Configure Flask to use port 8000
 
+# Set up directories with proper permissions
+directories = {
+    'uploads': Path(UPLOADS_DIR),
+    'exports': Path(EXPORTS_DIR),
+    'frontend': Path(FRONTEND_DIR)
+}
+
 # Ensure required directories exist with proper permissions
 prepare_exports_dir()  # Use the existing function from file2ai.py
-# Use directories from file2ai module
-UPLOADS_FOLDER = Path(UPLOADS_DIR)
-EXPORTS_FOLDER = Path(EXPORTS_DIR)
-FRONTEND_FOLDER = Path(FRONTEND_DIR)
 
-# Ensure directories exist with proper permissions
-for folder in [UPLOADS_FOLDER, EXPORTS_FOLDER, FRONTEND_FOLDER]:
-    folder.mkdir(exist_ok=True, mode=0o755)
+# Set up directories with proper permissions
+for name, path in directories.items():
+    try:
+        # Create directory with proper permissions
+        path.mkdir(exist_ok=True, mode=0o755)
+        # Verify directory exists and is writable
+        if not path.exists():
+            raise IOError(f"Failed to create directory: {path}")
+        if not os.access(str(path), os.W_OK):
+            raise IOError(f"Directory not writable: {path}")
+        logger.info(f"Created/verified directory: {path}")
+    except Exception as e:
+        logger.error(f"Failed to create {name} directory: {e}")
+        sys.exit(1)
+for name, path in directories.items():
+    try:
+        # Create directory with proper permissions
+        path.mkdir(exist_ok=True, mode=0o755)
+        # Verify directory exists and is writable
+        if not path.exists():
+            raise IOError(f"Failed to create directory: {path}")
+        if not os.access(str(path), os.W_OK):
+            raise IOError(f"Directory not writable: {path}")
+        logger.info(f"Created/verified directory: {path}")
+    except Exception as e:
+        logger.error(f"Failed to create {name} directory: {e}")
+        sys.exit(1)
+>>>>>>> origin/main
 
 # Global job tracking
 conversion_jobs = {}
@@ -158,7 +197,8 @@ def process_job(
                 output_path = None
                 try:
                     # Save uploaded file
-                    input_path = UPLOADS_FOLDER / filename
+                    input_path = Path(UPLOADS_DIR) / filename  # Use constant from file2ai module
+>>>>>>> origin/main
                     # Read file content into memory first
                     file_content = file_data.read()
                     # Create and write to file
@@ -180,7 +220,7 @@ def process_job(
 
                     # Create output path
                     out_filename = f"{filename}.{output_format}"
-                    output_path = EXPORTS_FOLDER / out_filename
+                    output_path = Path(EXPORTS_DIR) / out_filename
                     logger.info(f"Converting {input_path} to {output_path} with format {output_format}")
 
                     # Create args namespace
@@ -257,7 +297,7 @@ def process_job(
                     repo_name = str(repo_url).rstrip("/").split("/")[-1].replace(".git", "")
                     format_ext = str(options.get("format", "text"))
                     filename = f"{repo_name}_export.{format_ext}"
-                    output_path = EXPORTS_FOLDER / filename
+                    output_path = Path(EXPORTS_DIR) / filename
 
                     # Create args namespace for repository export
                     args = Namespace(
@@ -301,7 +341,7 @@ def process_job(
                     dir_name = Path(str(local_dir)).name
                     format_ext = str(options.get("format", "text"))
                     filename = f"{dir_name}_export.{format_ext}"
-                    output_path = EXPORTS_FOLDER / filename
+                    output_path = Path(EXPORTS_DIR) / filename
 
                     # Create args namespace for local export
                     args = Namespace(
@@ -448,12 +488,53 @@ def serve_react(path):
 
 @app.route("/", methods=["POST"])
 def handle_api():
+<<<<<<< HEAD
     """Handle API requests for file conversion and exports"""
     # Debug logging
     logger.info("Received API request")
     logger.debug(f"Form data: {request.form}")
     logger.debug(f"Files: {request.files}")
     logger.debug(f"Headers: {request.headers}")
+||||||| 6c7bef8
+    """Handle API requests for file conversion and exports"""
+    # Debug logging
+    logger.info("Received API request")
+    print("Form data:", request.form)
+    print("Files:", request.files)
+    print("Headers:", request.headers)
+=======
+    """Handle API requests for file conversion and exports.
+    
+    Accepts POST requests with the following parameters:
+    - command: str, either 'convert' or 'export'
+    - file: list of files (for convert command)
+    - format: str, output format (text, pdf, html, docx, xlsx, pptx)
+    - pages: str, optional page range for PDF conversion
+    - brightness: float, optional image brightness (0.1-2.0)
+    - contrast: float, optional image contrast (0.1-2.0)
+    - resolution: int, optional image resolution (72-1200 DPI)
+    - repo_url: str, optional GitHub repository URL (for export command)
+    - branch: str, optional repository branch (for export command)
+    - token: str, optional GitHub token (for export command)
+    - local_dir: str, optional local directory path (for export command)
+    
+    Returns:
+        JSON response with:
+        - On success: {"job_id": str}
+        - On error: {"error": str}, with appropriate HTTP status code
+        
+    Security:
+        - Enforces 50MB file size limit
+        - Validates file extensions and MIME types
+        - Rejects suspicious file types
+        - Cleans up temporary files
+    """
+    # Security logging
+    logger.info("Received API request from %s", request.remote_addr)
+    logger.debug("Form data: %s", request.form)
+    logger.debug("Files: %s", request.files)
+    logger.debug("Headers: %s", request.headers)
+>>>>>>> origin/main
     
     command = request.form.get("command", "export")
     logger.info(f"Processing command: {command}")
@@ -474,20 +555,108 @@ def handle_api():
         if not request.files:
             return jsonify({"error": "No files selected"}), 400
 
+<<<<<<< HEAD
         files = {f.filename: f for f in request.files.getlist("file") if f.filename}
+||||||| 6c7bef8
+        files = {
+            f.filename: f
+            for f in request.files.getlist("file")
+            if f.filename
+        }
+=======
+        # Define security limits
+        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB limit
+        ALLOWED_EXTENSIONS = {'.txt', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.html', '.htm'}
+        SUSPICIOUS_EXTENSIONS = {'.exe', '.bat', '.cmd', '.sh', '.js', '.php', '.py'}
+        ALLOWED_MIMETYPES = {
+            'text/plain', 'application/pdf',
+            'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'text/html'
+        }
+        
+        # Validate and filter files
+        files = {}
+        for f in request.files.getlist("file"):
+            if not f.filename:
+                continue
+                
+            # Check file size
+            f.seek(0, 2)  # Seek to end
+            size = f.tell()
+            f.seek(0)  # Reset to beginning
+            if size > MAX_FILE_SIZE:
+                logger.warning(f"Rejected oversized file: {f.filename} ({size} bytes)")
+                return jsonify({"error": f"File {f.filename} exceeds maximum size of 50MB"}), 400
+                
+            # Check file extension and MIME type
+            ext = Path(f.filename).suffix.lower()
+            mime_type = f.content_type
+            
+            if ext in SUSPICIOUS_EXTENSIONS:
+                logger.warning(f"Rejected suspicious file type: {f.filename}")
+                return jsonify({"error": f"File type not allowed: {ext}"}), 400
+                
+            if ext not in ALLOWED_EXTENSIONS:
+                logger.warning(f"Rejected unsupported file type: {f.filename}")
+                return jsonify({"error": f"Unsupported file type: {ext}"}), 400
+                
+            if mime_type not in ALLOWED_MIMETYPES:
+                logger.warning(f"Rejected file with invalid MIME type: {f.filename} ({mime_type})")
+                return jsonify({"error": f"Invalid file type detected"}), 400
+                
+            files[f.filename] = f
+            
+>>>>>>> origin/main
         if not files:
-            return jsonify({"error": "No files selected"}), 400
+            return jsonify({"error": "No valid files selected"}), 400
 
         options = ConversionOptions(
             format=request.form.get("format", "text"),
             pages=request.form.get("pages", ""),
             brightness=request.form.get("brightness", "1.0"),
             contrast=request.form.get("contrast", "1.0"),
+<<<<<<< HEAD
             resolution=request.form.get("resolution", "300"),
+||||||| 6c7bef8
+            resolution=request.form.get("resolution", "300"),
+||||||| ccf8128
+        # Create job
+        job_id = str(uuid.uuid4())
+        conversion_jobs[job_id] = JobStatus(
+            status="queued",
+            progress=0,
+            errors=[],
+            start_time=datetime.now(),
+            output_files=[]
+=======
+        # Create job
+        job_id = str(uuid.uuid4())
+        conversion_jobs[job_id] = JobStatus(
+            status="queued", progress=0, errors=[], start_time=datetime.now(), output_files=[]
+>>>>>>> main
+=======
+            resolution=request.form.get("resolution", "300")
+>>>>>>> origin/main
         )
 
         # Start conversion in background
+<<<<<<< HEAD
         thread = threading.Thread(target=process_job, args=(job_id, command, files, options))
+||||||| 6c7bef8
+        thread = threading.Thread(
+            target=process_job,
+            args=(job_id, command, files, options)
+        )
+        thread.start()
+        return jsonify({"job_id": job_id})
+=======
+        thread = threading.Thread(target=process_job, args=(job_id, command, files, options))
+
+        thread.start()
+        return jsonify({"job_id": job_id})
+>>>>>>> origin/main
 
     else:  # command == 'export'
         fmt = request.form.get("format", "text")
@@ -607,7 +776,25 @@ def download_files(job_id):
 
 @app.route("/cleanup/<job_id>")
 def cleanup_job(job_id):
-    """Clean up job files and data"""
+    """Clean up temporary files and job data after completion.
+    
+    Args:
+        job_id: str, UUID of the job to clean up
+        
+    Returns:
+        JSON response with:
+        - success: bool, True if cleanup successful
+        - error: str, error message if cleanup failed
+        
+    Status Codes:
+        - 200: Success
+        - 404: Job not found
+        
+    Security:
+        - Only removes files associated with the job
+        - Uses secure path validation
+        - Maintains audit log of cleanup operations
+    """
     if job_id not in conversion_jobs:
         return (jsonify({"error": "Job not found"}), 404)
 
@@ -628,24 +815,61 @@ def cleanup_job(job_id):
     return jsonify({"status": "cleaned"})
 
 
+def load_env_file():
+    """Load environment variables from .env file if it exists."""
+    env_path = Path(__file__).parent / '.env'
+    if env_path.exists():
+        logger.info("Loading environment from .env file")
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    key, value = line.split('=', 1)
+                    os.environ[key.strip()] = value.strip()
+
 if __name__ == "__main__":
     # Set up logging for the web server
     setup_logging(operation="web", context="server")
+    
+    # Load environment variables
+    load_env_file()
 
-    # Get port from environment variable or use default (8000)
-    port = int(os.environ.get("FLASK_RUN_PORT", 8000))
-
-    try:
-        app.run(debug=True, host="0.0.0.0", port=port)
-    except OSError as e:
-        if "Address already in use" in str(e):
-            logger.error("\nPort %d is in use. Try one of the following:", port)
-            logger.error("1. Set a different port using: " "export FLASK_RUN_PORT=8080")
-            logger.error(
-                "2. On macOS, disable AirPlay Receiver in "
-                "System Preferences -> "
-                "General -> AirDrop & Handoff"
+    # Try multiple ports starting from default (8000)
+    start_port = int(os.environ.get("FLASK_RUN_PORT", 8000))
+    max_port = start_port + 20  # Try up to 20 ports
+    
+    for port in range(start_port, max_port + 1):
+        try:
+            logger.info(f"Attempting to start server on port {port}...")
+            # Configure environment-specific settings
+            flask_env = os.environ.get("FLASK_ENV", "development")
+            debug_mode = flask_env == "development"
+            log_level = os.environ.get("LOG_LEVEL", "INFO" if flask_env == "production" else "DEBUG")
+            
+            # Set logging level based on environment
+            logging.getLogger().setLevel(log_level)
+            
+            # Run app with environment-specific configuration
+            app.run(
+                debug=debug_mode,
+                host="0.0.0.0",
+                port=port,
+                use_reloader=debug_mode
             )
-            logger.error("3. Use an alternative port like " "8080, 3000, or 8000\n")
-            sys.exit(1)
-        raise  # Re-raise other OSErrors
+            break  # If successful, exit the loop
+        except OSError as e:
+            if "Address already in use" in str(e):
+                logger.warning(f"Port {port} is in use, trying next port...")
+                if port == max_port:
+                    logger.error("\nAll ports from %d to %d are in use.", start_port, max_port)
+                    logger.error("Try one of the following:")
+                    logger.error("1. Set a different port using: export FLASK_RUN_PORT=<port>")
+                    logger.error(
+                        "2. On macOS, disable AirPlay Receiver in "
+                        "System Preferences -> "
+                        "General -> AirDrop & Handoff"
+                    )
+                    logger.error("3. Free up ports in the range %d-%d\n", start_port, max_port)
+                    sys.exit(1)
+                continue
+            raise  # Re-raise other OSErrors

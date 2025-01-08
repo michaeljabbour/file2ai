@@ -1,16 +1,17 @@
-# Python cache
+# Python cache and bytecode
 __pycache__/
 *.py[cod]
+.pytest_cache/
 
 # Virtual environment
 venv/
 env/
 .env/
 .venv/
+.python-version
 
 # Python package builds
 *.egg-info/
-*.egg
 dist/
 build/
 .eggs/
@@ -22,20 +23,18 @@ tests/backup/*.docx
 tests/backup/*.pdf
 tests/backup/*.pptx
 tests/backup/*.xlsx
+tests/images/
 exports/
 logs/
+uploads/
+images/
+test.docx
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
 
 # OS-specific
 .DS_Store
 Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-*.swp
-exports/
-uploads/
-logs/
-file2ai.egg-info/
-.coverage
-.python-version

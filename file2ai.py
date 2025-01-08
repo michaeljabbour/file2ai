@@ -8,6 +8,28 @@ file.
 
 from __future__ import annotations
 
+__all__ = [
+    "parse_args",
+    "is_text_file",
+    "validate_github_url",
+    "export_files_to_single_file",
+    "parse_github_url",
+    "build_auth_url",
+    "prepare_exports_dir",
+    "clone_and_export",
+    "local_export",
+    "check_docx_support",
+    "install_docx_support",
+    "check_excel_support",
+    "install_excel_support",
+    "check_pptx_support",
+    "install_pptx_support",
+    "check_html_support",
+    "install_html_support",
+    "convert_document",
+    "setup_logging",
+]
+
 import argparse
 import fnmatch
 import importlib.util
@@ -20,6 +42,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime
+from zipfile import BadZipFile  # For Word document error handling
 from pathlib import Path
 from typing import (
     Dict,
@@ -37,7 +60,6 @@ from typing import (
 from typing import TYPE_CHECKING
 
 # Directory constants
-EXPORTS_DIR = "exports"
 UPLOADS_DIR = "uploads"
 FRONTEND_DIR = "frontend"
 
@@ -69,7 +91,8 @@ try:
     from docx import Document
     HAS_DOCX = True
 except ImportError:
-    pass  # Document remains None
+    Document = None  # Ensure Document is None on import failure
+    HAS_DOCX = False
 
 
 def check_image_support() -> bool:
@@ -83,19 +106,18 @@ def check_image_enhance_support() -> bool:
 
 
 def install_image_support() -> bool:
-    """Install Pillow package for image processing."""
-    success = install_package_support("Pillow")
-    if success:
-        global Image, ImageEnhance, HAS_PIL, HAS_PIL_ENHANCE
-        try:
-            from PIL import Image, ImageEnhance
-
-            HAS_PIL = True
-            HAS_PIL_ENHANCE = hasattr(Image, "frombytes") and ImageEnhance is not None
-        except ImportError:
-            HAS_PIL = False
-            HAS_PIL_ENHANCE = False
-    return success
+    """Check if Pillow package is available."""
+    global Image, ImageEnhance, HAS_PIL, HAS_PIL_ENHANCE
+    try:
+        from PIL import Image, ImageEnhance
+        HAS_PIL = True
+        HAS_PIL_ENHANCE = hasattr(Image, "frombytes") and ImageEnhance is not None
+        return True
+    except ImportError:
+        HAS_PIL = False
+        HAS_PIL_ENHANCE = False
+        logger.error("Pillow not found. Please install dependencies first.")
+        return False
 
 
 def check_package_support(package: str) -> bool:
@@ -107,37 +129,87 @@ def check_package_support(package: str) -> bool:
     Returns:
         bool: True if package is available, False otherwise
     """
-    return importlib.util.find_spec(package) is not None
+    # Handle package name mappings (e.g., python-docx -> docx)
+    package_map = {
+        'python-docx': 'docx',
+        'python-pptx': 'pptx',
+        'beautifulsoup4': 'bs4',
+        'pymupdf': 'fitz',
+        'weasyprint': 'weasyprint',
+        'openpyxl': 'openpyxl'
+    }
+    import_name = package_map.get(package, package)
+    
+    try:
+        # First try to import the module
+        __import__(import_name)
+        return True
+    except ImportError as e:
+        logger.debug(f"Failed to import {import_name}: {str(e)}")
+        # If import fails, check if package is installed but not importable
+        spec = importlib.util.find_spec(import_name)
+        if spec is not None:
+            logger.warning(f"Package {package} is installed but cannot be imported")
+        return False
 
 
 def install_package_support(package: str) -> bool:
-    """Install a Python package.
+    """Install a Python package if not already available.
 
     Args:
         package: Name of the package to install
 
     Returns:
-        bool: True if installation successful, False otherwise
+        bool: True if package is available or successfully installed, False otherwise
     """
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", package],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+    if check_package_support(package):
         return True
+    try:
+        logger.info(f"Installing {package}...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", package])
+        importlib.invalidate_caches()  # Ensure the newly installed package is detected
+        
+        # Try importing after installation
+        package_map = {
+            'python-docx': 'docx',
+            'python-pptx': 'pptx',
+            'beautifulsoup4': 'bs4',
+            'pymupdf': 'fitz',
+            'weasyprint': 'weasyprint',
+            'openpyxl': 'openpyxl'
+        }
+        import_name = package_map.get(package, package)
+        try:
+            __import__(import_name)
+            return True
+        except ImportError as e:
+            logger.error(f"Failed to import {import_name} after installation: {str(e)}")
+            return False
     except subprocess.CalledProcessError:
+        logger.error(f"Failed to install {package}")
         return False
 
 
 def check_docx_support() -> bool:
     """Check if python-docx is available for Word document support."""
-    return check_package_support("docx")
+    global HAS_DOCX
+    result = check_package_support("python-docx")
+    HAS_DOCX = result
+    return result
 
 
 def install_docx_support() -> bool:
-    """Install python-docx package for Word document support."""
-    return install_package_support("python-docx")
+    """Install python-docx package if not already available."""
+    global Document, HAS_DOCX
+    if install_package_support("python-docx"):
+        try:
+            from docx import Document
+            test_doc = Document()  # Verify we can create a document
+            HAS_DOCX = True
+            return True
+        except (ImportError, Exception):
+            pass
+    return False
 
 
 def check_excel_support() -> bool:
@@ -146,8 +218,15 @@ def check_excel_support() -> bool:
 
 
 def install_excel_support() -> bool:
-    """Install openpyxl package for Excel document support."""
-    return install_package_support("openpyxl")
+    """Install openpyxl package if not already available."""
+    if install_package_support("openpyxl"):
+        try:
+            import openpyxl
+            test_wb = openpyxl.Workbook()  # Verify we can create a workbook
+            return True
+        except (ImportError, Exception):
+            pass
+    return False
 
 
 def check_pptx_support() -> bool:
@@ -156,8 +235,15 @@ def check_pptx_support() -> bool:
 
 
 def install_pptx_support() -> bool:
-    """Install python-pptx package for PowerPoint document support."""
-    return install_package_support("python-pptx")
+    """Install python-pptx package if not already available."""
+    if install_package_support("python-pptx"):
+        try:
+            from pptx import Presentation
+            test_prs = Presentation()  # Verify we can create a presentation
+            return True
+        except (ImportError, Exception):
+            pass
+    return False
 
 
 class CommitInfo(TypedDict, total=False):
@@ -178,7 +264,7 @@ MIN_PYTHON_VERSION: Tuple[int, int] = (3, 7)
 DEFAULT_ENCODING: str = "utf-8"
 LAUNCHER_DIR_NAME: str = "launchers"
 LOGS_DIR: str = "logs"
-EXPORTS_DIR: str = "exports"
+EXPORTS_DIR: str = "exports"  # Used throughout the codebase for export operations
 
 # File extension sets
 TEXT_EXTENSIONS: Set[str] = {
@@ -228,17 +314,10 @@ logger = logging.getLogger(__name__)
 
 
 def install_gitpython_quietly() -> None:
-    """Install GitPython package quietly using pip."""
-    logger.info("Installing dependencies... (this may take a moment)")
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "gitpython", "--quiet"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as e:
-        logger.error("Failed to install GitPython: %s", e)
+    """Check if GitPython package is available."""
+    logger.info("Checking GitPython dependency...")
+    if not check_package_support("git"):
+        logger.error("GitPython not found. Please install dependencies first.")
         raise SystemExit(1)
 
 
@@ -332,7 +411,7 @@ Usage:
        file2ai.py FILE [--format FORMAT] [options]
 
     3. Web Interface:
-       file2ai.py serve [--port PORT]
+       file2ai.py web [--host HOST] [--port PORT]
 
 Supported formats for conversion: pdf, text, image, docx, csv, html
 Cross-platform compatible with no system dependencies required.""",
@@ -1196,12 +1275,12 @@ def local_export(args: argparse.Namespace) -> None:
     repo_name = local_dir.name or "local-export"
     extension = ".json" if hasattr(args, 'format') and args.format == "json" else ".txt"
     output_file = args.output_file if hasattr(args, 'output_file') and args.output_file else f"file2ai_export{extension}"
-    exports_dir = prepare_exports_dir()
-    output_path = exports_dir / output_file
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path = _sequential_filename(output_path.resolve())
+    
+    # Get exports directory and construct output path
+    exports_dir = prepare_exports_dir()  # Already resolved in prepare_exports_dir
+    output_path = _sequential_filename(exports_dir / output_file)  # No need to resolve again
     logger.debug(f"Using output path: {output_path}")
-    logger.debug(f"Exports directory: {EXPORTS_DIR}")
+    logger.debug(f"Exports directory: {exports_dir}")
 
     # Check if local_dir is a git repository
     git_path = local_dir / ".git"
@@ -1309,7 +1388,16 @@ def check_html_support() -> bool:
 
 def install_html_support() -> bool:
     """Install required HTML packages (beautifulsoup4 and weasyprint)."""
-    return install_package_support("beautifulsoup4") and install_package_support("weasyprint")
+    if install_package_support("beautifulsoup4") and install_package_support("weasyprint"):
+        try:
+            import bs4  # noqa: F401
+            import weasyprint  # noqa: F401
+            return True
+        except ImportError:
+            logger.error("Failed to import bs4 or weasyprint after installation")
+            return False
+    logger.error("Failed to install bs4 or weasyprint")
+    return False
 
 
 def check_pymupdf_support() -> bool:
@@ -1663,10 +1751,24 @@ def convert_document(args: argparse.Namespace) -> None:
 
         try:
             # Create Document instance without loading file for mock testing
-            if not input_path.exists() or input_path.stat().st_size == 0:
-                doc = Document()
-            else:
+            if not input_path.exists():
+                logger.error(f"Error converting Word document: Input file does not exist: {input_path}")
+                sys.exit(1)
+            elif input_path.stat().st_size == 0:
+                logger.error(f"Error converting Word document: Input file is empty: {input_path}")
+                sys.exit(1)
+            
+            try:
                 doc = Document(input_path)
+            except BadZipFile as e:
+                logger.error(f"Error converting Word document: {str(e)}")
+                sys.exit(1)
+            except PermissionError as e:
+                logger.error(f"Error converting Word document: {str(e)}")
+                sys.exit(1)
+            except Exception as e:
+                logger.error(f"Error converting Word document: {str(e)}")
+                sys.exit(1)
 
             if output_format == "text":
                 # Extract text from Word document
@@ -1692,16 +1794,75 @@ def convert_document(args: argparse.Namespace) -> None:
                                     full_text.append(" | ".join(row_text))
 
                 # Write the extracted text
-                output_path.write_text("\n".join(full_text), encoding="utf-8")
-                logger.info(f"Successfully converted Word document to text: {output_path}")
-                return
+                try:
+                    output_path.write_text("\n".join(full_text), encoding="utf-8")
+                    logger.info(f"Successfully converted Word document to text: {output_path}")
+                    return
+                except PermissionError as e:
+                    logger.error(f"Error writing output file: {str(e)}")
+                    sys.exit(1)
             else:
                 # For non-text formats, we need to handle the document differently
                 logger.error(f"Unsupported output format {output_format} for Word documents")
-                raise ValueError(f"Unsupported output format {output_format} for Word documents")
+                sys.exit(1)
         except Exception as e:
             logger.error(f"Error converting Word document: {str(e)}")
-            raise
+            sys.exit(1)
+
+    # Handle Excel documents (XLS/XLSX) first
+    if input_extension in [".xls", ".xlsx"]:
+        logger.debug(f"Detected Excel file with extension: {input_extension}")
+        if not check_excel_support():
+            logger.info("Installing Excel document support...")
+            if not install_excel_support():
+                logger.error("Failed to install Excel document support")
+                sys.exit(1)
+            logger.info("Excel document support installed successfully")
+
+        try:
+            from openpyxl import load_workbook
+        except ImportError:
+            logger.error("Failed to import openpyxl")
+            sys.exit(1)
+
+        try:
+            logger.debug(f"Loading Excel workbook from path: {input_path}")
+            workbook: "Workbook" = load_workbook(input_path, data_only=True)
+
+            if output_format == "text":
+                logger.debug(f"Starting Excel to text conversion for {input_path}")
+                # Extract text from Excel workbook
+                full_text: List[str] = []
+                logger.debug(f"Processing Excel workbook with {len(workbook.worksheets)} sheets")
+                for sheet in workbook.worksheets:
+                    logger.debug(f"Processing sheet: {sheet.title}")
+                    full_text.append(f"Sheet: {sheet.title}\n")
+                    row_count = 0
+                    for row in sheet.iter_rows():
+                        row_text: List[str] = []
+                        for cell in row:
+                            if cell.value is not None:
+                                row_text.append(str(cell.value).strip())
+                        if row_text:
+                            full_text.append(" | ".join(row_text))
+                            row_count += 1
+                    logger.debug(f"Processed {row_count} rows in sheet {sheet.title}")
+
+                logger.debug(f"Attempting to write output to: {output_path}")
+                try:
+                    output_path.write_text("\n".join(full_text))
+                    logger.debug(f"Successfully wrote {len(full_text)} lines of text")
+                    logger.info(f"Successfully converted Excel document to text: {output_path}")
+                    return
+                except Exception as e:
+                    logger.error(f"Failed to write output file: {str(e)}")
+                    raise
+            else:
+                logger.error(f"Unsupported output format {output_format} for Excel documents")
+                sys.exit(1)
+        except Exception as e:
+            logger.error(f"Error converting Excel document: {str(e)}")
+            sys.exit(1)
 
     # Handle basic text files
     elif input_extension in TEXT_EXTENSIONS or output_format == "text":
@@ -1750,11 +1911,6 @@ def convert_document(args: argparse.Namespace) -> None:
         error_msg = "Failed to decode file with any supported encoding"
         logger.error(error_msg)
         raise UnicodeDecodeError(error_msg)
-
-    # Word document handling is now at the top of the file
-
-    # Handle Excel documents (XLS/XLSX)
-    if input_extension in [".xls", ".xlsx"]:
         if not check_excel_support():
             logger.info("Installing Excel document support...")
             if not install_excel_support():
@@ -1772,10 +1928,14 @@ def convert_document(args: argparse.Namespace) -> None:
             workbook: "Workbook" = load_workbook(input_path, data_only=True)
 
             if output_format == "text":
+                logger.debug(f"Starting Excel to text conversion for {input_path}")
                 # Extract text from Excel workbook
                 full_text: List[str] = []
+                logger.debug(f"Processing Excel workbook with {len(workbook.worksheets)} sheets")
                 for sheet in workbook.worksheets:
+                    logger.debug(f"Processing sheet: {sheet.title}")
                     full_text.append(f"Sheet: {sheet.title}\n")
+                    row_count = 0
                     for row in sheet.iter_rows():
                         row_text: List[str] = []
                         for cell in row:
@@ -1783,9 +1943,17 @@ def convert_document(args: argparse.Namespace) -> None:
                                 row_text.append(str(cell.value).strip())
                         if row_text:
                             full_text.append(" | ".join(row_text))
+                            row_count += 1
+                    logger.debug(f"Processed {row_count} rows in sheet {sheet.title}")
 
-                output_path.write_text("\n".join(full_text))
-                logger.info(f"Successfully converted Excel document to text: {output_path}")
+                logger.debug(f"Attempting to write output to: {output_path}")
+                try:
+                    output_path.write_text("\n".join(full_text))
+                    logger.debug(f"Successfully wrote {len(full_text)} lines of text")
+                    logger.info(f"Successfully converted Excel document to text: {output_path}")
+                except Exception as e:
+                    logger.error(f"Failed to write output file: {str(e)}")
+                    raise
 
             elif output_format == "csv":
                 # Convert active sheet to CSV
