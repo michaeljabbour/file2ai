@@ -29,13 +29,21 @@ dependencies = [
     "openpyxl",
     "weasyprint",
     "beautifulsoup4",
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "pytest-mock",
     "fpdf>=1.7.2",
     "python-pptx>=0.6.21",
-    "requests>=2.31.0",
-    "flask>=2.0.0"
+    "requests>=2.31.0"
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-mock"
+]
+web = [
+    "flask>=2.0.0",
+    "werkzeug>=3.0.0",
+    "jinja2>=3.0.0"
 ]
 
 [project.urls]

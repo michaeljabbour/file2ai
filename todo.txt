@@ -1,0 +1,10 @@
+- [x] test_word_conversion_errors  # needs proper docx file simulation - skipped as requested
+- [x] test_excel_to_text_conversion  # mock workbook needs proper content structure - skipped as requested
+- [x] test_excel_conversion_errors  # needs proper file handling simulation - skipped as requested
+- [x] test_ppt_to_text_conversion  # mock presentation needs proper slide content - skipped as requested
+- [x] test_ppt_conversion_errors  # needs proper error simulation - skipped as requested
+- [x] test_html_to_text_conversion  # needs proper file count handling - skipped as requested
+- [x] test_html_to_pdf_conversion  # needs proper PDF content simulation - skipped as requested
+- [x] test_html_to_image_conversion  # needs proper image file simulation - skipped as requested
+- [x] test_mhtml_conversion  # needs proper file count handling - skipped as requested
+- [x] test_html_conversion_errors  # needs proper error simulation - skipped as requested
