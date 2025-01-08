@@ -47,9 +47,9 @@ clean_old_artifacts() {
     for dir in "${cleanup_dirs[@]}"; do
         if [ -e "$dir" ]; then
             log_info "Removing $dir..."
-            rm -rf "$dir" 2>/dev/null || {
+            sudo rm -rf "$dir" 2>/dev/null || {
                 log_warn "Failed to remove $dir - it may be in use or require different permissions"
-                log_warn "You may need to remove it manually: rm -rf $dir"
+                log_warn "You may need to remove it manually: sudo rm -rf $dir"
             }
         fi
     done
