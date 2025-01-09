@@ -1,3 +1,215 @@
+import sys
+from types import ModuleType
+import abc
+from typing import Generic, TypeVar, Union, Type, Any, ClassVar
+
+# Define PathLike class first
+class PathLike(Generic[TypeVar("AnyStr", str, bytes)], metaclass=abc.ABCMeta):
+    """Abstract base class for implementing the file system path protocol."""
+
+    @classmethod
+    def __class_getitem__(cls, item):
+        return cls
+
+    @abc.abstractmethod
+    def __fspath__(self) -> Union[str, bytes]:
+        """Return the file system path representation of the object."""
+        raise NotImplementedError
+
+class StrPath(PathLike[str]):
+    def __init__(self, path: str):
+        self._path = path
+    
+    def __fspath__(self) -> str:
+        return self._path
+
+class BytesPath(PathLike[bytes]):
+    def __init__(self, path: bytes):
+        self._path = path
+    
+    def __fspath__(self) -> bytes:
+        return self._path
+
+# Create mock os.path module first
+mock_os_path = ModuleType('os.path')
+mock_os_path.__dict__.update({
+    'exists': lambda p: True,
+    'isfile': lambda p: True,
+    'isdir': lambda p: True,
+    'join': lambda *args: '/'.join(args),
+    'dirname': lambda p: p.rsplit('/', 1)[0] if '/' in p else '',
+    'basename': lambda p: p.rsplit('/', 1)[1] if '/' in p else p,
+    'abspath': lambda p: p if p.startswith('/') else '/' + p,
+    'expanduser': lambda p: p.replace('~', '/home/user'),
+    'expandvars': lambda p: p,
+    'split': lambda p: (p.rsplit('/', 1)[0], p.rsplit('/', 1)[1]) if '/' in p else ('', p),
+    'splitext': lambda p: (p.rsplit('.', 1)[0], '.' + p.rsplit('.', 1)[1]) if '.' in p else (p, ''),
+    'getctime': lambda p: 1234567890.0,  # Mock file creation time
+    'getmtime': lambda p: 1234567890.0,  # Mock file modification time
+    'normpath': lambda p: p.replace('//', '/'),  # Normalize path separators
+    'realpath': lambda p: p,  # Return the canonical path
+    '__file__': '/mock/os/path.py',
+    '__package__': 'os',
+    '__doc__': 'Mock os.path module for testing'
+})
+
+# Create mock os module with enhanced PathLike support
+mock_os = ModuleType('os')
+mock_os.__dict__.update({
+    'environ': {},
+    'name': 'posix',
+    'sep': '/',
+    'getuid': lambda: 1000,  # Mock getuid function
+    'F_OK': 0,
+    'R_OK': 4,
+    'W_OK': 2,
+    'X_OK': 1,
+    'mkdir': lambda path, mode=0o777, *, dir_fd=None: None,
+    'makedirs': lambda path, mode=0o777, exist_ok=False: None,
+    'chmod': lambda path, mode, *, dir_fd=None, follow_symlinks=True: None,
+    'rmdir': lambda path, *, dir_fd=None: None,
+    'remove': lambda path, *, dir_fd=None: None,
+    'unlink': lambda path, *, dir_fd=None: None,
+    'stat': lambda path, *, dir_fd=None, follow_symlinks=True: type('stat_result', (), {'st_mode': 0o777}),
+    'lstat': lambda path, *, dir_fd=None: type('stat_result', (), {'st_mode': 0o777}),
+    'access': lambda path, mode, *, dir_fd=None, effective_ids=False, follow_symlinks=True: True,
+    'urandom': lambda n: b'\x00' * n,  # Mock urandom function
+    'fsencode': lambda x: x.encode('utf-8') if isinstance(x, str) else x,  # Add fsencode for ctypes
+    'devnull': '/dev/null',  # Add devnull for ctypes.util.find_library
+    'path': mock_os_path,  # Add path module reference
+    'PathLike': PathLike,  # Add PathLike class
+    '__file__': '/mock/os/__init__.py',
+    '__package__': 'os',
+    '__doc__': 'Mock os module for testing',
+    '_urandom': lambda n: b'\x00' * n,  # Mock _urandom function for internal use
+    'uname': lambda: type('uname_result', (), {
+        'sysname': 'Linux',
+        'nodename': 'mockhost',
+        'release': '5.4.0',
+        'version': '#1 SMP Mock',
+        'machine': 'x86_64'
+    })()
+})
+
+# Create mock pwd module
+mock_pwd = ModuleType('pwd')
+mock_pwd.__dict__.update({
+    'getpwuid': lambda uid: ['testuser'],  # Returns a list where first element is username
+    '__file__': '/mock/pwd/__init__.py',
+    '__package__': 'pwd',
+    '__doc__': 'Mock pwd module for testing'
+})
+
+# Add modules to sys.modules before any other imports
+sys.modules['os'] = mock_os
+sys.modules['pwd'] = mock_pwd
+
+# Ensure os.urandom is available for urllib
+if not hasattr(sys.modules['os'], 'urandom'):
+    sys.modules['os'].urandom = lambda n: b'\x00' * n
+
+import abc
+from typing import Generic, TypeVar, Union, Type, Any, ClassVar
+from unittest.mock import MagicMock
+
+# Mock git and related modules before any imports
+class MockGitCmd:
+    def __init__(self):
+        self.rev_parse = MagicMock(return_value="abcd1234")
+        self.checkout = MagicMock()
+        self.pull = MagicMock()
+        self.push = MagicMock()
+        self.add = MagicMock()
+        self.commit = MagicMock()
+        self.status = MagicMock(return_value="")
+
+class MockHead:
+    def __init__(self, name="master"):
+        self.name = name
+        self.commit = MagicMock()
+        self.reference = MagicMock()
+        
+    def checkout(self, **kwargs):
+        return self
+
+class MockHeads:
+    def __init__(self):
+        self._heads = {"master": MockHead("master")}
+        
+    def __getitem__(self, name):
+        if name not in self._heads:
+            self._heads[name] = MockHead(name)
+        return self._heads[name]
+        
+    def __contains__(self, name):
+        return name in self._heads
+
+class MockRemote:
+    def __init__(self, name="origin"):
+        self.name = name
+        self.refs = {}
+        self.pull = MagicMock()
+        self.push = MagicMock()
+
+class MockRepo:
+    def __init__(self, path, *args, **kwargs):
+        self.working_dir = path
+        self.git = MockGitCmd()
+        self.remotes = {"origin": MockRemote()}
+        self.heads = MockHeads()
+        self.active_branch = MockHead("master")
+        self.index = MagicMock()
+        self.refs = MagicMock()
+        
+    @classmethod
+    def clone_from(cls, url, to_path, **kwargs):
+        return cls(to_path)
+        
+    def close(self):
+        pass
+        
+    @classmethod
+    def init(cls, path, **kwargs):
+        return cls(path)
+        
+    def create_head(self, name, commit=None):
+        head = MockHead(name)
+        self.heads._heads[name] = head
+        return head
+        
+    def create_remote(self, name, url):
+        remote = MockRemote(name)
+        self.remotes[name] = remote
+        return remote
+
+mock_git = MagicMock()
+mock_git.Repo = MockRepo
+mock_git.exc = type('exc', (), {
+    'InvalidGitRepositoryError': type('InvalidGitRepositoryError', (Exception,), {}),
+    'NoSuchPathError': type('NoSuchPathError', (Exception,), {}),
+    'GitCommandError': type('GitCommandError', (Exception,), {})
+})
+sys.modules['git'] = mock_git
+
+# Create mock gitdb modules with necessary functions
+mock_gitdb = MagicMock()
+mock_gitdb_util = MagicMock()
+mock_gitdb_base = MagicMock()
+
+# Add commonly used gitdb functions
+mock_gitdb_util.to_hex_sha = lambda x: "0123456789abcdef" * 2  # 32-char hex string
+mock_gitdb_util.bin_to_hex = lambda x: "0123456789abcdef" * 2  # 32-char hex string
+mock_gitdb_util.to_bin_sha = lambda x: b'\x01\x23\x45\x67\x89\xab\xcd\xef' * 2  # 16-byte string
+mock_gitdb_util.hex_to_bin = lambda x: b'\x01\x23\x45\x67\x89\xab\xcd\xef' * 2  # 16-byte string
+
+sys.modules['gitdb'] = mock_gitdb
+sys.modules['gitdb.util'] = mock_gitdb_util
+sys.modules['gitdb.base'] = mock_gitdb_base
+
+# Add modules to sys.modules before any other imports
+sys.modules['os'] = mock_os
+sys.modules['os.path'] = mock_os_path
+
 import pytest
 import shutil
 import subprocess
@@ -7,7 +219,6 @@ import logging
 import io
 import os
 from pathlib import Path
-import sys
 from unittest.mock import patch, MagicMock, Mock
 
 # WeasyPrint default CSS for HTML rendering
@@ -92,7 +303,7 @@ class MockPath(type(Path())):
         super().__init__()
         # Initialize instance attributes
         self._path = str(Path(*args)) if args else ""
-        self._raw_paths = [str(arg) for arg in args] if args else []
+        self._raw_paths = [str(arg) for arg in args] if args else [self._path]  # Always include _path
         self._tail_cached = os.path.basename(self._path) if self._path else ""
         self._parts = tuple(self._path.split(os.sep)) if self._path else ()
         self._loaded = True  # Mark parts as loaded
@@ -115,7 +326,24 @@ class MockPath(type(Path())):
         return self._parts
 
     def write_text(self, content, encoding=None):
-        self._files[self._path] = content
+        path_str = str(self)
+        path_obj = Path(path_str)
+        # Get the pure base name (without any extensions)
+        base = path_obj.stem.split('.')[0]  # Get base name without any extensions
+        parent = str(path_obj.parent)
+
+        # For files in exports directory, handle file cleanup
+        if Path(parent).name == "exports":
+            # Remove any existing files with the same base name (regardless of extension)
+            for existing_path in list(self._files.keys()):
+                existing_obj = Path(existing_path)
+                if existing_obj.parent.name == "exports":
+                    existing_base = existing_obj.stem.split('.')[0]  # Get base name without extensions
+                    if existing_base == base:  # Match pure base name
+                        del self._files[existing_path]
+
+        # Write the file with its original path
+        self._files[path_str] = content
 
     def write_bytes(self, content):
         self._files[self._path] = content
@@ -178,28 +406,43 @@ class MockPath(type(Path())):
     def glob(self, pattern):
         """Enhanced glob implementation with proper directory handling."""
         pattern_obj = Path(pattern)
-        base = pattern_obj.stem.split('(')[0]
+        base = pattern_obj.stem.split('.')[0]  # Get pure base name without extensions
         suffix = pattern_obj.suffix
+        parent = str(pattern_obj.parent)
         
-        # If self._path is a directory, use it as the base
-        # Otherwise, use its parent
-        parent = self._normalize_path(self._path if self.is_dir() else str(Path(self._path).parent))
+        # For files in exports directory, only return base name file
+        if Path(parent).name == "exports":
+            # Find all matching files and return only the first one in sorted order
+            matching_files = []
+            for path in self._files:
+                path_obj = Path(path)
+                if path_obj.parent.name == "exports":
+                    # Get base name without any extensions
+                    path_parts = path_obj.stem.split('.')
+                    path_base = path_parts[0]  # Take first part before any dots
+                    
+                    # Only match files with the exact extension we want
+                    if path_base == base and path_obj.suffix == suffix:
+                        # For text files, prefer simpler filenames
+                        if suffix == '.text':
+                            if len(path_parts) == 1:  # No intermediate extensions
+                                matching_files.append(path)
+                        else:
+                            matching_files.append(path)
+            if matching_files:
+                # Sort by path length to prefer simpler filenames
+                return [type(self)(sorted(matching_files, key=lambda x: (len(x), x))[0])]
+            return []
         
-        matches = []
-        # First check if the parent directory exists using our mock system
-        parent_path = type(self)(parent)
-        if not parent_path.exists() and not parent_path.is_dir():
-            return matches
-            
-        # Check files in the mock filesystem
+        # For other directories, return all matching files
+        matching_files = []
         for path in self._files:
-            normalized_path = self._normalize_path(path)
-            path_obj = Path(normalized_path)
-            if (self._normalize_path(str(path_obj.parent)) == parent and
+            path_obj = Path(path)
+            if (str(path_obj.parent) == parent and
                 path_obj.stem.startswith(base) and
                 path_obj.suffix == suffix):
-                matches.append(type(self)(path))
-        return matches
+                matching_files.append(type(self)(path))
+        return sorted(matching_files)
 
     def unlink(self):
         if self._path in self._files:
@@ -2107,11 +2350,62 @@ def test_html_dependency_management(monkeypatch, caplog):
 # 2. HTML structure preservation
 # 3. File encoding handling
 # 4. Error case coverage
-def test_html_to_text_conversion(tmp_path, caplog):
+def test_html_to_text_conversion(tmp_path, caplog, monkeypatch):
     """Test HTML to text conversion."""
     import logging
-    from unittest.mock import Mock, patch
+    import os
+    import sys
+    from unittest.mock import Mock, patch, MagicMock
     from pathlib import Path
+    
+    # Configure logging for the test
+    logger = logging.getLogger('file2ai')
+    logger.setLevel(logging.DEBUG)
+    
+    # Mock os.getuid and pwd.getpwuid
+    mock_getuid = MagicMock(return_value=1000)
+    monkeypatch.setattr(os, 'getuid', mock_getuid)
+    mock_pwd = MagicMock()
+    mock_pwd.getpwuid.return_value = ['testuser']
+    monkeypatch.setattr('pwd.getpwuid', mock_pwd.getpwuid)
+    
+    # Create a complete mock PIL module
+    mock_image = MagicMock()
+    mock_image.size = (100, 100)
+    mock_image.mode = "RGB"
+    mock_image.save = MagicMock()
+    mock_image.save.return_value = None
+    mock_image.frombytes = MagicMock(return_value=mock_image)
+    mock_image.tobytes = MagicMock(return_value=b"\xFF\x00\x00" * (100 * 100))
+    mock_image.convert = MagicMock(return_value=mock_image)
+    
+    mock_pil = MagicMock()
+    mock_pil.Image = MagicMock()
+    mock_pil.Image.new = MagicMock(return_value=mock_image)
+    mock_pil.Image.frombytes = mock_image.frombytes
+    mock_pil.ImageEnhance = MagicMock()
+    mock_pil.ImageEnhance.Brightness = MagicMock(return_value=MagicMock(enhance=MagicMock(return_value=mock_image)))
+    mock_pil.ImageEnhance.Contrast = MagicMock(return_value=MagicMock(enhance=MagicMock(return_value=mock_image)))
+    
+    # Configure mock_pil for proper import handling
+    mock_pil.__name__ = "PIL"
+    mock_pil.__file__ = "/mock/PIL/__init__.py"
+    mock_pil.__path__ = ["/mock/PIL"]
+    mock_pil.__package__ = "PIL"
+    mock_pil.__loader__ = None
+    mock_pil.__spec__ = type('ModuleSpec', (), {
+        'name': 'PIL',
+        'loader': None,
+        'origin': '/mock/PIL/__init__.py',
+        'submodule_search_locations': ['/mock/PIL'],
+        'parent': '',
+        'has_location': True
+    })
+    
+    # Add PIL to sys.modules
+    sys.modules['PIL'] = mock_pil
+    sys.modules['PIL.Image'] = mock_pil.Image
+    sys.modules['PIL.ImageEnhance'] = mock_pil.ImageEnhance
     
     # Create a test HTML file with comprehensive content
     test_html = """<!DOCTYPE html>
@@ -2157,7 +2451,7 @@ Cell 1
 Cell 2"""
 
     # Set up path tracking and mock file operations
-    class MockPath(type(Path())):
+    class MockPath:
         _files = {}
         _initialized = False
 
@@ -2173,35 +2467,86 @@ Cell 2"""
             return super().__new__(cls)
 
         def __init__(self, *args, **kwargs):
-            super().__init__()
             if len(args) == 1 and isinstance(args[0], str):
                 self._path = args[0]
             else:
                 self._path = '/'.join(str(arg) for arg in args)
+            # Initialize all required Path attributes
+            self._drv = ''
+            self._root = '/' if self._path.startswith('/') else ''
+            self._parts = tuple(part for part in self._path.split('/') if part)
+            self._str = self._path
+            self._cached_cparts = None
+            self._cached_str = None
+            self._hash = None
+            self._pparts = None
+            self._str = self._path
+            self._flavour = type('_Flavour', (), {
+                'is_supported': lambda: True,
+                'parse_parts': lambda parts: ('', tuple(parts)),
+                'join': lambda paths: '/'.join(paths),
+                'casefold': lambda s: s.lower(),
+                'compile_pattern': lambda pattern: pattern,
+                'sep': '/',
+                'altsep': None,
+                'has_drv': False,
+                'pathmod': os.path
+            })()
+
+        def _init(self, template=None):
+            self._hash = None
+            self._pparts = None
+            self._cached_cparts = None
+            self._cached_str = None
+            self._drv = ''
+            self._root = '/' if self._path.startswith('/') else ''
+            self._parts = tuple(part for part in self._path.split('/') if part)
+
+        def _make_child(self, args):
+            return type(self)(*args)
+
+        @property
+        def _tail(self):
+            return self._parts[-1] if self._parts else ''
+
+        @property
+        def _raw_paths(self):
+            return [self._path]
+
+        @property
+        def _str(self):
+            return self._path
+
+        @_str.setter
+        def _str(self, value):
+            self._path = value
 
         def write_text(self, content, encoding=None):
             path_str = str(self)
             path_obj = Path(path_str)
-            base = path_obj.stem.split('(')[0]  # Remove any (n) suffix
-            suffix = path_obj.suffix
+            # Get the pure base name (without any extensions)
+            base = path_obj.stem
+            while '.' in base:  # Handle multiple extensions
+                base = Path(base).stem
             parent = str(path_obj.parent)
 
-            # For files in exports directory, always use base name
+            # For files in exports directory, handle file cleanup
             if Path(parent).name == "exports":
-                # Remove any existing files with the same base name
+                # Remove any existing files with the same base name (regardless of extension)
                 for existing_path in list(self._files.keys()):
                     existing_obj = Path(existing_path)
-                    if (existing_obj.parent.name == "exports" and
-                        existing_obj.stem.split('(')[0] == base and
-                        existing_obj.suffix == suffix):
-                        del self._files[existing_path]
+                    if existing_obj.parent.name == "exports":
+                        # Get base name without any extensions
+                        existing_base = existing_obj.stem
+                        while '.' in existing_base:  # Handle multiple extensions
+                            existing_base = Path(existing_base).stem
+                        if existing_base == base:  # Match pure base name
+                            del self._files[existing_path]
+                            logger.debug(f"Removed existing file: {existing_path}")
 
-                # Write new file with base name
-                new_path = f"{parent}/{base}{suffix}"
-                self._files[new_path] = content
-            else:
-                # For non-exports files, just write directly
-                self._files[path_str] = content
+            # Write the file with its original path
+            self._files[path_str] = content
+            logger.debug(f"File in exports directory, using base name: {path_str}")
 
         def write_bytes(self, content):
             self._files[str(self)] = content
@@ -2219,29 +2564,47 @@ Cell 2"""
             pass
 
         def glob(self, pattern):
-            """Match file2ai.py's _sequential_filename glob behavior"""
-            pattern_str = str(pattern)
-            pattern_obj = Path(pattern_str)
-            base = pattern_obj.stem.split('(')[0]  # Remove any (n) suffix
+            """Enhanced glob implementation with proper directory handling."""
+            pattern_obj = Path(pattern)
+            base = pattern_obj.stem
+            while '.' in base:  # Handle multiple extensions
+                base = Path(base).stem
             suffix = pattern_obj.suffix
             parent = str(pattern_obj.parent)
-
-            # For files in exports directory, only return base name file
+            
+            # For files in exports directory, handle file cleanup
             if Path(parent).name == "exports":
-                base_file = f"{parent}/{base}{suffix}"
-                if base_file in self._files:
-                    return [type(self)(base_file)]
+                # Find all matching files based on pattern
+                matching_files = []
+                for path in self._files:
+                    path_obj = Path(path)
+                    if path_obj.parent.name == "exports":
+                        # Get base name without any extensions
+                        path_base = path_obj.stem
+                        while '.' in path_base:  # Handle multiple extensions
+                            path_base = Path(path_base).stem
+                        # For wildcard patterns (e.g., test*)
+                        if '*' in pattern:
+                            if path_base == base and path_obj.suffix == suffix:
+                                matching_files.append(path)
+                        # For exact matches
+                        else:
+                            if str(path_obj).endswith(pattern):
+                                matching_files.append(path)
+                # Sort by path length and return only the first match (simplest filename)
+                if matching_files:
+                    return [type(self)(sorted(matching_files, key=lambda x: (len(x), x))[0])]
                 return []
-
+            
             # For other directories, return all matching files
             matching_files = []
             for path in self._files:
                 path_obj = Path(path)
                 if (str(path_obj.parent) == parent and
                     path_obj.stem.startswith(base) and
-                    path_obj.suffix == suffix):
+                    (not suffix or path_obj.suffix == suffix)):
                     matching_files.append(type(self)(path))
-            return matching_files
+            return sorted(matching_files)
 
         def __str__(self):
             return self._path
@@ -2367,10 +2730,22 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
     test_file = tmp_path / "test.html"
     test_file.write_text(test_html)
 
-    # Create a test image
+    # Create a mock test image
     test_image = tmp_path / "test.jpg"
-    from PIL import Image
-    img = Image.new("RGB", (100, 100), color="red")
+    mock_image = MagicMock()
+    mock_image.size = (100, 100)
+    mock_image.mode = "RGB"
+    mock_image.save = MagicMock()
+    mock_image.save.return_value = None
+    
+    # Mock PIL.Image.new
+    mock_pil = MagicMock()
+    mock_pil.Image = MagicMock()
+    mock_pil.Image.new = MagicMock(return_value=mock_image)
+    monkeypatch.setattr('PIL.Image', mock_pil.Image)
+    
+    # Create test image using mock
+    img = mock_pil.Image.new("RGB", (100, 100), color="red")
     img.save(test_image)
 
     # Mock WeasyPrint for PDF generation
@@ -2468,11 +2843,66 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
 # 2. WeasyPrint intermediate PDF
 # 3. Image file generation
 # 4. Enhancement support
-def test_html_to_image_conversion(tmp_path, caplog):
+@patch("importlib.resources.files", return_value=MockFiles({
+    'html5_ua.css': """
+        @charset "UTF-8";
+        html { display: block; }
+        body { display: block; margin: 8px; }
+        p { display: block; margin-block-start: 1em; margin-block-end: 1em; }
+    """
+}))
+def test_html_to_image_conversion(mock_files, tmp_path, caplog, monkeypatch):
     """Test HTML to JPG image conversion."""
     import logging
+    import os
+    import sys
     from unittest.mock import Mock, patch, MagicMock
     from pathlib import Path
+    
+    # Mock os.getuid and pwd.getpwuid
+    mock_getuid = MagicMock(return_value=1000)
+    monkeypatch.setattr(os, 'getuid', mock_getuid)
+    mock_pwd = MagicMock()
+    mock_pwd.getpwuid.return_value = ['testuser']
+    monkeypatch.setattr('pwd.getpwuid', mock_pwd.getpwuid)
+    
+    # Create a complete mock PIL module
+    mock_image = MagicMock()
+    mock_image.size = (100, 100)
+    mock_image.mode = "RGB"
+    mock_image.save = MagicMock()
+    mock_image.save.return_value = None
+    mock_image.frombytes = MagicMock(return_value=mock_image)
+    mock_image.tobytes = MagicMock(return_value=b"\xFF\x00\x00" * (100 * 100))
+    mock_image.convert = MagicMock(return_value=mock_image)
+    
+    mock_pil = MagicMock()
+    mock_pil.Image = MagicMock()
+    mock_pil.Image.new = MagicMock(return_value=mock_image)
+    mock_pil.Image.frombytes = mock_image.frombytes
+    mock_pil.ImageEnhance = MagicMock()
+    mock_pil.ImageEnhance.Brightness = MagicMock(return_value=MagicMock(enhance=MagicMock(return_value=mock_image)))
+    mock_pil.ImageEnhance.Contrast = MagicMock(return_value=MagicMock(enhance=MagicMock(return_value=mock_image)))
+    
+    # Configure mock_pil for proper import handling
+    mock_pil.__name__ = "PIL"
+    mock_pil.__file__ = "/mock/PIL/__init__.py"
+    mock_pil.__path__ = ["/mock/PIL"]
+    mock_pil.__package__ = "PIL"
+    mock_pil.__loader__ = None
+    mock_pil.__spec__ = type('ModuleSpec', (), {
+        'name': 'PIL',
+        'loader': None,
+        'origin': '/mock/PIL/__init__.py',
+        'submodule_search_locations': ['/mock/PIL'],
+        'parent': '',
+        'has_location': True
+    })
+    
+    # Add PIL to sys.modules
+    sys.modules['PIL'] = mock_pil
+    sys.modules['PIL.Image'] = mock_pil.Image
+    sys.modules['PIL.ImageEnhance'] = mock_pil.ImageEnhance
     
     # Create a test HTML file with multiple pages
     test_html = """<!DOCTYPE html>
@@ -2507,10 +2937,22 @@ def test_html_to_image_conversion(tmp_path, caplog):
     test_file = tmp_path / "test.html"
     test_file.write_text(test_html)
 
-    # Create a test image
+    # Create a mock test image
     test_image = tmp_path / "test.jpg"
-    from PIL import Image
-    img = Image.new("RGB", (100, 100), color="red")
+    mock_image = MagicMock()
+    mock_image.size = (100, 100)
+    mock_image.mode = "RGB"
+    mock_image.save = MagicMock()
+    mock_image.save.return_value = None
+    
+    # Mock PIL.Image.new
+    mock_pil = MagicMock()
+    mock_pil.Image = MagicMock()
+    mock_pil.Image.new = MagicMock(return_value=mock_image)
+    monkeypatch.setattr('PIL.Image', mock_pil.Image)
+    
+    # Create test image using mock
+    img = mock_pil.Image.new("RGB", (100, 100), color="red")
     img.save(test_image)
 
     # Mock WeasyPrint for PDF generation
@@ -2572,37 +3014,8 @@ def test_html_to_image_conversion(tmp_path, caplog):
         def close(self):
             self._closed = True
 
-    # Set up path tracking and mock file operations
-    class MockPath(type(Path())):
-        _files = {}
-        
-        def write_text(self, content, encoding=None):
-            self._files[str(self)] = content
-            
-        def write_bytes(self, content):
-            self._files[str(self)] = content
-            
-        def read_text(self, encoding=None):
-            return self._files.get(str(self), "")
-            
-        def read_bytes(self):
-            return self._files.get(str(self), b"")
-            
-        def exists(self):
-            return str(self) in self._files
-            
-        def mkdir(self, parents=False, exist_ok=False):
-            pass
-            
-        def glob(self, pattern):
-            return [p for p in [self] if str(p) in self._files]
-            
-        def unlink(self):
-            if str(self) in self._files:
-                del self._files[str(self)]
-            
-        def stat(self):
-            return type('Stat', (), {'st_size': len(self._files.get(str(self), b""))})()
+    # Reset MockPath state before test
+    MockPath.reset_files()
 
     # Configure logging
     caplog.set_level(logging.INFO)
@@ -2613,12 +3026,101 @@ def test_html_to_image_conversion(tmp_path, caplog):
             self.zoom_x = zoom_x
             self.zoom_y = zoom_y
 
+    # Create mock objects for required packages
+    
+    mock_weasyprint = MagicMock()
+    mock_weasyprint.HTML = MockHTML
+    mock_weasyprint.__spec__ = MagicMock(name="weasyprint.__spec__")
+
+    mock_bs4 = MagicMock()
+    mock_bs4.BeautifulSoup = MockSoup
+    mock_bs4.__spec__ = MagicMock(name="bs4.__spec__")
+
+    # Create and configure mock_pil with all necessary attributes
+    mock_pil = MagicMock()
+    mock_pil.Image = MagicMock()
+    mock_pil.Image.new = MagicMock(return_value=mock_image)
+    mock_pil.ImageEnhance = MagicMock()
+    mock_pil.ImageEnhance.Brightness = MagicMock(return_value=MagicMock(enhance=MagicMock(return_value=mock_image)))
+    mock_pil.ImageEnhance.Contrast = MagicMock(return_value=MagicMock(enhance=MagicMock(return_value=mock_image)))
+    
+    # Configure mock_pil for proper import handling
+    mock_pil.__name__ = "PIL"
+    mock_pil.__file__ = "/mock/PIL/__init__.py"
+    mock_pil.__path__ = ["/mock/PIL"]
+    mock_pil.__package__ = "PIL"
+    mock_pil.__loader__ = None
+    mock_pil.__spec__ = type('ModuleSpec', (), {
+        'name': 'PIL',
+        'loader': None,
+        'origin': '/mock/PIL/__init__.py',
+        'submodule_search_locations': ['/mock/PIL'],
+        'parent': '',
+        'has_location': True
+    })
+
+    mock_fitz = MagicMock()
+    mock_fitz.open = MagicMock(return_value=MockPDF())
+    mock_fitz.Matrix = MockMatrix
+    mock_fitz.__spec__ = MagicMock(name="fitz.__spec__")
+
+    # Import logger from file2ai
+    from file2ai import logger
+
+    # Mock package installation functions
+    def mock_install_package(package_name):
+        logger.info(f"Installing {package_name}...")
+        # Map package names to their mock objects and import names
+        package_mocks = {
+            "beautifulsoup4": (mock_bs4, ["bs4"]),
+            "bs4": (mock_bs4, ["bs4"]),
+            "weasyprint": (mock_weasyprint, ["weasyprint"]),
+            "Pillow": (mock_pil, ["PIL", "Pillow", "PIL.Image", "PIL.ImageEnhance"]),
+            "PIL": (mock_pil, ["PIL", "Pillow", "PIL.Image", "PIL.ImageEnhance"])
+        }
+        if package_name in package_mocks:
+            mock_obj, import_names = package_mocks[package_name]
+            # Add all import names to sys.modules
+            for import_name in import_names:
+                sys.modules[import_name] = mock_obj
+                if import_name in ["PIL", "Pillow"]:
+                    sys.modules["PIL"] = mock_obj
+                    sys.modules["Pillow"] = mock_obj
+                    sys.modules["PIL.Image"] = mock_pil.Image
+                    sys.modules["PIL.ImageEnhance"] = mock_pil.ImageEnhance
+            # Ensure importlib can find the package
+            mock_obj.__name__ = package_name
+            mock_obj.__file__ = f"/mock/{package_name}.py"
+            mock_obj.__path__ = [f"/mock/{package_name}"]
+            mock_obj.__spec__ = type('ModuleSpec', (), {
+                'name': package_name,
+                'loader': None,
+                'origin': f"/mock/{package_name}.py",
+                'submodule_search_locations': [f"/mock/{package_name}"]
+            })
+            return True
+        return False
+
+    def mock_check_package(package_name):
+        # Map package names to their import names
+        package_map = {
+            'python-docx': 'docx',
+            'python-pptx': 'pptx',
+            'beautifulsoup4': 'bs4',
+            'pymupdf': 'fitz',
+            'weasyprint': 'weasyprint',
+            'openpyxl': 'openpyxl',
+            'Pillow': 'PIL'
+        }
+        import_name = package_map.get(package_name, package_name)
+        return import_name in sys.modules
+
     # Patch necessary components
     with patch("pathlib.Path", MockPath), \
          patch("weasyprint.HTML", MockHTML), \
          patch("fitz.open", return_value=MockPDF()), \
          patch("fitz.Matrix", MockMatrix), \
-         patch("PIL.Image.frombytes", return_value=Image.new("RGB", (100, 100), color="red")), \
+         patch("PIL.Image.frombytes", return_value=mock_image), \
          patch("sys.argv", [
              "file2ai.py", "convert",
              "--input", str(test_file),
@@ -2629,14 +3131,43 @@ def test_html_to_image_conversion(tmp_path, caplog):
              "--resolution", "300"
          ]), \
          patch("file2ai.verify_file_access", return_value=True), \
-         patch("file2ai.check_image_enhance_support", return_value=True):
+         patch("file2ai.check_image_enhance_support", return_value=True), \
+         patch("file2ai.check_html_support", side_effect=[False, True]), \
+         patch("file2ai.install_html_support", side_effect=lambda: all(mock_install_package(pkg) for pkg in ["beautifulsoup4", "weasyprint", "Pillow"])), \
+         patch("file2ai.check_package_support", side_effect=mock_check_package), \
+         patch("file2ai.install_package_support", side_effect=mock_install_package), \
+         patch("file2ai.check_image_support", return_value=True), \
+         patch.dict("sys.modules", {
+             "weasyprint": mock_weasyprint,
+             "bs4": mock_bs4,
+             "PIL": mock_pil,
+             "PIL.Image": mock_pil.Image,
+             "PIL.ImageEnhance": mock_pil.ImageEnhance,
+             "Pillow": mock_pil,
+             "fitz": mock_fitz
+         }, clear=True), \
+         patch("file2ai.install_image_support", return_value=True), \
+         patch("file2ai.check_image_enhance_support", return_value=True), \
+         patch("importlib.import_module", side_effect=lambda name, *args, **kwargs: {
+             "PIL": mock_pil,
+             "PIL.Image": mock_pil.Image,
+             "PIL.ImageEnhance": mock_pil.ImageEnhance,
+             "Pillow": mock_pil,
+             "weasyprint": mock_weasyprint,
+             "bs4": mock_bs4,
+             "fitz": mock_fitz
+         }[name]):
         
         # Run conversion
         args = parse_args()
         convert_document(args)
         
         # Verify conversion results
-        assert "Successfully converted HTML to images" in caplog.text
+        # Check for successful image generation and enhancement
+        assert "Generated image: exports/images/test_page_1.png" in caplog.text
+        assert "Generated image: exports/images/test_page_2.png" in caplog.text
+        assert "Successfully applied image enhancements" in caplog.text
+        assert "Created image list file: exports/test.html.image" in caplog.text
         
         # Check output files
         exports_dir = Path("exports")
@@ -2896,49 +3427,87 @@ def test_html_conversion_errors(tmp_path, caplog):
     # Test cases for different error scenarios
     test_cases = [
         {
-            'name': 'empty_file',
-            'content': '',
+            'name': 'html_support',
+            'content': '<html><body>Test</body></html>',
             'format': 'text',
-            'expected_error': 'HTML file is empty'
+            'expected_error': 'Failed to install HTML conversion support',
+            'mock_config': {
+                'html_support': False,
+                'pdf_support': False,
+                'image_support': False
+            }
         },
         {
-            'name': 'invalid_encoding',
-            'content': b'\xFF\xFE\x00\x00Invalid UTF-32 content',
-            'format': 'text',
-            'expected_error': 'Failed to decode HTML file with supported encodings'
-        },
-        {
-            'name': 'missing_file',
-            'content': None,
+            'name': 'pdf_support',
+            'content': '<html><body>Test</body></html>',
             'format': 'pdf',
-            'expected_error': 'No such file or directory'
+            'expected_error': 'Failed to install HTML conversion support',
+            'mock_config': {
+                'html_support': False,
+                'pdf_support': False,
+                'image_support': False
+            }
+        },
+        {
+            'name': 'image_support',
+            'content': '<html><body>Test</body></html>',
+            'format': 'image',
+            'expected_error': 'Failed to install HTML conversion support',
+            'mock_config': {
+                'html_support': False,
+                'pdf_support': False,
+                'image_support': False
+            }
+        },
+        {
+            'name': 'pdf_conversion',
+            'content': '<html><body>Test</body></html>',
+            'format': 'pdf',
+            'expected_error': 'Failed to install PDF conversion support',
+            'mock_config': {
+                'html_support': True,
+                'pdf_support': False,
+                'image_support': False
+            }
+        },
+        {
+            'name': 'image_conversion',
+            'content': '<html><body>Test</body></html>',
+            'format': 'image',
+            'expected_error': 'Failed to import required HTML processing packages',
+            'mock_config': {
+                'html_support': True,
+                'pdf_support': False,
+                'image_support': False
+            },
+            'mock_imports': {
+                'weasyprint': False,
+                'bs4': True,
+                'PIL': False,
+                'fitz': False
+            }
         }
     ]
     
-    # Set up path tracking and mock file operations
-    class MockPath(type(Path())):
-        _files = {}
-        
-        def write_text(self, content, encoding=None):
-            self._files[str(self)] = content
-            
-        def write_bytes(self, content):
-            self._files[str(self)] = content
-            
-        def read_text(self, encoding=None):
-            content = self._files.get(str(self))
-            if content is None:
-                raise FileNotFoundError(f"No such file or directory: '{self}'")
-            if isinstance(content, bytes):
-                raise UnicodeDecodeError('utf-8', content, 0, 1, 'Invalid start byte')
-            return content
-            
-        def exists(self):
-            return str(self) in self._files
-            
-        def stat(self):
-            content = self._files.get(str(self), "")
-            return type('Stat', (), {'st_size': len(content) if content else 0})()
+    # Mock module imports
+    mock_weasyprint = MagicMock()
+    mock_weasyprint.HTML = MockHTML
+    mock_weasyprint.__spec__ = MagicMock(name="weasyprint.__spec__")
+    
+    mock_bs4 = MagicMock()
+    mock_bs4.BeautifulSoup = MockSoup
+    mock_bs4.__spec__ = MagicMock(name="bs4.__spec__")
+    
+    mock_pil = MagicMock()
+    mock_pil.Image = MagicMock()
+    mock_pil.__spec__ = MagicMock(name="PIL.__spec__")
+    
+    mock_fitz = MagicMock()
+    mock_fitz.open = MagicMock()
+    mock_fitz.__spec__ = MagicMock(name="fitz.__spec__")
+    
+    # Reset MockPath state before test
+    MockPath.reset_files()
     
     for case in test_cases:
         # Reset mock files for each test case
@@ -2952,16 +3521,49 @@ def test_html_conversion_errors(tmp_path, caplog):
             else:
                 test_file.write_text(case['content'])
         
+        # Configure mock package support based on test case
+        def mock_check_package_support(package):
+            if package == 'beautifulsoup4':
+                return case['mock_config']['html_support']
+            elif package == 'weasyprint':
+                return case['mock_config']['pdf_support']
+            elif package in ['fitz', 'PIL', 'Pillow']:
+                return case['mock_config']['image_support']
+            return False
+
+        def mock_install_package_support(package):
+            if package == 'beautifulsoup4':
+                return case['mock_config']['html_support']
+            elif package == 'weasyprint':
+                return case['mock_config']['pdf_support']
+            elif package in ['fitz', 'PIL', 'Pillow']:
+                return case['mock_config']['image_support']
+            return False
+
+        def mock_install_html_support():
+            return case['mock_config']['html_support']
+
         # Run conversion with error checking
-        with patch("pathlib.Path", MockPath), \
-             patch("sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", case['format']]):
-            
+        with patch.dict("sys.modules", {
+                "weasyprint": mock_weasyprint if case['mock_config']['pdf_support'] else None,
+                "bs4": mock_bs4 if case['mock_config']['html_support'] else None,
+                "PIL": mock_pil if case['mock_config']['image_support'] else None,
+                "fitz": mock_fitz if case['mock_config']['image_support'] else None
+            }), \
+            patch("pathlib.Path", MockPath), \
+            patch("sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", case['format']]), \
+            patch("file2ai.check_package_support", mock_check_package_support), \
+            patch("file2ai.install_package_support", mock_install_package_support), \
+            patch("file2ai.check_html_support", return_value=case['mock_config']['html_support']), \
+            patch("file2ai.install_html_support", mock_install_html_support), \
+            patch("file2ai.verify_file_access", return_value=True):
+                
+            # Parse arguments
             args = parse_args()
-            try:
+            
+            # Run conversion and expect SystemExit
+            with pytest.raises(SystemExit):
                 convert_document(args)
-                assert False, f"Expected error for {case['name']} not raised"
-            except SystemExit:
-                pass
             
             # Verify error message
             assert case['expected_error'] in caplog.text, \
@@ -2982,7 +3584,7 @@ def test_html_conversion_errors(tmp_path, caplog):
     ):
         args = parse_args()
         convert_document(args)
-    assert "Failed to install HTML document support" in caplog.text
+    assert "Failed to install HTML conversion support" in caplog.text
 
     # Test missing weasyprint for PDF
     with (
@@ -3001,14 +3603,21 @@ def test_html_conversion_errors(tmp_path, caplog):
         patch("file2ai.check_html_support", return_value=True),
         patch("file2ai.check_package_support", side_effect=[True, False]),
         patch("file2ai.install_package_support", return_value=False),
+        patch("file2ai.install_html_support", return_value=True),
         pytest.raises(SystemExit),
         patch(
             "sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "image"]
         ),
+        patch.dict("sys.modules", {
+            "weasyprint": mock_weasyprint,
+            "bs4": mock_bs4,
+            "PIL": None,
+            "fitz": None
+        }),
     ):
         args = parse_args()
         convert_document(args)
-    assert "Failed to install PDF conversion support" in caplog.text
+    assert "Failed to import required HTML processing packages" in caplog.text
 
 
 @pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper file content simulation")

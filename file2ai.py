@@ -709,20 +709,16 @@ def _sequential_filename(output_path: Path) -> Path:
     suffix = output_path.suffix
     parent = output_path.parent
 
-    # For files in exports directory, always use base name and remove existing files
+    # For files in exports directory, always use base name and remove ALL existing files with same base name
     if parent.name == "exports":
-        # Remove any existing files with the same base name
-        for existing_file in list(parent.glob(f"{base}{suffix}")):
+        # Remove any existing files with the same base name, regardless of extension
+        for existing_file in list(parent.glob(f"{base}*")):
             try:
-                existing_file.unlink()
-                logger.debug(f"Removed existing file: {existing_file}")
-            except OSError as e:
-                logger.warning(f"Failed to remove existing file {existing_file}: {e}")
-        
-        for existing_file in list(parent.glob(f"{base}(*){suffix}")):
-            try:
-                existing_file.unlink()
-                logger.debug(f"Removed existing file: {existing_file}")
+                # Get the pure base name without any extensions
+                existing_base = existing_file.stem.split('(')[0]
+                if existing_base == base:
+                    existing_file.unlink()
+                    logger.debug(f"Removed existing file: {existing_file}")
             except OSError as e:
                 logger.warning(f"Failed to remove existing file {existing_file}: {e}")
         
@@ -1748,12 +1744,24 @@ def convert_document(args: argparse.Namespace) -> None:
     # Verify file exists and is accessible (skip for mocked tests)
     verify_file_access(input_path)
 
+    # Get input file extension and base name
+    input_extension = input_path.suffix.lower()
+    base_name = input_path.stem
+    # For files with multiple extensions (e.g., test.html.text), get the true base name
+    while '.' in base_name:
+        base_name = Path(base_name).stem
+
     # Determine output path
     if args.output:
         output_path = Path(args.output)
     else:
-        # Use input filename with original extension plus format
-        output_path = input_path.with_suffix(f"{input_path.suffix}.{args.format}")
+        # For HTML/MHTML files being converted to text, use a consistent extension
+        if input_extension in [".html", ".htm", ".mhtml", ".mht"] and args.format == "text":
+            # Use base name with .text extension, strip any existing extensions
+            output_path = Path(f"{base_name}.text")
+        else:
+            # Use base name with format extension
+            output_path = Path(f"{base_name}.{args.format}")
 
     # Ensure exports directory exists
     exports_dir = Path(EXPORTS_DIR)
@@ -1763,8 +1771,20 @@ def convert_document(args: argparse.Namespace) -> None:
     if exports_dir not in output_path.parents:
         output_path = exports_dir / output_path.name
 
-    # Ensure we don't overwrite existing files
-    output_path = _sequential_filename(output_path)
+    # For HTML to text conversion, ensure we use the simplest filename
+    if input_extension in [".html", ".htm", ".mhtml", ".mht"] and args.format == "text":
+        # Remove any existing files with the same base name
+        for existing_file in list(exports_dir.glob(f"{base_name}*.text")):
+            try:
+                existing_file.unlink()
+                logger.debug(f"Removed existing file: {existing_file}")
+            except OSError as e:
+                logger.warning(f"Failed to remove existing file {existing_file}: {e}")
+        # Don't use sequential filename for HTML to text conversion
+        pass
+    else:
+        # Ensure we don't overwrite existing files for other formats
+        output_path = _sequential_filename(output_path)
 
     input_extension = input_path.suffix.lower()
     output_format = args.format.lower()
@@ -2277,13 +2297,30 @@ def convert_document(args: argparse.Namespace) -> None:
         # Verify file access and content
         verify_file_access(input_path)
         
-        # Check and install HTML support
-        if not check_html_support():
-            logger.info("Installing HTML conversion support...")
-            if not install_html_support():
-                logger.error("Failed to install HTML conversion support")
-                sys.exit(1)
-            logger.info("HTML conversion support installed successfully")
+        # For PDF and image output, we need HTML support first
+        if output_format in ["pdf", "image"]:
+            if not check_html_support():
+                logger.info("Installing HTML conversion support...")
+                if not install_html_support():
+                    logger.error("Failed to install HTML conversion support")
+                    sys.exit(1)
+                logger.info("HTML conversion support installed successfully")
+
+            # For PDF output, we need weasyprint
+            if output_format == "pdf" and not check_package_support("weasyprint"):
+                logger.info("Installing PDF conversion support...")
+                if not install_package_support("weasyprint"):
+                    logger.error("Failed to install PDF conversion support")
+                    sys.exit(1)
+                logger.info("PDF conversion support installed successfully")
+        else:
+            # For text output, we only need HTML support
+            if not check_html_support():
+                logger.info("Installing HTML conversion support...")
+                if not install_html_support():
+                    logger.error("Failed to install HTML conversion support")
+                    sys.exit(1)
+                logger.info("HTML conversion support installed successfully")
 
         # Import required packages
         try:
@@ -2322,6 +2359,9 @@ def convert_document(args: argparse.Namespace) -> None:
                 text_content = soup.get_text(separator='\n', strip=True)
                 if not text_content.strip():
                     logger.warning("No text content found in HTML")
+                
+                # For HTML to text conversion, ensure we use a consistent output path
+                output_path = exports_dir / f"{base_name}.text"
                 output_path.write_text(text_content)
                 logger.info(f"Successfully converted HTML to text: {output_path}")
                 return
