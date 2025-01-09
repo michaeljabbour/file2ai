@@ -310,11 +310,22 @@ class MockPath(type(Path())):
         # Add drive and root attributes for Windows compatibility
         self._drv = ""  # No drive letter on Unix
         self._root = "/" if self._path.startswith("/") else ""  # Root path if absolute
+        # Add additional attributes needed by pathlib.Path
+        self._str = self._path
+        self._hash = hash(self._path)
+        self._cached_cparts = None  # For caching parsed components
+        self._closed = True  # File-like object compatibility
 
     def _load_parts(self):
         """Load the parts of the path."""
-        # Parts are already loaded in __init__
-        pass
+        # This method is called by pathlib.Path to parse the path components
+        if not hasattr(self, '_raw_paths'):
+            self._raw_paths = [self._path] if hasattr(self, '_path') else []
+        if not hasattr(self, '_parts'):
+            self._parts = tuple(self._path.split(os.sep)) if hasattr(self, '_path') and self._path else ()
+        if not hasattr(self, '_tail_cached'):
+            self._tail_cached = os.path.basename(self._path) if hasattr(self, '_path') and self._path else ""
+        self._loaded = True
 
     def _format(self):
         """Format the path string."""
@@ -493,11 +504,17 @@ class MockPath(type(Path())):
 
     @property
     def stem(self):
-        return Path(self._path).stem
+        """Return the filename without extension."""
+        if not hasattr(self, '_stem'):
+            self._stem = os.path.splitext(os.path.basename(self._path))[0] if self._path else ""
+        return self._stem
 
     @property
     def suffix(self):
-        return Path(self._path).suffix
+        """Return the file extension."""
+        if not hasattr(self, '_suffix'):
+            self._suffix = os.path.splitext(self._path)[1] if self._path else ""
+        return self._suffix
 
     @property
     def name(self):
@@ -2695,9 +2712,10 @@ Cell 2"""
 # 2. Local image path resolution
 # 3. PDF generation process
 # 4. Error handling coverage
-def test_html_to_pdf_conversion(tmp_path, caplog):
+def test_html_to_pdf_conversion(tmp_path, caplog, monkeypatch):
     """Test HTML to PDF conversion."""
     import logging
+    import sys
     from unittest.mock import Mock, patch, MagicMock
     from pathlib import Path
     
@@ -2730,21 +2748,47 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
     test_file = tmp_path / "test.html"
     test_file.write_text(test_html)
 
-    # Create a mock test image
-    test_image = tmp_path / "test.jpg"
+    # Set up comprehensive PIL mocking
     mock_image = MagicMock()
     mock_image.size = (100, 100)
     mock_image.mode = "RGB"
     mock_image.save = MagicMock()
     mock_image.save.return_value = None
-    
-    # Mock PIL.Image.new
+    mock_image.frombytes = MagicMock(return_value=mock_image)
+    mock_image.tobytes = MagicMock(return_value=b"\xFF\x00\x00" * (100 * 100))
+    mock_image.convert = MagicMock(return_value=mock_image)
+
+    # Create complete PIL mock module
     mock_pil = MagicMock()
     mock_pil.Image = MagicMock()
     mock_pil.Image.new = MagicMock(return_value=mock_image)
-    monkeypatch.setattr('PIL.Image', mock_pil.Image)
-    
-    # Create test image using mock
+    mock_pil.Image.frombytes = mock_image.frombytes
+    mock_pil.ImageEnhance = MagicMock()
+    mock_pil.ImageEnhance.Brightness = MagicMock(return_value=MagicMock(enhance=MagicMock(return_value=mock_image)))
+    mock_pil.ImageEnhance.Contrast = MagicMock(return_value=MagicMock(enhance=MagicMock(return_value=mock_image)))
+
+    # Configure mock_pil for proper import handling
+    mock_pil.__name__ = "PIL"
+    mock_pil.__file__ = "/mock/PIL/__init__.py"
+    mock_pil.__path__ = ["/mock/PIL"]
+    mock_pil.__package__ = "PIL"
+    mock_pil.__loader__ = None
+    mock_pil.__spec__ = type('ModuleSpec', (), {
+        'name': 'PIL',
+        'loader': None,
+        'origin': '/mock/PIL/__init__.py',
+        'submodule_search_locations': ['/mock/PIL'],
+        'parent': '',
+        'has_location': True
+    })
+
+    # Add PIL to sys.modules
+    sys.modules['PIL'] = mock_pil
+    sys.modules['PIL.Image'] = mock_pil.Image
+    sys.modules['PIL.ImageEnhance'] = mock_pil.ImageEnhance
+
+    # Create a mock test image
+    test_image = tmp_path / "test.jpg"
     img = mock_pil.Image.new("RGB", (100, 100), color="red")
     img.save(test_image)
 
