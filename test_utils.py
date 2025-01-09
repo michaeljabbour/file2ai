@@ -91,8 +91,6 @@ sys.modules['mimetypes'] = mock_mimetypes
 import openpyxl
 from pptx import Presentation
 from pptx.util import Inches as PptxInches
-from weasyprint import HTML
-
 logger = logging.getLogger(__name__)
 
 # Global progress bar for overall progress
@@ -156,14 +154,13 @@ def create_test_files(test_dir: str) -> None:
              leave=False,
              bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}') as pbar:
         
-        # Create HTML and PDF
+        # Create HTML file
         html_path = test_path / "test.html"
         html_content = """<!DOCTYPE html>
 <html><body><h1>Test Document</h1>
 <p>This is a test document created for file2ai testing.</p>
 </body></html>"""
         html_path.write_text(html_content)
-        HTML(string=html_content).write_pdf(str(test_path / "test.pdf"))
         pbar.update(1)
         
         # Create DOCX

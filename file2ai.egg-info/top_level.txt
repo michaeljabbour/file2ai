@@ -1,5 +1,6 @@
 file2ai
 frontend
 images
+templates
 test_files
 test_upload

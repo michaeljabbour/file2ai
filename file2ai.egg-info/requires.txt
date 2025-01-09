@@ -1,19 +1,28 @@
 gitpython>=3.1.40
 python-docx>=0.8.11
 openpyxl>=3.1.2
-weasyprint>=60.1
 beautifulsoup4>=4.12.2
-fpdf>=1.7.2
+reportlab>=4.0.9
 python-pptx>=0.6.21
 requests>=2.31.0
 pillow>=10.1.0
-pymupdf>=1.23.7
+pypdf>=4.0.1
 tqdm>=4.66.1
+markdown>=3.5.2
+html2text>=2020.1.16
+
+[docs]
+sphinx>=7.1.0
+sphinx-rtd-theme>=2.0.0
 
 [test]
 pytest>=7.0
 pytest-cov>=4.0
-pytest-mock
+pytest-mock>=3.10.0
+coverage>=7.4.0
+pytest-timeout>=2.2.0
 
 [web]
 flask>=2.0.0
+werkzeug>=3.0.0
+jinja2>=3.0.0

@@ -63,7 +63,9 @@ docs = [
 # - python-docx: Word documents
 # - openpyxl: Excel files
 # - python-pptx: PowerPoint files
-# - weasyprint: HTML/PDF conversion
+# - pypdf: PDF processing
+# - beautifulsoup4: HTML parsing
+# - html2text: HTML to text conversion
 
 [tool.setuptools]
 py-modules = ["file2ai"]  # Single-file module
