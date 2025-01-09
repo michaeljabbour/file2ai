@@ -70,6 +70,7 @@ class ConversionOptions(TypedDict, total=False):
     branch: Optional[str]
     token: Optional[str]
     local_dir: Optional[str]
+    subdir: Optional[str]
 
 
 class JobStatus(TypedDict):
@@ -84,6 +85,7 @@ from file2ai import EXPORTS_DIR, UPLOADS_DIR, FRONTEND_DIR, prepare_exports_dir
 
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path='')
 app.secret_key = os.urandom(24)  # For flash messages
+app.config['SERVER_NAME'] = 'localhost:8000'  # Configure Flask to use port 8000
 
 # Set up directories with proper permissions
 directories = {
@@ -95,6 +97,7 @@ directories = {
 # Ensure required directories exist with proper permissions
 prepare_exports_dir()  # Use the existing function from file2ai.py
 
+# Set up directories with proper permissions
 for name, path in directories.items():
     try:
         # Create directory with proper permissions
@@ -108,6 +111,20 @@ for name, path in directories.items():
     except Exception as e:
         logger.error(f"Failed to create {name} directory: {e}")
         sys.exit(1)
+for name, path in directories.items():
+    try:
+        # Create directory with proper permissions
+        path.mkdir(exist_ok=True, mode=0o755)
+        # Verify directory exists and is writable
+        if not path.exists():
+            raise IOError(f"Failed to create directory: {path}")
+        if not os.access(str(path), os.W_OK):
+            raise IOError(f"Directory not writable: {path}")
+        logger.info(f"Created/verified directory: {path}")
+    except Exception as e:
+        logger.error(f"Failed to create {name} directory: {e}")
+        sys.exit(1)
+>>>>>>> origin/main
 
 # Global job tracking
 conversion_jobs = {}
@@ -180,7 +197,8 @@ def process_job(
                 output_path = None
                 try:
                     # Save uploaded file
-                    input_path = Path(UPLOADS_DIR) / filename
+                    input_path = Path(UPLOADS_DIR) / filename  # Use constant from file2ai module
+>>>>>>> origin/main
                     # Read file content into memory first
                     file_content = file_data.read()
                     # Create and write to file
@@ -470,6 +488,21 @@ def serve_react(path):
 
 @app.route("/", methods=["POST"])
 def handle_api():
+<<<<<<< HEAD
+    """Handle API requests for file conversion and exports"""
+    # Debug logging
+    logger.info("Received API request")
+    logger.debug(f"Form data: {request.form}")
+    logger.debug(f"Files: {request.files}")
+    logger.debug(f"Headers: {request.headers}")
+||||||| 6c7bef8
+    """Handle API requests for file conversion and exports"""
+    # Debug logging
+    logger.info("Received API request")
+    print("Form data:", request.form)
+    print("Files:", request.files)
+    print("Headers:", request.headers)
+=======
     """Handle API requests for file conversion and exports.
     
     Accepts POST requests with the following parameters:
@@ -501,9 +534,10 @@ def handle_api():
     logger.debug("Form data: %s", request.form)
     logger.debug("Files: %s", request.files)
     logger.debug("Headers: %s", request.headers)
+>>>>>>> origin/main
     
     command = request.form.get("command", "export")
-    print("Command:", command)
+    logger.info(f"Processing command: {command}")
 
     # Create job
     job_id = str(uuid.uuid4())
@@ -521,6 +555,15 @@ def handle_api():
         if not request.files:
             return jsonify({"error": "No files selected"}), 400
 
+<<<<<<< HEAD
+        files = {f.filename: f for f in request.files.getlist("file") if f.filename}
+||||||| 6c7bef8
+        files = {
+            f.filename: f
+            for f in request.files.getlist("file")
+            if f.filename
+        }
+=======
         # Define security limits
         MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB limit
         ALLOWED_EXTENSIONS = {'.txt', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.html', '.htm'}
@@ -565,6 +608,7 @@ def handle_api():
                 
             files[f.filename] = f
             
+>>>>>>> origin/main
         if not files:
             return jsonify({"error": "No valid files selected"}), 400
 
@@ -573,21 +617,51 @@ def handle_api():
             pages=request.form.get("pages", ""),
             brightness=request.form.get("brightness", "1.0"),
             contrast=request.form.get("contrast", "1.0"),
+<<<<<<< HEAD
+            resolution=request.form.get("resolution", "300"),
+||||||| 6c7bef8
+            resolution=request.form.get("resolution", "300"),
+||||||| ccf8128
+        # Create job
+        job_id = str(uuid.uuid4())
+        conversion_jobs[job_id] = JobStatus(
+            status="queued",
+            progress=0,
+            errors=[],
+            start_time=datetime.now(),
+            output_files=[]
+=======
+        # Create job
+        job_id = str(uuid.uuid4())
+        conversion_jobs[job_id] = JobStatus(
+            status="queued", progress=0, errors=[], start_time=datetime.now(), output_files=[]
+>>>>>>> main
+=======
             resolution=request.form.get("resolution", "300")
+>>>>>>> origin/main
         )
 
         # Start conversion in background
+<<<<<<< HEAD
+        thread = threading.Thread(target=process_job, args=(job_id, command, files, options))
+||||||| 6c7bef8
+        thread = threading.Thread(
+            target=process_job,
+            args=(job_id, command, files, options)
+        )
+        thread.start()
+        return jsonify({"job_id": job_id})
+=======
         thread = threading.Thread(target=process_job, args=(job_id, command, files, options))
 
         thread.start()
         return jsonify({"job_id": job_id})
+>>>>>>> origin/main
 
     else:  # command == 'export'
         fmt = request.form.get("format", "text")
-        options = {
-            "format": fmt,
-            "subdir": request.form.get("subdir")  # Store subdir in options
-        }
+        options = ConversionOptions(format=fmt)
+        options["subdir"] = request.form.get("subdir")  # Store subdir in options
 
         # Add repository-specific options
         if repo_url := request.form.get("repo_url"):
@@ -630,12 +704,10 @@ def handle_api():
             }), 400
 
         # Start export in background
-        thread = threading.Thread(
-            target=process_job,
-            args=(job_id, command, files, options)
-        )
-        thread.start()
-        return jsonify({"job_id": job_id})
+        thread = threading.Thread(target=process_job, args=(job_id, command, files, options))
+
+    thread.start()
+    return jsonify({"job_id": job_id})
 
     return jsonify({"error": "Invalid command"}), 400
 

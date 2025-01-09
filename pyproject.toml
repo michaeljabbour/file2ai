@@ -45,6 +45,7 @@ test = [
 ]
 web = [
     "flask>=2.0.0",  # For web interface
+>>>>>>> origin/main
 ]
 
 [project.urls]

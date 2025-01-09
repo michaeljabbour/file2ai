@@ -76,9 +76,14 @@ clean_old_artifacts() {
     for dir in "${cleanup_dirs[@]}"; do
         if [ -e "$dir" ]; then
             log_info "Removing $dir..."
-            rm -rf "$dir" || {
+            rm -rf "$dir" 2>/dev/null || {
                 log_error "Failed to remove $dir"
-                return 1
+                # Try with sudo as fallback
+                sudo rm -rf "$dir" 2>/dev/null || {
+                    log_error "Failed to remove $dir even with sudo"
+                    return 1
+                }
+            }
             }
         fi
     done
@@ -420,9 +425,28 @@ launch_frontend() {
     fi
 }
 
+<<<<<<< HEAD
+# Terminal control functions
+save_cursor_position() {
+    printf "\033[s"  # Save cursor position
+}
+
+restore_cursor_position() {
+    printf "\033[u"  # Restore cursor position
+}
+
+clear_progress_line() {
+    printf "\033[1G\033[K"  # Move to beginning of line and clear it
+}
+
+# Show progress bar at the top
+||||||| 6c7bef8
+# Show progress bar
+=======
 #------------------------------------------------------------------------------
 # HELPER: SHOW OVERALL PROGRESS
 #------------------------------------------------------------------------------
+>>>>>>> origin/main
 show_progress() {
     local current="$1"
     local total="$2"
@@ -430,6 +454,16 @@ show_progress() {
     local percentage=$((current * 100 / total))
     local filled=$((width * current / total))
     local empty=$((width - filled))
+<<<<<<< HEAD
+    
+    # Save current position, move to start of progress line, show progress, restore position
+    save_cursor_position
+    printf "\033[1;1H\033[K"  # Move to top and clear line
+    printf "Progress: [%${filled}s%${empty}s] %d%%" "" "" "$percentage"
+    restore_cursor_position
+||||||| 6c7bef8
+    printf "\rProgress: [%${filled}s%${empty}s] %d%%" "" "" "$percentage"
+=======
 
     printf "\033[2K\r"
     printf "${GREEN}Overall Progress:${NC} ["
@@ -438,6 +472,7 @@ show_progress() {
     printf "] %d%%" "$percentage"
 
     [ "$current" -eq "$total" ] && echo
+>>>>>>> origin/main
 }
 
 #------------------------------------------------------------------------------
@@ -484,8 +519,19 @@ validate_outputs() {
 main() {
     local total_steps=10
     local current_step=0
+<<<<<<< HEAD
+    
+    # Clear screen and initialize progress bar area
+    clear
+    echo  # Leave blank line for progress bar
+    show_progress $current_step $total_steps
+||||||| 6c7bef8
+
+    show_progress $current_step $total_steps
+=======
 
     show_progress "$current_step" "$total_steps"
+>>>>>>> origin/main
 
     clean_old_artifacts
     ((current_step++)); show_progress "$current_step" "$total_steps"
