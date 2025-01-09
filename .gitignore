@@ -38,3 +38,4 @@ test.docx
 # OS-specific
 .DS_Store
 Thumbs.db
+*.egg-info/
