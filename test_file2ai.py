@@ -4,11 +4,268 @@ import subprocess
 import importlib.util
 import argparse
 import logging
+import io
+import os
 from pathlib import Path
 import sys
 from unittest.mock import patch, MagicMock, Mock
 
-# Common mock classes for PowerPoint tests
+# WeasyPrint default CSS for HTML rendering
+WEASYPRINT_DEFAULT_CSS = """
+/* WeasyPrint default CSS */
+@namespace url(http://www.w3.org/1999/xhtml);
+html, body { display: block; margin: 8px; }
+head { display: none }
+title { display: none }
+a { color: blue; text-decoration: underline }
+img { color: #888; max-width: 100% }
+table { display: table }
+thead { display: table-header-group }
+tbody { display: table-row-group }
+tr { display: table-row }
+td, th { display: table-cell }
+"""
+
+# Common mock classes for tests
+class MockResource:
+    """Mock resource for WeasyPrint's importlib.resources.files"""
+    def __init__(self, content):
+        self.content = content
+
+    def __truediv__(self, other):
+        return self
+
+    def read_text(self, encoding=None):
+        return self.content
+
+    def open(self, mode='r', *args, **kwargs):
+        if 'b' in mode:
+            return io.BytesIO(self.content.encode('utf-8'))
+        return io.StringIO(self.content)
+
+class MockFiles:
+    """Mock files for WeasyPrint's importlib.resources.files"""
+    def __init__(self, resources=None):
+        self.resources = resources or {'html5_ua.css': WEASYPRINT_DEFAULT_CSS}
+        # Add basic pyphen dictionary for text hyphenation
+        self.pyphen_dicts = {
+            'hyph_en_US.dic': 'ISO8859-1 en_US\nEXCEPTIONS\nhy-phen-ation\nLEFTHYPHENMIN 2\nRIGHTHYPHENMIN 2\nPATTERNS\n.hy1phen\n'
+        }
+
+    def __call__(self, package):
+        if package == 'pyphen.dictionaries':
+            self.resources = self.pyphen_dicts
+        return self
+
+    def __truediv__(self, path):
+        if path in self.resources:
+            return MockResource(self.resources[path])
+        return MockResource("")
+        
+    def iterdir(self):
+        """Mock directory iteration for pyphen package."""
+        return iter([MockPath(name) for name in self.resources.keys()])
+
+class StatResult:
+    """Mock stat result with proper mode flags."""
+    def __init__(self, mode, size):
+        self.st_mode = mode
+        self.st_size = size
+
+class MockPath(type(Path())):
+    """Mock Path implementation with proper file tracking"""
+    _files = {}
+    _initialized = False
+
+    @classmethod
+    def reset_files(cls):
+        cls._files = {}
+        cls._initialized = False
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._initialized:
+            cls.reset_files()
+            cls._initialized = True
+        return super().__new__(cls)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        # Initialize instance attributes
+        self._path = str(Path(*args)) if args else ""
+        self._raw_paths = [str(arg) for arg in args] if args else []
+        self._tail_cached = os.path.basename(self._path) if self._path else ""
+        self._parts = tuple(self._path.split(os.sep)) if self._path else ()
+        self._loaded = True  # Mark parts as loaded
+        # Add drive and root attributes for Windows compatibility
+        self._drv = ""  # No drive letter on Unix
+        self._root = "/" if self._path.startswith("/") else ""  # Root path if absolute
+
+    def _load_parts(self):
+        """Load the parts of the path."""
+        # Parts are already loaded in __init__
+        pass
+
+    def _format(self):
+        """Format the path string."""
+        return self._path
+
+    @property
+    def _parts_tuple(self):
+        """Return the parts tuple."""
+        return self._parts
+
+    def write_text(self, content, encoding=None):
+        self._files[self._path] = content
+
+    def write_bytes(self, content):
+        self._files[self._path] = content
+
+    def read_text(self, encoding=None):
+        if self._path not in self._files:
+            raise FileNotFoundError(f"No such file or directory: '{self}'")
+        content = self._files[self._path]
+        if isinstance(content, bytes):
+            raise UnicodeDecodeError('utf-8', content, 0, 1, 'Invalid start byte')
+        return content
+
+    def read_bytes(self):
+        if self._path not in self._files:
+            raise FileNotFoundError(f"No such file or directory: '{self}'")
+        return self._files[self._path]
+
+    def exists(self):
+        """Check if path exists (as file or directory)."""
+        # Check if it's a known directory
+        if self._path in ('test_files', 'exports') or self._path.endswith('/test_files') or self._path.endswith('/exports'):
+            return True
+        # Check if it's a parent directory of any existing file
+        for file_path in self._files:
+            if file_path.startswith(self._path + '/'):
+                return True
+        # Check if it's a known file
+        return self._path in self._files
+
+    def is_dir(self):
+        """Check if path is a directory."""
+        # Use the same directory detection logic as stat()
+        normalized_path = self._normalize_path(self._path)
+        
+        # Special case for empty path or root
+        if not normalized_path or normalized_path == '/':
+            return True
+            
+        # Known directory paths
+        if normalized_path in ('test_files', 'exports') or normalized_path.endswith('/test_files') or normalized_path.endswith('/exports'):
+            return True
+            
+        # Check if it's a parent directory of any existing file
+        for existing_path in self._files:
+            existing_normalized = self._normalize_path(existing_path)
+            if existing_normalized.startswith(normalized_path + '/'):
+                return True
+        return False
+
+    def mkdir(self, parents=False, exist_ok=False):
+        """Create a directory."""
+        if not exist_ok and self.exists():
+            raise FileExistsError(f"Directory already exists: {self._path}")
+        # No need to actually create directories in our mock system
+
+    def _normalize_path(self, path):
+        """Normalize path for consistent comparison."""
+        return str(Path(path)).replace('\\', '/')
+        
+    def glob(self, pattern):
+        """Enhanced glob implementation with proper directory handling."""
+        pattern_obj = Path(pattern)
+        base = pattern_obj.stem.split('(')[0]
+        suffix = pattern_obj.suffix
+        
+        # If self._path is a directory, use it as the base
+        # Otherwise, use its parent
+        parent = self._normalize_path(self._path if self.is_dir() else str(Path(self._path).parent))
+        
+        matches = []
+        # First check if the parent directory exists using our mock system
+        parent_path = type(self)(parent)
+        if not parent_path.exists() and not parent_path.is_dir():
+            return matches
+            
+        # Check files in the mock filesystem
+        for path in self._files:
+            normalized_path = self._normalize_path(path)
+            path_obj = Path(normalized_path)
+            if (self._normalize_path(str(path_obj.parent)) == parent and
+                path_obj.stem.startswith(base) and
+                path_obj.suffix == suffix):
+                matches.append(type(self)(path))
+        return matches
+
+    def unlink(self):
+        if self._path in self._files:
+            del self._files[self._path]
+
+    def stat(self):
+        """Return a mock stat result with proper mode flags."""
+        # Check if path exists (as file or directory)
+        if not self.exists():
+            raise FileNotFoundError(f"No such file or directory: '{self}'")
+        
+        # Import stat constants
+        from stat import S_IFREG, S_IFDIR, S_IRUSR, S_IWUSR, S_IXUSR
+        
+        # Base permissions for files (read/write) and directories (read/write/execute)
+        base_perm = S_IRUSR | S_IWUSR
+        dir_perm = base_perm | S_IXUSR
+        
+        # Check if this is a directory without using is_dir()
+        normalized_path = self._normalize_path(self._path)
+        is_directory = False
+        
+        # Special case for empty path or root
+        if not normalized_path or normalized_path == '/':
+            is_directory = True
+        # Check if path is a parent of any existing file
+        else:
+            for existing_path in self._files:
+                existing_normalized = self._normalize_path(existing_path)
+                if existing_normalized.startswith(normalized_path + '/'):
+                    is_directory = True
+                    break
+        
+        # Ensure mode is an integer by evaluating the bitwise operations
+        mode = int(S_IFDIR | dir_perm) if is_directory else int(S_IFREG | base_perm)
+        
+        # Get content size for files
+        content = self._files.get(self._path, b'')
+        # Create and return stat result with integer mode
+        return StatResult(
+            mode=mode,
+            size=len(content) if content else 0
+        )
+
+    @property
+    def parent(self):
+        return type(self)(os.path.dirname(self._path))
+
+    @property
+    def stem(self):
+        return Path(self._path).stem
+
+    @property
+    def suffix(self):
+        return Path(self._path).suffix
+
+    @property
+    def name(self):
+        """Return the final component of the path."""
+        return os.path.basename(self._path)
+
+    def __str__(self):
+        return self._path
+
+    def __truediv__(self, other):
+        return type(self)(os.path.join(self._path, str(other)))
 class MockShape:
     def __init__(self, text=""):
         self.text = text
@@ -29,6 +286,50 @@ class MockPresentation:
         """Mock save method that simulates saving a PowerPoint file."""
         # In the mock, we'll just create an empty file
         Path(path).write_bytes(b"Mock PowerPoint content")
+
+class MockHTML:
+    def __init__(self, string=None, filename=None):
+        if string is not None:
+            self.content = string
+        elif filename is not None:
+            with open(str(filename), 'r', encoding='utf-8') as f:
+                self.content = f.read()
+        else:
+            raise ValueError("Either string or filename must be provided")
+        
+    def write_pdf(self, output_path):
+        pdf_content = (
+            b"%PDF-1.4\n"
+            b"1 0 obj\n"
+            b"<<\n"
+            b"/Type /Catalog\n"
+            b"/Pages 2 0 R\n"
+            b">>\n"
+            b"endobj\n"
+            b"trailer\n"
+            b"<<\n"
+            b"/Root 1 0 R\n"
+            b">>\n"
+            b"%%EOF"
+        )
+        Path(output_path).write_bytes(pdf_content)
+        return True
+
+class MockSoup:
+    def __init__(self, html_content, parser):
+        self.content = html_content
+        self.parser = parser
+
+    def get_text(self, separator='\n', strip=True):
+        return """Test Document
+
+Test Heading
+Test paragraph with formatting
+List item 1
+List item 2
+Header
+Cell 1
+Cell 2"""
 
 from file2ai import (
     parse_args,
@@ -947,17 +1248,42 @@ def test_excel_to_text_conversion(tmp_path, caplog, monkeypatch):
             self.created_files = set()
             
         def __call__(self, path=None):
-            """Mock exists() to return False first time, True after"""
-            path_str = str(path) if path else ""
+            """Mock exists() to return True for test file and tracked files"""
+            # Handle empty path or self case
+            if path is None:
+                logger.debug("Empty path detected, returning True for self")
+                return True
+                
+            path_str = str(path)
             logger.debug(f"Checking path existence: {path_str}")
             
-            # Track calls to exists() for this path
+            # Normalize paths for consistent comparison
+            path_str = str(Path(path_str).absolute()).replace('\\', '/')
+            test_excel_str = str(test_excel.absolute()).replace('\\', '/')
+            
+            # Always return True for test Excel file (handle both absolute and relative paths)
+            if path_str == test_excel_str:
+                logger.debug(f"Test Excel file detected: {path_str}, returning True")
+                return True
+
+            # Return True for test file's parent directory
+            test_parent = str(test_excel.parent.absolute()).replace('\\', '/')
+            if path_str == test_parent:
+                logger.debug(f"Test parent directory detected: {path_str}, returning True")
+                return True
+
+            # Return True for exports directory (handle both absolute and relative paths)
+            if path_str == 'exports' or '/exports' in path_str:
+                logger.debug(f"Exports directory detected: {path_str}, returning True")
+                return True
+
+            # For other paths, track and return based on creation
             if path_str not in self.created_files:
                 logger.debug(f"Path {path_str} not found in created_files, adding and returning False")
                 self.created_files.add(path_str)
-                return False  # First call returns False
+                return False
             logger.debug(f"Path {path_str} found in created_files, returning True")
-            return True  # Subsequent calls return True
+            return True
             
         def track_mkdir(self, *args, **kwargs):
             # When mkdir is called on a Path object, 'self' is the path
@@ -977,9 +1303,9 @@ def test_excel_to_text_conversion(tmp_path, caplog, monkeypatch):
         logger.debug(f"mock_resolve called with args={args}, kwargs={kwargs}")
         # Handle both method calls (self) and function calls (path)
         if not args and not kwargs:
-            # When called with no arguments, return current path
-            logger.debug("No args/kwargs, returning default test Excel path")
-            return Path("test_files/test.xlsx")
+            # When called with no arguments, return the actual test file path
+            logger.debug("No args/kwargs, returning actual test Excel path")
+            return test_excel.absolute()
         
         # Get path object from positional args, self kwarg, or path kwarg
         path_obj = None
@@ -1002,7 +1328,7 @@ def test_excel_to_text_conversion(tmp_path, caplog, monkeypatch):
             raise RuntimeError(f"Strict resolve failed for {path_obj}")
             
         # Get base path for relative path resolution
-        base_path = Path("test_files/test.xlsx")
+        base_path = test_excel
         if 'self' in kwargs:
             # If this is a method call, use the path object as the base
             base_path = kwargs['self']
@@ -1078,8 +1404,16 @@ def test_excel_to_text_conversion(tmp_path, caplog, monkeypatch):
             def __iter__(self):
                 return iter(self._paths)
         mock_parents.return_value = MockParents()
-        # Mock file stat to return non-zero size
-        mock_stat.return_value.st_size = 1024
+        # Mock stat to return proper stat result with mode flags
+        def mock_stat_impl():
+            from stat import S_IFREG, S_IFDIR, S_IRUSR, S_IWUSR
+            # Base permissions for files and directories
+            base_perm = S_IRUSR | S_IWUSR
+            # Return directory stat for exports dir, regular file stat otherwise
+            if 'exports' in str(mock_stat.self):
+                return StatResult(mode=S_IFDIR | base_perm, size=0)
+            return StatResult(mode=S_IFREG | base_perm, size=1024)
+        mock_stat.side_effect = mock_stat_impl
         
         # Convert the document using direct args
         args = argparse.Namespace(
@@ -1138,52 +1472,403 @@ def test_excel_to_text_conversion(tmp_path, caplog, monkeypatch):
 def test_excel_to_csv_conversion(tmp_path, caplog, monkeypatch):
     """Test Excel document to CSV conversion."""
     import logging
-    from unittest.mock import Mock, patch
+    import argparse
+    import shutil
+    from unittest.mock import Mock, patch, PropertyMock
+    from datetime import datetime
+    from pathlib import Path
 
-    # Mock Workbook class
+    # Mock Workbook class with comprehensive data types
+    class MockSheet:
+        def __init__(self, title, rows_data):
+            self.title = title
+            # Create completely independent Mock objects for each cell
+            self._rows = []
+            for row in rows_data:
+                new_row = []
+                for cell in row:
+                    # Create a new Mock with its own independent value
+                    cell_mock = Mock()
+                    cell_mock.value = cell.value
+                    new_row.append(cell_mock)
+                self._rows.append(new_row)
+            
+        def iter_rows(self):
+            # Return the rows directly since we already have a deep copy
+            return self._rows
+            
+        @property
+        def rows(self):
+            return self._rows
+
     class MockWorkbook:
         def __init__(self):
-            self.active = Mock()
-            self.worksheets = [self.active]
-            self.active.title = "Sheet1"
-            self.active.rows = []
-            self.active.iter_rows.return_value = [
-                [Mock(value="Product"), Mock(value="Price")],
-                [Mock(value="Widget"), Mock(value="99.99")],
-                [Mock(value="Gadget"), Mock(value="149.99")],
+            # Create sheets with proper data separation
+            products_data = [
+                [Mock(value="Product"), Mock(value="Price"), Mock(value="Last Updated"), Mock(value="In Stock")],
+                [Mock(value="Widget"), Mock(value=99.99), Mock(value=datetime(2024, 1, 15)), Mock(value=True)],
+                [Mock(value="Gadget"), Mock(value=149.99), Mock(value=datetime(2024, 1, 20)), Mock(value=False)],
+                [Mock(value="Tool Set"), Mock(value=299.99), Mock(value=datetime(2024, 1, 25)), Mock(value=True)]
             ]
+            
+            sales_data = [
+                [Mock(value="Date"), Mock(value="Units Sold"), Mock(value="Revenue"), Mock(value="Growth")],
+                [Mock(value=datetime(2024, 1, 1)), Mock(value=150), Mock(value=14999.50), Mock(value=0.15)],
+                [Mock(value=datetime(2024, 1, 2)), Mock(value=175), Mock(value=17499.75), Mock(value=0.12)],
+                [Mock(value=datetime(2024, 1, 3)), Mock(value=190), Mock(value=18999.25), Mock(value=0.08)]
+            ]
+            
+            # Create sheets with proper data separation
+            self.worksheets = [
+                MockSheet("Products", products_data),
+                MockSheet("Sales", sales_data)
+            ]
+            # Set active sheet to Products
+            self.active = self.worksheets[0]
+            self.sheet2 = self.worksheets[1]
 
     def mock_load_workbook(file_path, data_only=False):
         return MockWorkbook()
 
     monkeypatch.setattr("openpyxl.load_workbook", mock_load_workbook)
+    monkeypatch.setattr("file2ai.EXPORTS_DIR", "exports")
     setup_logging()
     caplog.set_level(logging.INFO)
 
-    # Create a test Excel document
+    # Create a test Excel document with proper size
     test_excel = tmp_path / "test.xlsx"
-    test_excel.write_bytes(b"Mock Excel content")
+    test_excel.write_bytes(b"Mock Excel content" * 100)  # Create reasonable file size
 
-    # Convert the document
-    with patch(
-        "sys.argv", ["file2ai.py", "convert", "--input", str(test_excel), "--format", "csv"]
-    ):
-        args = parse_args()
+    # Create a stateful exists mock to track file creation
+    class MockPathExists:
+        def __init__(self):
+            self.created_files = set()
+            
+        def __call__(self, path=None):
+            """Mock exists() to return False first time, True after"""
+            path_str = str(path) if path else ""
+            
+            # Track calls to exists() for this path
+            if path_str not in self.created_files:
+                self.created_files.add(path_str)
+                return False  # First call returns False
+            return True  # Subsequent calls return True
+            
+        def track_mkdir(self, *args, **kwargs):
+            # When mkdir is called on a Path object, 'self' is the path
+            path_str = str(self)
+            self.created_files.add(path_str)
+            
+        def track_write(self, content, *args, **kwargs):
+            path_str = str(self)
+            self.created_files.add(path_str)
+
+    mock_path_exists = MockPathExists()
+
+    # Set up proper path handling and file verification
+    class MockReadText:
+        def __init__(self):
+            self._file_contents = {}
+            self._current_content = ""
+            self.logger = logging.getLogger(__name__)
+            
+        def __str__(self):
+            """Return the current content when used in string operations."""
+            return self._current_content
+            
+        def __contains__(self, item):
+            """Support 'in' operator for string content."""
+            # For contains operator, we need to check all stored contents
+            for content in self._file_contents.values():
+                if item in content:
+                    self._current_content = content
+                    return True
+            return False
+            
+        def _normalize_path(self, path_str):
+            """Normalize path to handle both temporary and exports paths."""
+            path = Path(path_str)
+            filename = path.name
+            self.logger.debug(f"Normalizing path: {path_str}")
+            
+            # For temporary test paths, store with the temp path
+            if '/tmp/pytest-of-ubuntu' in str(path):
+                self.logger.debug(f"Using temp path: {path_str}")
+                return str(path)
+            
+            # For exports directory paths, look for matching temp path first
+            if str(path).startswith('exports/'):
+                self.logger.debug(f"Looking for matching temp path for: {path_str}")
+                # Find any temp path that has the same filename
+                for stored_path in self._file_contents.keys():
+                    if Path(stored_path).name == filename:
+                        self.logger.debug(f"Found matching temp path: {stored_path}")
+                        return stored_path
+                # If no temp path found, use exports path
+                self.logger.debug(f"No matching temp path found, using: {path_str}")
+                return str(path)
+            
+            # Default case - should not happen in our test scenario
+            self.logger.warning(f"Unexpected path format: {path_str}")
+            return str(path)
+            
+        def __call__(self, *args, **kwargs):
+            # When used as a side_effect or called directly
+            if not args:
+                # Return self when called without arguments (side_effect initialization)
+                return self
+            
+            # Get the path from args - it could be a Path object or mock
+            path_obj = args[0]
+            orig_path = str(path_obj)
+            
+            # Normalize the path for consistent lookup
+            normalized_path = self._normalize_path(orig_path)
+            self.logger.info(f"Reading from normalized path: {normalized_path}")
+            self.logger.info(f"Available files: {list(self._file_contents.keys())}")
+            
+            # Only look up content using the normalized path
+            if normalized_path in self._file_contents:
+                content = self._file_contents[normalized_path]
+                self.logger.info(f"Found content: {content[:200]}")
+                self._current_content = content
+                return content  # Return the actual content string directly
+            
+            raise FileNotFoundError(f"No such file or directory: '{normalized_path}'")
+            
+        def track_write(self, content, path_str=None, *args, **kwargs):
+            # Use provided path or self as path
+            orig_path = path_str if path_str else str(self)
+            path = Path(orig_path)
+            filename = path.name
+            
+            # Normalize the path for storage
+            normalized_path = self._normalize_path(orig_path)
+            
+            # Store content as string and update current content
+            content_str = str(content)
+            self._file_contents[normalized_path] = content_str
+            self._current_content = content_str  # Set current content for string operations
+            
+            self.logger.debug(f"Writing to {normalized_path}")
+            self.logger.debug(f"Content: {content_str[:200]}")
+            self.logger.debug(f"Current tracked files: {list(self._file_contents.keys())}")
+            self.logger.debug(f"Content preview: {content_str.splitlines()[0] if content_str else 'empty'}")
+            
+            # Track file creation
+            mock_path_exists.created_files.add(normalized_path)
+            
+    # Initialize global mock_read_text before it's used
+    global mock_read_text
+    mock_read_text = MockReadText()
+    mock_read_text._file_contents = {}
+    mock_read_text.logger = logging.getLogger(__name__)
+    
+    # Set up path operation tracking
+    class PathTracker:
+        def __init__(self):
+            self.paths = {}
+            self.operations = []
+            self.logger = logging.getLogger(__name__)
+            
+        def track_path(self, path_str):
+            if path_str not in self.paths:
+                self.paths[path_str] = Path(path_str)
+            return self.paths[path_str]
+            
+        def track_operation(self, op, path_str, *args):
+            self.operations.append((op, path_str, args))
+            if op == 'write_text':
+                # Only track the operation, content is already stored by mock_write_text
+                self.logger.debug(f"Tracking write operation: {path_str}")
+            elif op == 'mkdir':
+                mock_path_exists.track_mkdir()
+                
+    path_tracker = PathTracker()
+    
+    # Mock path operations with proper method and property binding
+    # Set up path tracking for the test
+    path_tracker = PathTracker()
+    
+    # Create mock path operations that handle both test and pytest paths
+    # Set up path tracking
+    path_exists_tracker = set()
+    
+    # Add test Excel file to path tracker
+    path_exists_tracker.add(str(test_excel))
+    
+    # Create a property-based exists mock that works with pytest internals
+    # Create a more robust path exists mock that handles all access patterns
+    class PathExistsMock:
+        def __init__(self, path_str):
+            self.path_str = path_str
+            
+        def __call__(self, *args, **kwargs):
+            return self.check_exists()
+            
+        def __bool__(self):
+            return self.check_exists()
+            
+        def check_exists(self):
+            # Handle pytest internal paths and code paths
+            if any(x in self.path_str for x in ['__pycache__', '_pytest', '_code', 'site-packages', 'pathlib']):
+                return True
+            
+            path = Path(self.path_str)
+            filename = path.name
+            
+            # Handle temporary test directory paths
+            if '/tmp/pytest-of-ubuntu' in self.path_str:
+                # Handle sheet-specific CSV files
+                if '_Products.' in filename or '_Sales.' in filename:
+                    # Check if the file exists in either temp directory or its specific CSV directory
+                    sheet_name = 'products_csv' if '_Products.' in filename else 'sales_csv'
+                    return (self.path_str in path_exists_tracker or 
+                           f"{sheet_name}/{filename}" in path_exists_tracker)
+                
+                # For other files, check in exports directory
+                return self.path_str in path_exists_tracker or f"exports/{filename}" in path_exists_tracker
+            
+            # Handle exports directory paths
+            if self.path_str.startswith('exports/'):
+                # Check both the exports path and any temporary paths that match the filename
+                tmp_paths = [p for p in path_exists_tracker if p.endswith(filename)]
+                return self.path_str in path_exists_tracker or any(tmp_paths)
+            
+            # Handle test paths
+            return self.path_str in path_exists_tracker
+            
+        def __get__(self, obj, objtype=None):
+            if obj is None:
+                return self
+            return self.check_exists()
+    
+    # Create a descriptor-based exists property
+    class ExistsProperty:
+        def __get__(self, obj, objtype=None):
+            if obj is None:
+                return self
+            return PathExistsMock(str(obj))
+    
+    # Set up the mock using the descriptor
+    monkeypatch.setattr(Path, 'exists', ExistsProperty())
+    
+    # Add exports directory to path tracker
+    path_exists_tracker.add('exports')
+        
+    def mock_mkdir(self, *args, **kwargs):
+        path_str = str(self)
+        path_exists_tracker.add(path_str)
+        path_tracker.track_operation('mkdir', path_str, *args)
+        
+    def mock_write_text(self, content):
+        path_str = str(self)
+        
+        # Track file creation with original path only
+        path_exists_tracker.add(path_str)
+        
+        # Use the global mock_read_text instance for content tracking through track_write
+        global mock_read_text
+        mock_read_text.track_write(content, path_str)
+        
+        # Track operation after content is stored
+        path_tracker.track_operation('write_text', path_str, content)
+        
+    def mock_resolve(self):
+        path_str = str(self)
+        if path_str.endswith('.xlsx'):
+            return test_excel
+        elif path_str.startswith('exports/'):
+            return Path(path_str)
+        elif 'exports' in path_str:
+            return Path(f"exports/{path_str.split('exports/')[-1]}")
+        return self
+        
+    # Set up path method mocks with proper property handling
+    monkeypatch.setattr(Path, 'mkdir', mock_mkdir)
+    monkeypatch.setattr(Path, 'write_text', mock_write_text)
+    monkeypatch.setattr(Path, 'resolve', mock_resolve)
+
+    with patch("pathlib.Path.exists", ExistsProperty()), \
+         patch("pathlib.Path.stat") as mock_stat, \
+         patch("pathlib.Path.resolve", mock_resolve), \
+         patch("pathlib.Path.parents", new_callable=PropertyMock) as mock_parents, \
+         patch("pathlib.Path.mkdir", mock_mkdir), \
+         patch("pathlib.Path.write_text", mock_write_text), \
+         patch("pathlib.Path.read_text", side_effect=mock_read_text.__call__), \
+         patch("pathlib.Path.stem", new_callable=PropertyMock, return_value='test'), \
+         patch("file2ai.verify_file_access", return_value=True):
+        
+        # Mock parents as a sequence that includes exports_dir
+        class MockParents:
+            def __init__(self):
+                self._paths = (Path("exports"), Path("/home/user"), Path("/home"))
+            def __contains__(self, item):
+                return any(str(p) == str(item) for p in self._paths)
+            def __iter__(self):
+                return iter(self._paths)
+        mock_parents.return_value = MockParents()
+
+        # Mock file stat to handle both files and directories
+        class MockStat:
+            def __init__(self, is_dir=False):
+                self.st_size = 1024
+                self.st_mode = 0o40755 if is_dir else 0o100644  # Directory or regular file mode
+                
+        def mock_stat_factory(*args, **kwargs):
+            # Handle both direct calls and side_effect calls
+            if not args:
+                return MockStat(is_dir=False)
+            
+            # When called through side_effect, first arg is the path
+            path = args[0]
+            path_str = str(path)
+            
+            # Return directory stat for exports dir and parent directories
+            if path_str == "exports" or path_str.startswith("/tmp") or path_str.startswith("/home"):
+                return MockStat(is_dir=True)
+            # Return file stat for all other paths
+            return MockStat(is_dir=False)
+            
+        mock_stat.side_effect = mock_stat_factory
+
+        # Convert the document using direct args
+        args = argparse.Namespace(
+            input=str(test_excel),
+            format="csv",
+            output=None,
+            brightness=None,
+            contrast=None,
+            quality=None,
+            resolution=None
+        )
         convert_document(args)
 
-    # Check output file
-    exports_dir = Path("exports")
-    output_files = list(exports_dir.glob("test*.csv"))
-    assert len(output_files) == 1
-    output_content = output_files[0].read_text()
-
-    # Verify CSV content
-    assert "Product,Price" in output_content
-    assert "Widget,99.99" in output_content
-    assert "Gadget,149.99" in output_content
-
-    # Clean up
-    shutil.rmtree(exports_dir)
+        # Check output files (one per sheet)
+        exports_dir = Path("exports")
+        products_csv = exports_dir / "test_Products.csv"
+        sales_csv = exports_dir / "test_Sales.csv"
+        
+        assert products_csv.exists(), "Products CSV file not created"
+        assert sales_csv.exists(), "Sales CSV file not created"
+        
+        # Verify Products sheet content
+        products_content = products_csv.read_text()
+        assert 'Product,Price,Last Updated,In Stock' in products_content
+        assert 'Widget,99.99,2024-01-15 00:00:00,True' in products_content
+        assert 'Gadget,149.99,2024-01-20 00:00:00,False' in products_content
+        
+        # Verify Sales sheet content
+        sales_content = sales_csv.read_text()
+        assert 'Date,Units Sold,Revenue,Growth' in sales_content
+        assert '2024-01-01 00:00:00,150,14999.5,0.15' in sales_content
+        assert '2024-01-02 00:00:00,175,17499.75,0.12' in sales_content
+        
+        # Verify logging
+        assert "Successfully converted Excel document to CSV" in caplog.text
+        
+        # Clean up (ignore errors since we're using mocks)
+        shutil.rmtree(exports_dir, ignore_errors=True)
 
 
 # Test Excel document conversion error handling:
@@ -1422,47 +2107,224 @@ def test_html_dependency_management(monkeypatch, caplog):
 # 2. HTML structure preservation
 # 3. File encoding handling
 # 4. Error case coverage
-@pytest.mark.skip(reason="Skipping due to implementation issues - needs proper HTML content handling")
 def test_html_to_text_conversion(tmp_path, caplog):
     """Test HTML to text conversion."""
-
-    # Create a test HTML file
+    import logging
+    from unittest.mock import Mock, patch
+    from pathlib import Path
+    
+    # Create a test HTML file with comprehensive content
     test_html = """<!DOCTYPE html>
 <html>
-<head><title>Test Document</title></head>
+<head>
+    <title>Test Document</title>
+    <meta charset="utf-8">
+</head>
 <body>
     <h1>Test Heading</h1>
-    <p>Test paragraph</p>
-    <ul><li>List item</li></ul>
-    <table><tr><td>Cell</td></tr></table>
+    <p>Test paragraph with <strong>formatting</strong></p>
+    <ul>
+        <li>List item 1</li>
+        <li>List item 2</li>
+    </ul>
+    <table>
+        <tr><th>Header</th></tr>
+        <tr><td>Cell 1</td></tr>
+        <tr><td>Cell 2</td></tr>
+    </table>
 </body>
 </html>"""
 
     test_file = tmp_path / "test.html"
     test_file.write_text(test_html)
 
-    # Set up arguments for conversion
-    with patch(
-        "sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "text"]
-    ):
+    # Mock BeautifulSoup for text extraction
+    class MockSoup:
+        def __init__(self, html_content, parser):
+            self.content = html_content
+            self.parser = parser
+            
+        def get_text(self, separator='\n', strip=True):
+            # Simulate BeautifulSoup's text extraction
+            return """Test Document
+
+Test Heading
+Test paragraph with formatting
+List item 1
+List item 2
+Header
+Cell 1
+Cell 2"""
+
+    # Set up path tracking and mock file operations
+    class MockPath(type(Path())):
+        _files = {}
+        _initialized = False
+
+        @classmethod
+        def reset_files(cls):
+            cls._files = {}
+            cls._initialized = False
+
+        def __new__(cls, *args, **kwargs):
+            if not cls._initialized:
+                cls.reset_files()
+                cls._initialized = True
+            return super().__new__(cls)
+
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            if len(args) == 1 and isinstance(args[0], str):
+                self._path = args[0]
+            else:
+                self._path = '/'.join(str(arg) for arg in args)
+
+        def write_text(self, content, encoding=None):
+            path_str = str(self)
+            path_obj = Path(path_str)
+            base = path_obj.stem.split('(')[0]  # Remove any (n) suffix
+            suffix = path_obj.suffix
+            parent = str(path_obj.parent)
+
+            # For files in exports directory, always use base name
+            if Path(parent).name == "exports":
+                # Remove any existing files with the same base name
+                for existing_path in list(self._files.keys()):
+                    existing_obj = Path(existing_path)
+                    if (existing_obj.parent.name == "exports" and
+                        existing_obj.stem.split('(')[0] == base and
+                        existing_obj.suffix == suffix):
+                        del self._files[existing_path]
+
+                # Write new file with base name
+                new_path = f"{parent}/{base}{suffix}"
+                self._files[new_path] = content
+            else:
+                # For non-exports files, just write directly
+                self._files[path_str] = content
+
+        def write_bytes(self, content):
+            self._files[str(self)] = content
+
+        def read_text(self, encoding=None):
+            return self._files.get(str(self), "")
+
+        def read_bytes(self):
+            return self._files.get(str(self), b"")
+
+        def exists(self):
+            return str(self) in self._files
+
+        def mkdir(self, parents=False, exist_ok=False):
+            pass
+
+        def glob(self, pattern):
+            """Match file2ai.py's _sequential_filename glob behavior"""
+            pattern_str = str(pattern)
+            pattern_obj = Path(pattern_str)
+            base = pattern_obj.stem.split('(')[0]  # Remove any (n) suffix
+            suffix = pattern_obj.suffix
+            parent = str(pattern_obj.parent)
+
+            # For files in exports directory, only return base name file
+            if Path(parent).name == "exports":
+                base_file = f"{parent}/{base}{suffix}"
+                if base_file in self._files:
+                    return [type(self)(base_file)]
+                return []
+
+            # For other directories, return all matching files
+            matching_files = []
+            for path in self._files:
+                path_obj = Path(path)
+                if (str(path_obj.parent) == parent and
+                    path_obj.stem.startswith(base) and
+                    path_obj.suffix == suffix):
+                    matching_files.append(type(self)(path))
+            return matching_files
+
+        def __str__(self):
+            return self._path
+
+        def __eq__(self, other):
+            return str(self) == str(other)
+
+        @property
+        def parent(self):
+            return type(self)(Path(self._path).parent)
+
+        @property
+        def stem(self):
+            return Path(self._path).stem
+
+        @property
+        def suffix(self):
+            return Path(self._path).suffix
+
+        def stat(self):
+            return type('Stat', (), {'st_size': len(self._files.get(str(self), ""))})()
+
+        def __truediv__(self, other):
+            return type(self)(str(self) + '/' + str(other))
+            
+    # Reset MockPath state before using it
+    MockPath.reset_files()
+    
+    # Configure logging
+    caplog.set_level(logging.INFO)
+
+    # Mock package support checks
+    def mock_check_package_support(package):
+        return True
+
+    # Mock module imports
+    mock_weasyprint = MagicMock()
+    mock_weasyprint.HTML = MockHTML
+    mock_weasyprint.__spec__ = MagicMock(name="weasyprint.__spec__")
+    
+    mock_bs4 = MagicMock()
+    mock_bs4.BeautifulSoup = MockSoup
+    mock_bs4.__spec__ = MagicMock(name="bs4.__spec__")
+    
+    mock_pil = MagicMock()
+    mock_pil.Image = MagicMock()
+    mock_pil.__spec__ = MagicMock(name="PIL.__spec__")
+
+    # Patch necessary components
+    mock_files_instance = MockFiles()
+    with patch.dict("sys.modules", {
+            "weasyprint": mock_weasyprint,
+            "bs4": mock_bs4,
+            "PIL": mock_pil
+         }), \
+         patch("pathlib.Path", MockPath), \
+         patch("sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "text"]), \
+         patch("importlib.resources.files", mock_files_instance), \
+         patch("file2ai.verify_file_access", return_value=True), \
+         patch("file2ai.check_package_support", mock_check_package_support):
+        
+        # Run conversion
         args = parse_args()
         convert_document(args)
-
-    # Check output file
-    exports_dir = Path("exports")
-    output_files = list(exports_dir.glob("test*.text"))
-    assert len(output_files) == 1
-    output_content = output_files[0].read_text()
-
-    # Verify content structure is preserved
-    assert "Test Document" in output_content
-    assert "Test Heading" in output_content
-    assert "Test paragraph" in output_content
-    assert "List item" in output_content
-    assert "Cell" in output_content
-
-    # Clean up
-    shutil.rmtree(exports_dir)
+        
+        # Verify conversion results
+        assert "Successfully converted HTML to text" in caplog.text
+        
+        # Check output file
+        exports_dir = Path("exports")
+        output_files = list(exports_dir.glob("test*.text"))
+        assert len(output_files) == 1
+        output_content = output_files[0].read_text()
+        
+        # Verify content structure is preserved
+        assert "Test Document" in output_content
+        assert "Test Heading" in output_content
+        assert "Test paragraph with formatting" in output_content
+        assert "List item" in output_content
+        assert "Cell" in output_content
+        
+        # Verify encoding handling
+        assert "utf-8" in caplog.text
 
 
 # Test HTML to PDF conversion with:
@@ -1470,17 +2332,35 @@ def test_html_to_text_conversion(tmp_path, caplog):
 # 2. Local image path resolution
 # 3. PDF generation process
 # 4. Error handling coverage
-@pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper PDF content simulation")
 def test_html_to_pdf_conversion(tmp_path, caplog):
     """Test HTML to PDF conversion."""
-
-    # Create a test HTML file with an image
+    import logging
+    from unittest.mock import Mock, patch, MagicMock
+    from pathlib import Path
+    
+    # Create a test HTML file with comprehensive styling
     test_html = """<!DOCTYPE html>
 <html>
-<head><title>Test Document</title></head>
+<head>
+    <title>Test Document</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; }
+        h1 { color: #333; }
+        table { border-collapse: collapse; }
+        td, th { border: 1px solid black; padding: 8px; }
+        img { max-width: 100%; height: auto; }
+    </style>
+</head>
 <body>
     <h1>Test Heading</h1>
+    <p>Test paragraph with <strong>formatting</strong></p>
     <img src="test.jpg" alt="Test Image">
+    <table>
+        <tr><th>Header</th></tr>
+        <tr><td>Cell 1</td></tr>
+        <tr><td>Cell 2</td></tr>
+    </table>
 </body>
 </html>"""
 
@@ -1490,36 +2370,97 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
     # Create a test image
     test_image = tmp_path / "test.jpg"
     from PIL import Image
-
     img = Image.new("RGB", (100, 100), color="red")
     img.save(test_image)
 
-    # Mock weasyprint for PDF generation
-    mock_pdf = b"%PDF-1.4 test pdf content"
-    mock_weasyprint = MagicMock()
-    mock_weasyprint.HTML.return_value.write_pdf.return_value = mock_pdf
-    mock_weasyprint.__spec__ = MagicMock(name="weasyprint.__spec__")
+    # Mock WeasyPrint for PDF generation
+    class MockHTML:
+        def __init__(self, string=None, filename=None):
+            if string is not None:
+                self.content = string
+            elif filename is not None:
+                with open(str(filename), 'r', encoding='utf-8') as f:
+                    self.content = f.read()
+            else:
+                raise ValueError("Either string or filename must be provided")
+            
+        def write_pdf(self, output_path):
+            # Create a realistic PDF structure
+            pdf_content = (
+                b"%PDF-1.4\n"
+                b"1 0 obj\n"
+                b"<<\n"
+                b"/Type /Catalog\n"
+                b"/Pages 2 0 R\n"
+                b">>\n"
+                b"endobj\n"
+                b"trailer\n"
+                b"<<\n"
+                b"/Root 1 0 R\n"
+                b">>\n"
+                b"%%EOF"
+            )
+            Path(output_path).write_bytes(pdf_content)
+            return True
 
-    # Create PIL mock with Image attribute and spec
+    # Reset MockPath state before test
+    MockPath.reset_files()
+
+    # Configure logging
+    caplog.set_level(logging.INFO)
+
+    # Mock package support checks
+    def mock_check_package_support(package):
+        return True
+
+    # Mock module imports
+    mock_weasyprint = MagicMock()
+    mock_weasyprint.HTML = MockHTML
+    mock_weasyprint.__spec__ = MagicMock(name="weasyprint.__spec__")
+    
+    mock_bs4 = MagicMock()
+    mock_bs4.BeautifulSoup = MockSoup
+    mock_bs4.__spec__ = MagicMock(name="bs4.__spec__")
+    
     mock_pil = MagicMock()
     mock_pil.Image = MagicMock()
     mock_pil.__spec__ = MagicMock(name="PIL.__spec__")
 
-    with patch.dict("sys.modules", {"weasyprint": mock_weasyprint, "PIL": mock_pil}):
-        with patch(
-            "sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "pdf"]
-        ):
-            args = parse_args()
-            convert_document(args)
+    # Create mock files instance with default CSS
+    mock_files_instance = MockFiles()
 
-    # Check output file
-    exports_dir = Path("exports")
-    output_files = list(exports_dir.glob("test*.pdf"))
-    assert len(output_files) == 1
-    assert output_files[0].read_bytes() == mock_pdf
-
-    # Clean up
-    shutil.rmtree(exports_dir)
+    # Patch necessary components
+    with patch.dict("sys.modules", {
+            "weasyprint": mock_weasyprint,
+            "bs4": mock_bs4,
+            "PIL": mock_pil
+         }), \
+         patch("pathlib.Path", MockPath), \
+         patch("sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "pdf"]), \
+         patch("file2ai.verify_file_access", return_value=True), \
+         patch("file2ai.check_package_support", mock_check_package_support), \
+         patch("importlib.resources.files", mock_files_instance):
+        
+        # Run conversion
+        args = parse_args()
+        convert_document(args)
+        
+        # Verify conversion results
+        assert "Successfully converted HTML to PDF" in caplog.text
+        
+        # Check output file
+        exports_dir = Path("exports")
+        output_files = list(exports_dir.glob("test*.pdf"))
+        assert len(output_files) == 1
+        
+        # Verify PDF content
+        pdf_content = output_files[0].read_bytes()
+        assert pdf_content.startswith(b"%PDF-1.4")
+        assert b"endobj" in pdf_content
+        assert pdf_content.endswith(b"%%EOF")
+        
+        # Verify file size
+        assert output_files[0].stat().st_size > 0
 
 
 # Test HTML to image conversion with:
@@ -1527,9 +2468,195 @@ def test_html_to_pdf_conversion(tmp_path, caplog):
 # 2. WeasyPrint intermediate PDF
 # 3. Image file generation
 # 4. Enhancement support
-@pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper image file simulation")
 def test_html_to_image_conversion(tmp_path, caplog):
     """Test HTML to JPG image conversion."""
+    import logging
+    from unittest.mock import Mock, patch, MagicMock
+    from pathlib import Path
+    
+    # Create a test HTML file with multiple pages
+    test_html = """<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Document</title>
+    <meta charset="utf-8">
+    <style>
+        @page { size: A4; margin: 2cm; }
+        body { font-family: Arial, sans-serif; }
+        .page { page-break-after: always; }
+        img { max-width: 100%; height: auto; }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <h1>Page 1</h1>
+        <p>Test paragraph with <strong>formatting</strong></p>
+        <img src="test.jpg" alt="Test Image">
+    </div>
+    <div class="page">
+        <h1>Page 2</h1>
+        <table>
+            <tr><th>Header</th></tr>
+            <tr><td>Cell 1</td></tr>
+            <tr><td>Cell 2</td></tr>
+        </table>
+    </div>
+</body>
+</html>"""
+
+    test_file = tmp_path / "test.html"
+    test_file.write_text(test_html)
+
+    # Create a test image
+    test_image = tmp_path / "test.jpg"
+    from PIL import Image
+    img = Image.new("RGB", (100, 100), color="red")
+    img.save(test_image)
+
+    # Mock WeasyPrint for PDF generation
+    class MockHTML:
+        def __init__(self, string=None, filename=None):
+            if string is not None:
+                self.content = string
+            elif filename is not None:
+                with open(str(filename), 'r', encoding='utf-8') as f:
+                    self.content = f.read()
+            else:
+                raise ValueError("Either string or filename must be provided")
+            
+        def write_pdf(self, output_path):
+            # Create a realistic PDF structure
+            pdf_content = (
+                b"%PDF-1.4\n"
+                b"1 0 obj\n"
+                b"<<\n"
+                b"/Type /Catalog\n"
+                b"/Pages 2 0 R\n"
+                b">>\n"
+                b"endobj\n"
+                b"trailer\n"
+                b"<<\n"
+                b"/Root 1 0 R\n"
+                b">>\n"
+                b"%%EOF"
+            )
+            Path(output_path).write_bytes(pdf_content)
+            return True
+
+    # Mock PyMuPDF components
+    class MockPixmap:
+        def __init__(self, width=100, height=100):
+            self.width = width
+            self.height = height
+            self.samples = b"\xFF\x00\x00" * (width * height)  # Red pixels
+
+    class MockPage:
+        def __init__(self):
+            self.pixmap = None
+            
+        def get_pixmap(self, matrix=None):
+            self.pixmap = MockPixmap()
+            return self.pixmap
+
+    class MockPDF:
+        def __init__(self):
+            self.pages = [MockPage(), MockPage()]  # Two pages
+            self._closed = False
+            
+        def __getitem__(self, index):
+            return self.pages[index]
+            
+        def __len__(self):
+            return len(self.pages)
+            
+        def close(self):
+            self._closed = True
+
+    # Set up path tracking and mock file operations
+    class MockPath(type(Path())):
+        _files = {}
+        
+        def write_text(self, content, encoding=None):
+            self._files[str(self)] = content
+            
+        def write_bytes(self, content):
+            self._files[str(self)] = content
+            
+        def read_text(self, encoding=None):
+            return self._files.get(str(self), "")
+            
+        def read_bytes(self):
+            return self._files.get(str(self), b"")
+            
+        def exists(self):
+            return str(self) in self._files
+            
+        def mkdir(self, parents=False, exist_ok=False):
+            pass
+            
+        def glob(self, pattern):
+            return [p for p in [self] if str(p) in self._files]
+            
+        def unlink(self):
+            if str(self) in self._files:
+                del self._files[str(self)]
+            
+        def stat(self):
+            return type('Stat', (), {'st_size': len(self._files.get(str(self), b""))})()
+
+    # Configure logging
+    caplog.set_level(logging.INFO)
+
+    # Mock Matrix class
+    class MockMatrix:
+        def __init__(self, zoom_x, zoom_y):
+            self.zoom_x = zoom_x
+            self.zoom_y = zoom_y
+
+    # Patch necessary components
+    with patch("pathlib.Path", MockPath), \
+         patch("weasyprint.HTML", MockHTML), \
+         patch("fitz.open", return_value=MockPDF()), \
+         patch("fitz.Matrix", MockMatrix), \
+         patch("PIL.Image.frombytes", return_value=Image.new("RGB", (100, 100), color="red")), \
+         patch("sys.argv", [
+             "file2ai.py", "convert",
+             "--input", str(test_file),
+             "--format", "image",
+             "--brightness", "1.2",
+             "--contrast", "1.1",
+             "--quality", "90",
+             "--resolution", "300"
+         ]), \
+         patch("file2ai.verify_file_access", return_value=True), \
+         patch("file2ai.check_image_enhance_support", return_value=True):
+        
+        # Run conversion
+        args = parse_args()
+        convert_document(args)
+        
+        # Verify conversion results
+        assert "Successfully converted HTML to images" in caplog.text
+        
+        # Check output files
+        exports_dir = Path("exports")
+        images_dir = exports_dir / "images"
+        output_files = list(images_dir.glob("test_page_*.png"))
+        assert len(output_files) == 2  # Two pages
+        
+        # Verify image list file
+        image_list = exports_dir / f"{test_file.name}.image"
+        assert image_list.exists()
+        image_paths = image_list.read_text().splitlines()
+        assert len(image_paths) == 2
+        
+        # Verify enhancement logging
+        assert "Applied image enhancements (brightness: 1.20)" in caplog.text
+        assert "Applied image enhancements (contrast: 1.10)" in caplog.text
+        
+        # Verify cleanup
+        pdf_path = exports_dir / f"{test_file.stem}_temp.pdf"
+        assert not pdf_path.exists()  # Temporary PDF should be deleted
 
     # Create a test HTML file
     test_html = """<!DOCTYPE html>
@@ -1630,49 +2757,126 @@ def test_html_to_image_conversion(tmp_path, caplog):
 # 2. HTML extraction
 # 3. Text conversion
 # 4. Output verification
-@pytest.mark.skip(reason="Skipping due to implementation issues - needs proper MHTML content handling")
 def test_mhtml_conversion(tmp_path, caplog):
-    """Test MHTML file conversion."""
+    """Test MHTML file conversion with proper MIME structure."""
+    import logging
+    from unittest.mock import Mock, patch, MagicMock
+    from pathlib import Path
+    from datetime import datetime
 
-    # Create a test MHTML file
-    mhtml_content = """From: <Saved by file2ai>
-Subject: Test MHTML Document
-Date: Thu, 01 Jan 2024 00:00:00 +0000
+    # Configure logging
+    caplog.set_level(logging.INFO)
+
+    # Create mock files instance with WeasyPrint default CSS
+    mock_files = MockFiles({'html5_ua.css': WEASYPRINT_DEFAULT_CSS})
+    mock_files_instance = mock_files("file2ai")  # Pass package name in __call__
+
+    # Create a test MHTML file with comprehensive content
+    mhtml_content = f"""From: <Saved by file2ai>
+Subject: Test MHTML Document with Resources
+Date: {datetime.now().strftime('%a, %d %b %Y %H:%M:%S %z')}
 MIME-Version: 1.0
 Content-Type: multipart/related;
-    boundary="----=_NextPart_000"
+    type="text/html";
+    boundary="----=_NextPart_000_0000_01D9C8F6.12345678"
 
-------=_NextPart_000
+------=_NextPart_000_0000_01D9C8F6.12345678
 Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+Content-Location: file:///C:/test.htm
 
 <!DOCTYPE html>
 <html>
-<head><title>MHTML Test</title></head>
-<body><h1>Test Content</h1></body>
+<head>
+    <title>MHTML Test Document</title>
+    <meta charset="utf-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; }}
+        h1 {{ color: #333; }}
+        .content {{ margin: 20px; }}
+        table {{ border-collapse: collapse; }}
+        td, th {{ border: 1px solid black; padding: 8px; }}
+    </style>
+</head>
+<body>
+    <h1>MHTML Test Document</h1>
+    <div class="content">
+        <p>This is a test document with embedded resources.</p>
+        <img src="test_image.png" alt="Test Image">
+        <table>
+            <tr><th>Header 1</th><th>Header 2</th></tr>
+            <tr><td>Cell 1</td><td>Cell 2</td></tr>
+        </table>
+    </div>
+</body>
 </html>
-------=_NextPart_000--"""
+
+------=_NextPart_000_0000_01D9C8F6.12345678
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-Location: test_image.png
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=
+
+------=_NextPart_000_0000_01D9C8F6.12345678
+Content-Type: text/css
+Content-Transfer-Encoding: quoted-printable
+Content-Location: styles.css
+
+body {{ font-family: Arial, sans-serif; }}
+h1 {{ color: #333; }}
+.content {{ margin: 20px; }}
+
+------=_NextPart_000_0000_01D9C8F6.12345678--"""
 
     test_file = tmp_path / "test.mhtml"
     test_file.write_text(mhtml_content)
 
-    with patch(
-        "sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "text"]
-    ):
+    # Reset MockPath state
+    MockPath.reset_files()
+
+    # Test successful text conversion
+    with patch("pathlib.Path", MockPath), \
+         patch("sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "text"]), \
+         patch("importlib.resources.files", mock_files_instance), \
+         patch("file2ai.verify_file_access", return_value=True), \
+         patch("file2ai.check_package_support", return_value=True), \
+         patch("file2ai.check_html_support", return_value=True):
+
         args = parse_args()
         convert_document(args)
 
-    # Check output file
-    exports_dir = Path("exports")
-    output_files = list(exports_dir.glob("test*.text"))
-    assert len(output_files) == 1
-    content = output_files[0].read_text()
+        # Check output file
+        exports_dir = Path("exports")
+        output_files = list(exports_dir.glob("test*.text"))
+        assert len(output_files) == 1
+        content = output_files[0].read_text()
 
-    # Verify content
-    assert "MHTML Test" in content
-    assert "Test Content" in content
+        # Verify content structure is preserved
+        assert "MHTML Test Document" in content
+        assert "embedded resources" in content
+        assert "Header 1" in content
+        assert "Cell 1" in content
+        assert "Cell 2" in content
 
-    # Clean up
-    shutil.rmtree(exports_dir)
+    # Test error handling for corrupted MHTML
+    corrupted_mhtml = """From: <Invalid MHTML>
+Content-Type: text/plain
+Invalid MIME structure"""
+
+    test_file.write_text(corrupted_mhtml)
+    
+    with patch("pathlib.Path", MockPath), \
+         patch("sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", "text"]), \
+         patch("importlib.resources.files", mock_files_instance), \
+         patch("file2ai.verify_file_access", return_value=True), \
+         patch("file2ai.check_package_support", return_value=True), \
+         patch("file2ai.check_html_support", return_value=True), \
+         pytest.raises(SystemExit):
+
+        args = parse_args()
+        convert_document(args)
+        assert "Failed to parse MHTML content" in caplog.text
 
 
 # Test HTML conversion error handling with:
@@ -1680,9 +2884,90 @@ Content-Type: text/html; charset="utf-8"
 # 2. PDF conversion failures
 # 3. Image conversion issues
 # 4. Proper error logging
-@pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper error simulation")
 def test_html_conversion_errors(tmp_path, caplog):
     """Test HTML conversion error handling."""
+    import logging
+    from unittest.mock import Mock, patch
+    from pathlib import Path
+    
+    # Configure logging
+    caplog.set_level(logging.INFO)
+    
+    # Test cases for different error scenarios
+    test_cases = [
+        {
+            'name': 'empty_file',
+            'content': '',
+            'format': 'text',
+            'expected_error': 'HTML file is empty'
+        },
+        {
+            'name': 'invalid_encoding',
+            'content': b'\xFF\xFE\x00\x00Invalid UTF-32 content',
+            'format': 'text',
+            'expected_error': 'Failed to decode HTML file with supported encodings'
+        },
+        {
+            'name': 'missing_file',
+            'content': None,
+            'format': 'pdf',
+            'expected_error': 'No such file or directory'
+        }
+    ]
+    
+    # Set up path tracking and mock file operations
+    class MockPath(type(Path())):
+        _files = {}
+        
+        def write_text(self, content, encoding=None):
+            self._files[str(self)] = content
+            
+        def write_bytes(self, content):
+            self._files[str(self)] = content
+            
+        def read_text(self, encoding=None):
+            content = self._files.get(str(self))
+            if content is None:
+                raise FileNotFoundError(f"No such file or directory: '{self}'")
+            if isinstance(content, bytes):
+                raise UnicodeDecodeError('utf-8', content, 0, 1, 'Invalid start byte')
+            return content
+            
+        def exists(self):
+            return str(self) in self._files
+            
+        def stat(self):
+            content = self._files.get(str(self), "")
+            return type('Stat', (), {'st_size': len(content) if content else 0})()
+    
+    for case in test_cases:
+        # Reset mock files for each test case
+        MockPath._files = {}
+        
+        # Create test file if content is provided
+        test_file = tmp_path / f"test_{case['name']}.html"
+        if case['content'] is not None:
+            if isinstance(case['content'], bytes):
+                test_file.write_bytes(case['content'])
+            else:
+                test_file.write_text(case['content'])
+        
+        # Run conversion with error checking
+        with patch("pathlib.Path", MockPath), \
+             patch("sys.argv", ["file2ai.py", "convert", "--input", str(test_file), "--format", case['format']]):
+            
+            args = parse_args()
+            try:
+                convert_document(args)
+                assert False, f"Expected error for {case['name']} not raised"
+            except SystemExit:
+                pass
+            
+            # Verify error message
+            assert case['expected_error'] in caplog.text, \
+                f"Expected error '{case['expected_error']}' not found in logs for {case['name']}"
+            
+            caplog.clear()
 
     # Create a test HTML file
     test_file = tmp_path / "test.html"
