@@ -1276,7 +1276,7 @@ def test_pptx_dependency_management(monkeypatch, caplog):
 # 2. Text extraction verification
 # 3. Slide numbering format
 # 4. Error handling coverage
-@pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper PowerPoint content simulation")
+# @pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper PowerPoint content simulation")
 def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
     """Test PowerPoint document to text conversion."""
     import logging
@@ -1335,7 +1335,7 @@ def test_ppt_to_text_conversion(tmp_path, caplog, monkeypatch):
 # 2. Image support requirements
 # 3. Unsupported format errors
 # 4. File access and corruption handling
-@pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper error simulation")
+# @pytest.mark.skip(reason="Skipping due to mock implementation issues - needs proper error simulation")
 def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
     """Test error handling in PowerPoint document conversion."""
     import logging
@@ -1370,11 +1370,11 @@ def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
     assert "Failed to install PowerPoint document support" in caplog.text
     caplog.clear()
 
-    # Test missing Pillow for image conversion
+    # Test missing PDF support for image conversion
     with (
         patch("file2ai.check_pptx_support", return_value=True),
-        patch("file2ai.check_package_support", return_value=False),
-        patch("file2ai.install_package_support", return_value=False),
+        patch("file2ai.check_pymupdf_support", return_value=False),
+        patch("file2ai.install_pymupdf_support", return_value=False),
     ):
         with pytest.raises(SystemExit):
             with patch(
@@ -1383,7 +1383,7 @@ def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
                 args = parse_args()
                 convert_document(args)
 
-    assert "Failed to install image support" in caplog.text
+    assert "Failed to install PDF support" in caplog.text
     caplog.clear()
 
     # Test unsupported format
@@ -1395,7 +1395,7 @@ def test_ppt_conversion_errors(tmp_path, caplog, monkeypatch):
                 args = parse_args()
                 convert_document(args)
 
-    assert "PDF conversion requires additional system dependencies" in caplog.text
+    assert "Unsupported output format for PowerPoint documents: pdf" in caplog.text
 
 
 def test_html_dependency_management(monkeypatch, caplog):
