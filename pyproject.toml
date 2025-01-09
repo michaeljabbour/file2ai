@@ -27,24 +27,33 @@ dependencies = [
     "gitpython>=3.1.40",  # For git repository operations
     "python-docx>=0.8.11",  # For Word document support
     "openpyxl>=3.1.2",  # For Excel document support
-    "weasyprint>=60.1",  # For HTML/PDF conversion
     "beautifulsoup4>=4.12.2",  # For HTML parsing
-    "fpdf>=1.7.2",  # For PDF generation
+    "reportlab>=4.0.9",  # Cross-platform PDF generation (replacing weasyprint)
     "python-pptx>=0.6.21",  # For PowerPoint support
     "requests>=2.31.0",  # For HTTP operations
     "pillow>=10.1.0",  # For image processing
-    "pymupdf>=1.23.7",  # For PDF-to-image conversion
-    "tqdm>=4.66.1"  # For progress bars
+    "pypdf>=4.0.1",  # Pure Python PDF processing (replacing pymupdf)
+    "tqdm>=4.66.1",  # For progress bars
+    "markdown>=3.5.2",  # For HTML generation from markdown
+    "html2text>=2020.1.16"  # For HTML to text conversion
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest>=7.0",  # For testing
     "pytest-cov>=4.0",  # For test coverage
-    "pytest-mock"  # For mocking in tests
+    "pytest-mock>=3.10.0",  # For mocking in tests
+    "coverage>=7.4.0",  # For detailed coverage reports
+    "pytest-timeout>=2.2.0"  # For test timeouts
 ]
 web = [
     "flask>=2.0.0",  # For web interface
+    "werkzeug>=3.0.0",  # WSGI utilities
+    "jinja2>=3.0.0"  # Template engine
+]
+docs = [
+    "sphinx>=7.1.0",  # For documentation generation
+    "sphinx-rtd-theme>=2.0.0"  # Documentation theme
 ]
 
 [project.urls]
