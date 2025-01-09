@@ -35,7 +35,10 @@ dependencies = [
     "pypdf>=4.0.1",  # Pure Python PDF processing (replacing pymupdf)
     "tqdm>=4.66.1",  # For progress bars
     "markdown>=3.5.2",  # For HTML generation from markdown
-    "html2text>=2020.1.16"  # For HTML to text conversion
+    "html2text>=2020.1.16",  # For HTML to text conversion
+    "flask>=2.0.0",  # For web interface
+    "werkzeug>=3.0.0",  # WSGI utilities
+    "jinja2>=3.0.0"  # Template engine
 ]
 
 [project.optional-dependencies]
@@ -45,11 +48,6 @@ test = [
     "pytest-mock>=3.10.0",  # For mocking in tests
     "coverage>=7.4.0",  # For detailed coverage reports
     "pytest-timeout>=2.2.0"  # For test timeouts
-]
-web = [
-    "flask>=2.0.0",  # For web interface
-    "werkzeug>=3.0.0",  # WSGI utilities
-    "jinja2>=3.0.0"  # Template engine
 ]
 docs = [
     "sphinx>=7.1.0",  # For documentation generation
