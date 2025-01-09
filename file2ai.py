@@ -701,33 +701,54 @@ def is_text_file(file_path: Path) -> bool:
 
 def _sequential_filename(output_path: Path) -> Path:
     """
-    Append (1), (2), etc. to the output file if it already exists to avoid overwriting.
-    Ensures sequential numbering by checking all existing files first.
+    Handle file naming based on location:
+    - For files in exports directory: Always use base name, overwriting existing files
+    - For other files: Append (1), (2), etc. to avoid overwriting
     """
-    if not output_path.exists():
-        return output_path
-
-    base = output_path.stem
+    base = output_path.stem.split('(')[0]  # Remove any existing (n) suffix
     suffix = output_path.suffix
     parent = output_path.parent
 
-    # Find all existing sequential files
-    existing_files = list(parent.glob(f"{base}(*){suffix}"))
-    counter = 1
-
-    if existing_files:
-        # Extract numbers from existing files and find the highest
-        numbers = []
-        for f in existing_files:
+    # For files in exports directory, always use base name and remove existing files
+    if parent.name == "exports":
+        # Remove any existing files with the same base name
+        for existing_file in list(parent.glob(f"{base}{suffix}")):
             try:
+                existing_file.unlink()
+                logger.debug(f"Removed existing file: {existing_file}")
+            except OSError as e:
+                logger.warning(f"Failed to remove existing file {existing_file}: {e}")
+        
+        for existing_file in list(parent.glob(f"{base}(*){suffix}")):
+            try:
+                existing_file.unlink()
+                logger.debug(f"Removed existing file: {existing_file}")
+            except OSError as e:
+                logger.warning(f"Failed to remove existing file {existing_file}: {e}")
+        
+        logger.debug(f"File in exports directory, using base name: {base}{suffix}")
+        return parent / f"{base}{suffix}"
+
+    # For other files, use sequential naming
+    existing_files = list(parent.glob(f"{base}{suffix}"))
+    existing_files.extend(list(parent.glob(f"{base}(*){suffix}")))
+
+    if not existing_files:
+        return output_path
+
+    # Extract numbers from existing files and find the highest
+    numbers = [0]  # Start with 0 to handle unnumbered file
+    for f in existing_files:
+        try:
+            # Check if filename has a number in parentheses
+            if '(' in f.stem and ')' in f.stem:
                 num = int(f.stem[len(base) + 1:-1])  # Extract number between parentheses
                 numbers.append(num)
-            except (ValueError, IndexError):
-                continue
-        if numbers:
-            counter = max(numbers) + 1
+        except (ValueError, IndexError):
+            continue
 
-    # Create new filename with next available number
+    # Use next available number
+    counter = max(numbers) + 1
     output_path = parent / f"{base}({counter}){suffix}"
     logger.debug(f"Using sequential filename: {output_path}")
     return output_path
@@ -1382,8 +1403,8 @@ def load_config() -> dict:
 
 
 def check_html_support() -> bool:
-    """Check if required HTML packages (beautifulsoup4, weasyprint, and pillow) are available."""
-    required_packages = ["beautifulsoup4", "weasyprint", "pillow"]
+    """Check if required HTML packages (beautifulsoup4, weasyprint, and Pillow) are available."""
+    required_packages = ["beautifulsoup4", "weasyprint", "Pillow"]
     missing_packages = [pkg for pkg in required_packages if not check_package_support(pkg)]
     if missing_packages:
         logger.debug(f"Missing HTML support packages: {', '.join(missing_packages)}")
@@ -1392,8 +1413,8 @@ def check_html_support() -> bool:
 
 
 def install_html_support() -> bool:
-    """Install required HTML packages (beautifulsoup4, weasyprint, and pillow)."""
-    required_packages = ["beautifulsoup4", "weasyprint", "pillow"]
+    """Install required HTML packages (beautifulsoup4, weasyprint, and Pillow)."""
+    required_packages = ["beautifulsoup4", "weasyprint", "Pillow"]
     success = True
     
     # Install packages one by one
@@ -1894,26 +1915,30 @@ def convert_document(args: argparse.Namespace) -> None:
                     sys.exit(1)
 
             elif output_format == "csv":
-                # Convert active sheet to CSV
-                sheet = workbook.active
-                if sheet is None:
-                    logger.error("No active sheet found in workbook")
-                    sys.exit(1)
+                # Convert each sheet to a separate CSV file
+                for sheet in workbook.worksheets:
+                    # Create CSV filename with sheet name
+                    sheet_name = sheet.title.replace(" ", "_")
+                    csv_path = output_path.parent / f"{input_path.stem}_{sheet_name}.csv"
+                    
+                    csv_lines = []
+                    # Use sheet.iter_rows() which is safer than .rows property
+                    for row in sheet.iter_rows():
+                        row_text = []
+                        for cell in row:
+                            value = cell.value if cell.value is not None else ""
+                            # Quote strings containing commas
+                            if isinstance(value, str) and "," in value:
+                                value = f'"{value}"'
+                            row_text.append(str(value))
+                        csv_lines.append(",".join(row_text))
 
-                csv_lines = []
-                # Use sheet.iter_rows() which is safer than .rows property
-                for row in sheet.iter_rows():
-                    row_text = []
-                    for cell in row:
-                        value = cell.value if cell.value is not None else ""
-                        # Quote strings containing commas
-                        if isinstance(value, str) and "," in value:
-                            value = f'"{value}"'
-                        row_text.append(str(value))
-                    csv_lines.append(",".join(row_text))
+                    # Ensure output directory exists
+                    csv_path.parent.mkdir(parents=True, exist_ok=True)
+                    csv_path.write_text("\n".join(csv_lines))
+                    logger.info(f"Successfully converted sheet '{sheet.title}' to CSV: {csv_path}")
 
-                output_path.write_text("\n".join(csv_lines))
-                logger.info(f"Successfully converted Excel document to CSV: {output_path}")
+                logger.info(f"Successfully converted Excel document to CSV: {input_path}")
                 return
 
             elif output_format == "image":
@@ -2273,13 +2298,16 @@ def convert_document(args: argparse.Namespace) -> None:
             # Read HTML content with proper encoding handling
             for encoding in ['utf-8', 'latin-1']:
                 try:
+                    logger.info(f"Attempting to read HTML file with {encoding} encoding")
                     with open(input_path, 'r', encoding=encoding) as f:
                         html_content = f.read()
                         if not html_content.strip():
                             logger.error("HTML file is empty")
                             sys.exit(1)
+                        logger.info(f"Successfully read HTML file with {encoding} encoding")
                         break
                 except UnicodeDecodeError:
+                    logger.info(f"Failed to read with {encoding} encoding, trying next encoding")
                     continue
             else:
                 logger.error("Failed to decode HTML file with supported encodings")
