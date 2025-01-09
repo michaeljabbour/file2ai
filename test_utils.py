@@ -9,6 +9,85 @@ from threading import Lock
 from pathlib import Path
 import docx
 from docx.shared import Inches
+
+# Mock mimetypes before importing openpyxl
+import unittest.mock
+import sys
+import types
+from pathlib import Path
+
+# Create a mutable module class
+class MutableModule(types.ModuleType):
+    def __init__(self, name):
+        super().__init__(name)
+        self._namespace = {}
+    
+    def __setattr__(self, name, value):
+        if name == '_namespace':
+            super().__setattr__(name, value)
+        else:
+            self._namespace[name] = value
+    
+    def __getattr__(self, name):
+        try:
+            return self._namespace[name]
+        except KeyError:
+            raise AttributeError(f"module '{self.__name__}' has no attribute '{name}'")
+
+# Create base mime types implementation
+class MimeTypes:
+    def __init__(self):
+        self.types_map = {
+            '.html': 'text/html',
+            '.htm': 'text/html',
+            '.txt': 'text/plain',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.xls': 'application/vnd.ms-excel',
+            '.pdf': 'application/pdf',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            '.ppt': 'application/vnd.ms-powerpoint',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.doc': 'application/msword',
+            '.xml': 'application/xml'
+        }
+        self.common_types = self.types_map.copy()
+        
+    def guess_type(self, url, strict=True):
+        ext = Path(url).suffix.lower()
+        return self.types_map.get(ext, 'application/octet-stream'), None
+        
+    def add_type(self, type, ext, strict=True):
+        if ext[0] != '.':
+            ext = '.' + ext
+        ext = ext.lower()
+        self.types_map[ext] = type
+        self.common_types[ext] = type
+        
+    def read(self, filename):
+        pass
+        
+    def readfp(self, fp, strict=True):
+        pass
+
+# Create mock module
+mock_mimetypes = MutableModule('mimetypes')
+mime_types_instance = MimeTypes()
+
+# Set up module attributes and methods
+mock_mimetypes.MimeTypes = MimeTypes
+mock_mimetypes.guess_type = mime_types_instance.guess_type
+mock_mimetypes.add_type = mime_types_instance.add_type
+mock_mimetypes.init = unittest.mock.MagicMock()
+mock_mimetypes.knownfiles = []
+mock_mimetypes.inited = True
+mock_mimetypes.suffix_map = {}
+mock_mimetypes.encodings_map = {}
+mock_mimetypes.MIME_TYPES_ENCODINGS = 1
+mock_mimetypes.MIME_TYPES_TYPES = 2
+
+# Replace real mimetypes module with our mock
+sys.modules['mimetypes'] = mock_mimetypes
+
 import openpyxl
 from pptx import Presentation
 from pptx.util import Inches as PptxInches
