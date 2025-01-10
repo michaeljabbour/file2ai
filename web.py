@@ -20,16 +20,48 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def gather_all_files(base_dir: str) -> List[str]:
-    """Recursively gather all files from a directory.
+def matches_pattern(file_path: Union[str, Path], pattern_input: str) -> bool:
+    """Check if a file matches any of the provided patterns.
     
     Args:
-        base_dir: Base directory to start gathering files from
+        file_path: Path to the file to check (str or Path)
+        pattern_input: Semicolon-separated list of glob patterns
         
     Returns:
-        List of absolute paths to all files in the directory tree
+        bool: True if file matches any pattern, False otherwise
     """
-    all_files = []
+    if not pattern_input:
+        return False
+        
+    patterns = [p.strip() for p in pattern_input.split(';') if p.strip()]
+    if not patterns:
+        return False
+        
+    path_obj = Path(file_path) if isinstance(file_path, str) else file_path
+    for pattern in patterns:
+        try:
+            if path_obj.match(pattern):
+                return True
+        except Exception as e:
+            logger.warning(f"Error matching pattern '{pattern}' against '{path_obj}': {e}")
+            continue
+    return False
+
+def gather_filtered_files(base_dir: str, max_size_kb: int, pattern_mode: str, pattern_input: str) -> List[str]:
+    """Gather files from a directory recursively, applying size and pattern filters.
+    
+    Args:
+        base_dir: Base directory to scan
+        max_size_kb: Maximum file size in KB (files larger than this are excluded)
+        pattern_mode: Either 'exclude' or 'include'
+        pattern_input: Semicolon-separated list of glob patterns
+        
+    Returns:
+        List[str]: List of filtered file paths
+    """
+    filtered_files = []
+    max_size_bytes = max_size_kb * 1024
+    
     try:
         base_path = Path(base_dir)
         if not base_path.exists():
@@ -38,17 +70,42 @@ def gather_all_files(base_dir: str) -> List[str]:
             raise IOError(f"Not a directory: {base_dir}")
             
         for p in base_path.rglob('*'):
-            if p.is_file():
-                # Skip hidden files and common ignore patterns
-                if not any(part.startswith('.') for part in p.parts):
-                    all_files.append(str(p.resolve()))
+            if not p.is_file():
+                continue
+                
+            # Skip hidden files and common ignore patterns
+            if any(part.startswith('.') for part in p.parts):
+                continue
+                
+            # Check file size
+            try:
+                if p.stat().st_size > max_size_bytes:
+                    logger.debug(f"Skipping {p}: exceeds size limit of {max_size_kb}KB")
+                    continue
+            except OSError as e:
+                logger.warning(f"Error checking size of {p}: {e}")
+                continue
+            
+            # Check pattern match
+            str_path = str(p.resolve())
+            matches = matches_pattern(str_path, pattern_input)
+            
+            # Include/exclude based on pattern_mode
+            if pattern_mode == "exclude" and matches:
+                logger.debug(f"Skipping {p}: matches exclude pattern")
+                continue
+            elif pattern_mode == "include" and not matches and pattern_input:
+                logger.debug(f"Skipping {p}: doesn't match include pattern")
+                continue
+                
+            filtered_files.append(str_path)
                     
-        logger.info(f"Found {len(all_files)} files in {base_dir}")
+        logger.info(f"Found {len(filtered_files)} files in {base_dir} after filtering")
     except Exception as e:
         logger.error(f"Error gathering files from {base_dir}: {e}")
         raise
         
-    return all_files
+    return sorted(filtered_files)
 from file2ai import (
     convert_document,
     clone_and_export,
@@ -71,6 +128,9 @@ class ConversionOptions(TypedDict, total=False):
     token: Optional[str]
     local_dir: Optional[str]
     subdir: Optional[str]
+    max_file_size_kb: Union[str, int]
+    pattern_mode: str  # "exclude" | "include"
+    pattern_input: str
 
 
 class JobStatus(TypedDict):
@@ -111,20 +171,6 @@ for name, path in directories.items():
     except Exception as e:
         logger.error(f"Failed to create {name} directory: {e}")
         sys.exit(1)
-for name, path in directories.items():
-    try:
-        # Create directory with proper permissions
-        path.mkdir(exist_ok=True, mode=0o755)
-        # Verify directory exists and is writable
-        if not path.exists():
-            raise IOError(f"Failed to create directory: {path}")
-        if not os.access(str(path), os.W_OK):
-            raise IOError(f"Directory not writable: {path}")
-        logger.info(f"Created/verified directory: {path}")
-    except Exception as e:
-        logger.error(f"Failed to create {name} directory: {e}")
-        sys.exit(1)
->>>>>>> origin/main
 
 # Global job tracking
 conversion_jobs = {}
@@ -151,10 +197,24 @@ def process_job(
     # Initialize temp_files list at the start
     temp_files = []
     
+    # Get filtering options
+    max_file_size_kb = int(options.get("max_file_size_kb", 1000))  # Default 1MB
+    pattern_mode = options.get("pattern_mode", "exclude")
+    pattern_input = options.get("pattern_input", "")
+    
+    # Initialize job status
+    if job_id not in conversion_jobs:
+        conversion_jobs[job_id] = {
+            "status": "processing",
+            "progress": 0,
+            "errors": [],
+            "start_time": datetime.now(),
+            "output_files": []
+        }
+    job = conversion_jobs[job_id]
+    
     try:
-        job = conversion_jobs[job_id]
-        job["status"] = "processing"
-        job["progress"] = 0
+        # Job already initialized above
         job["errors"] = []  # Reset errors at start
 
         # Handle different commands
@@ -189,21 +249,72 @@ def process_job(
 
             # Process files
             output_files = []
-            total_files = len(files)
-            temp_files = []  # Track temporary files for cleanup
-
-            for idx, (filename, file_data) in enumerate(files.items()):
+            filtered_files = {}
+            
+            # Valid file extensions and their MIME types
+            valid_types = {
+                '.txt': 'text/plain',
+                '.pdf': 'application/pdf',
+                '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                '.html': 'text/html',
+                '.htm': 'text/html'
+            }
+            
+            # Apply filtering
+            for filename, file_data in files.items():
+                # Make a copy of the file data to avoid handle issues
+                file_content = file_data.read()
+                file_data.seek(0)  # Reset position for potential reuse
+                
+                # Validate file type
+                file_ext = os.path.splitext(filename)[1].lower()
+                if file_ext not in valid_types:
+                    logger.warning(f"Skipping {filename}: invalid file type")
+                    continue
+                
+                # Check file size
+                size_kb = len(file_content) / 1024
+                
+                if size_kb > max_file_size_kb:
+                    logger.info(f"Skipping {filename}: exceeds size limit of {max_file_size_kb}KB")
+                    continue
+                    
+                # Check pattern match
+                matches = matches_pattern(filename, pattern_input)
+                if pattern_mode == "exclude" and matches:
+                    logger.info(f"Skipping {filename}: matches exclude pattern")
+                    continue
+                elif pattern_mode == "include" and not matches and pattern_input:
+                    logger.info(f"Skipping {filename}: doesn't match include pattern")
+                    continue
+                    
+                filtered_files[filename] = file_data
+            
+            total_files = len(filtered_files)
+            if total_files == 0:
+                raise ValueError("No files match the filtering criteria")
+            
+            for idx, (filename, file_data) in enumerate(filtered_files.items()):
                 input_path = None
                 output_path = None
                 try:
                     # Save uploaded file
                     input_path = Path(UPLOADS_DIR) / filename  # Use constant from file2ai module
->>>>>>> origin/main
-                    # Read file content into memory first
-                    file_content = file_data.read()
+                    # Get file content from filtered_files
+                    if isinstance(file_data, (str, bytes)):
+                        file_content = file_data
+                    else:
+                        file_content = file_data.read()
+                        file_data.seek(0)  # Reset position
+                    
                     # Create and write to file
                     with open(str(input_path), 'wb') as f:
-                        f.write(file_content)
+                        if isinstance(file_content, str):
+                            f.write(file_content.encode('utf-8'))
+                        else:
+                            f.write(file_content)
                     temp_files.append(input_path)  # Track for cleanup
                     
                     # Convert path to absolute path
@@ -426,12 +537,20 @@ def process_job(
         else:
             raise ValueError("Invalid command: %s" % command)
 
-        status = "completed" if not job["errors"] else "completed_with_errors"
-        job["status"] = status
+        # Update final status
+        if not job["errors"]:
+            job["status"] = "completed"
+            job["progress"] = 100
+        else:
+            job["status"] = "completed_with_errors"
+            
+        logger.info(f"Job {job_id} completed with status: {job['status']}")
 
     except Exception as e:
+        error_msg = f"Job failed: {str(e)}"
         job["status"] = "failed"
-        job["errors"].append("Job failed: %s" % str(e))
+        job["errors"].append(error_msg)
+        logger.error(error_msg)
 
     finally:
         # Clean up temporary files
@@ -442,8 +561,15 @@ def process_job(
             except Exception as e:
                 logger.error(f"Error cleaning up temp file {temp_file}: {e}")
         
+        # Ensure job has a final status
+        if job["status"] == "processing":
+            job["status"] = "failed"
+            job["errors"].append("Job terminated unexpectedly")
+            
         # Signal completion
-        job_events[job_id].set()
+        if job_id in job_events:
+            job_events[job_id].set()
+            logger.info(f"Job {job_id} event signaled")
 
 
 @app.route("/", defaults={"path": ""})
@@ -488,27 +614,15 @@ def serve_react(path):
 
 @app.route("/", methods=["POST"])
 def handle_api():
-<<<<<<< HEAD
-    """Handle API requests for file conversion and exports"""
-    # Debug logging
-    logger.info("Received API request")
-    logger.debug(f"Form data: {request.form}")
-    logger.debug(f"Files: {request.files}")
-    logger.debug(f"Headers: {request.headers}")
-||||||| 6c7bef8
-    """Handle API requests for file conversion and exports"""
-    # Debug logging
-    logger.info("Received API request")
-    print("Form data:", request.form)
-    print("Files:", request.files)
-    print("Headers:", request.headers)
-=======
     """Handle API requests for file conversion and exports.
     
     Accepts POST requests with the following parameters:
     - command: str, either 'convert' or 'export'
     - file: list of files (for convert command)
     - format: str, output format (text, pdf, html, docx, xlsx, pptx)
+    - max_file_size_kb: int, maximum file size in KB (default: 50)
+    - pattern_mode: str, either 'exclude' or 'include'
+    - pattern_input: str, glob patterns to filter files
     - pages: str, optional page range for PDF conversion
     - brightness: float, optional image brightness (0.1-2.0)
     - contrast: float, optional image contrast (0.1-2.0)
@@ -517,24 +631,24 @@ def handle_api():
     - branch: str, optional repository branch (for export command)
     - token: str, optional GitHub token (for export command)
     - local_dir: str, optional local directory path (for export command)
-    
-    Returns:
-        JSON response with:
-        - On success: {"job_id": str}
-        - On error: {"error": str}, with appropriate HTTP status code
-        
-    Security:
-        - Enforces 50MB file size limit
-        - Validates file extensions and MIME types
-        - Rejects suspicious file types
-        - Cleans up temporary files
     """
-    # Security logging
-    logger.info("Received API request from %s", request.remote_addr)
-    logger.debug("Form data: %s", request.form)
-    logger.debug("Files: %s", request.files)
-    logger.debug("Headers: %s", request.headers)
->>>>>>> origin/main
+    # Debug logging
+    logger.info("Received API request")
+    logger.debug(f"Form data: {request.form}")
+    logger.debug(f"Files: {request.files}")
+    logger.debug(f"Headers: {request.headers}")
+    
+    # Initialize options with file filtering parameters
+    try:
+        max_file_size = int(request.form.get("max_file_size_kb", "50"))
+        if max_file_size <= 0:
+            raise ValueError("max_file_size_kb must be positive")
+    except ValueError as e:
+        return jsonify({"error": f"Invalid max_file_size_kb: {str(e)}"}), 400
+        
+    pattern_mode = request.form.get("pattern_mode", "exclude")
+    if pattern_mode not in ["exclude", "include"]:
+        return jsonify({"error": "pattern_mode must be 'exclude' or 'include'"}), 400
     
     command = request.form.get("command", "export")
     logger.info(f"Processing command: {command}")
@@ -550,20 +664,29 @@ def handle_api():
     )
     job_events[job_id] = threading.Event()
 
+    # Initialize options with file filtering parameters
+    try:
+        max_file_size = int(request.form.get("max_file_size_kb", "50"))
+        if max_file_size <= 0:
+            raise ValueError("max_file_size_kb must be positive")
+    except ValueError as e:
+        return jsonify({"error": f"Invalid max_file_size_kb: {str(e)}"}), 400
+        
+    pattern_mode = request.form.get("pattern_mode", "exclude")
+    if pattern_mode not in ["exclude", "include"]:
+        return jsonify({"error": "pattern_mode must be 'exclude' or 'include'"}), 400
+        
+    base_options = {
+        "max_file_size_kb": max_file_size,
+        "pattern_mode": pattern_mode,
+        "pattern_input": request.form.get("pattern_input", "")
+    }
+
     # Handle different commands
     if command == "convert":
         if not request.files:
             return jsonify({"error": "No files selected"}), 400
 
-<<<<<<< HEAD
-        files = {f.filename: f for f in request.files.getlist("file") if f.filename}
-||||||| 6c7bef8
-        files = {
-            f.filename: f
-            for f in request.files.getlist("file")
-            if f.filename
-        }
-=======
         # Define security limits
         MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB limit
         ALLOWED_EXTENSIONS = {'.txt', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.html', '.htm'}
@@ -607,61 +730,36 @@ def handle_api():
                 return jsonify({"error": f"Invalid file type detected"}), 400
                 
             files[f.filename] = f
-            
->>>>>>> origin/main
         if not files:
             return jsonify({"error": "No valid files selected"}), 400
 
+        # Combine base options with conversion options
         options = ConversionOptions(
             format=request.form.get("format", "text"),
             pages=request.form.get("pages", ""),
             brightness=request.form.get("brightness", "1.0"),
             contrast=request.form.get("contrast", "1.0"),
-<<<<<<< HEAD
             resolution=request.form.get("resolution", "300"),
-||||||| 6c7bef8
-            resolution=request.form.get("resolution", "300"),
-||||||| ccf8128
-        # Create job
-        job_id = str(uuid.uuid4())
-        conversion_jobs[job_id] = JobStatus(
-            status="queued",
-            progress=0,
-            errors=[],
-            start_time=datetime.now(),
-            output_files=[]
-=======
-        # Create job
-        job_id = str(uuid.uuid4())
-        conversion_jobs[job_id] = JobStatus(
-            status="queued", progress=0, errors=[], start_time=datetime.now(), output_files=[]
->>>>>>> main
-=======
-            resolution=request.form.get("resolution", "300")
->>>>>>> origin/main
+            max_file_size_kb=max_file_size,
+            pattern_mode=pattern_mode,
+            pattern_input=request.form.get("pattern_input", "")
         )
 
         # Start conversion in background
-<<<<<<< HEAD
         thread = threading.Thread(target=process_job, args=(job_id, command, files, options))
-||||||| 6c7bef8
-        thread = threading.Thread(
-            target=process_job,
-            args=(job_id, command, files, options)
-        )
         thread.start()
         return jsonify({"job_id": job_id})
-=======
-        thread = threading.Thread(target=process_job, args=(job_id, command, files, options))
-
-        thread.start()
-        return jsonify({"job_id": job_id})
->>>>>>> origin/main
 
     else:  # command == 'export'
         fmt = request.form.get("format", "text")
-        options = ConversionOptions(format=fmt)
-        options["subdir"] = request.form.get("subdir")  # Store subdir in options
+        # Initialize options with filtering parameters
+        options = ConversionOptions(
+            format=fmt,
+            max_file_size_kb=max_file_size,
+            pattern_mode=pattern_mode,
+            pattern_input=request.form.get("pattern_input", ""),
+            subdir=request.form.get("subdir")  # Store subdir in options
+        )
 
         # Add repository-specific options
         if repo_url := request.form.get("repo_url"):
@@ -683,14 +781,19 @@ def handle_api():
             if not Path(dir_path).exists():
                 return jsonify({"error": f"Directory not found: {dir_path}"}), 400
                 
-            # Gather all files from directory
+            # Gather filtered files from directory
             try:
-                directory_files = gather_all_files(dir_path)
+                directory_files = gather_filtered_files(
+                    dir_path,
+                    max_size_kb=max_file_size,
+                    pattern_mode=pattern_mode,
+                    pattern_input=request.form.get("pattern_input", "")
+                )
             except Exception as e:
                 return jsonify({"error": f"Error scanning directory: {str(e)}"}), 400
                 
             if not directory_files:
-                return jsonify({"error": f"No files found in directory: {dir_path}"}), 400
+                return jsonify({"error": f"No matching files found in directory: {dir_path}"}), 400
                 
             options["local_dir"] = dir_path
             files = {
@@ -709,8 +812,32 @@ def handle_api():
     thread.start()
     return jsonify({"job_id": job_id})
 
-    return jsonify({"error": "Invalid command"}), 400
 
+@app.route("/preview/<job_id>")
+def get_preview(job_id):
+    """Get a preview of the converted text content."""
+    if job_id not in conversion_jobs:
+        return jsonify({"error": "Job not found"}), 404
+        
+    job = conversion_jobs[job_id]
+    if not job["output_files"]:
+        return jsonify({"error": "No output files available"}), 404
+        
+    # Get the first text file
+    text_files = [f for f in job["output_files"] if str(f).endswith(".text")]
+    if not text_files:
+        return jsonify({"error": "No text preview available"}), 404
+        
+    try:
+        # Read first 1000 characters
+        with open(text_files[0], 'r', encoding='utf-8') as f:
+            content = f.read(1000)
+        return jsonify({
+            "preview": content,
+            "file": str(text_files[0].name)
+        })
+    except Exception as e:
+        return jsonify({"error": f"Error reading preview: {str(e)}"}), 500
 
 @app.route("/status/<job_id>")
 def get_status(job_id):

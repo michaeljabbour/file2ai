@@ -448,6 +448,23 @@ Cross-platform compatible with no system dependencies required.""",
         default="text",
         help="Choose the output format (text or json). Default is text.",
     )
+    # File filtering options
+    parser.add_argument(
+        "--max-size-kb",
+        type=int,
+        default=50,
+        help="Maximum file size in KB (default: 50)",
+    )
+    parser.add_argument(
+        "--pattern-mode",
+        choices=["exclude", "include"],
+        default="exclude",
+        help="Pattern matching mode (exclude or include). Default is exclude.",
+    )
+    parser.add_argument(
+        "--pattern-input",
+        help="Semicolon-separated list of glob patterns (e.g., '*.md;build/*')",
+    )
 
     # Create subparsers for different commands
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -881,12 +898,17 @@ def should_ignore(
     return False  # Default to include if no patterns match
 
 
+from web import gather_filtered_files
+
 def export_files_to_single_file(
     repo: Optional[Repo],
     repo_name: str,
     repo_root: Path,
     output_file: Path,
     skip_commit_info: bool = False,
+    max_size_kb: int = 50,
+    pattern_mode: str = "exclude",
+    pattern_input: Optional[str] = None,
 ) -> None:
     """
     Export repository (or local dir) text files to a single file.
@@ -897,6 +919,9 @@ def export_files_to_single_file(
         repo_root: Root path of the repository or local directory.
         output_file: Path to the output file.
         skip_commit_info: If True, do not attempt to read Git commit info.
+        max_size_kb: Maximum file size in KB (default: 50).
+        pattern_mode: Pattern matching mode ("exclude" or "include", default: "exclude").
+        pattern_input: Semicolon-separated list of glob patterns.
     """
     logger.info("Starting file export process")
     stats: Dict[str, int] = {
@@ -927,7 +952,15 @@ def export_files_to_single_file(
         outfile.write("\n" + "=" * 80 + "\n\n")
 
         # Process files
-        _process_repository_files(repo_root, outfile, stats, repo if not skip_commit_info else None)
+        _process_repository_files(
+            repo_root,
+            outfile,
+            stats,
+            repo if not skip_commit_info else None,
+            max_size_kb=max_size_kb,
+            pattern_mode=pattern_mode,
+            pattern_input=pattern_input
+        )
 
         # Write summary
         _write_summary(outfile, stats)
@@ -941,6 +974,9 @@ def export_files_to_json(
     repo_root: Path,
     output_file: Path,
     skip_commit_info: bool = False,
+    max_size_kb: int = 50,
+    pattern_mode: str = "exclude",
+    pattern_input: Optional[str] = None,
 ) -> None:
     """
     Export repository (or local dir) text files to a JSON file.
@@ -951,6 +987,9 @@ def export_files_to_json(
         repo_root: Root path of the repository or local directory.
         output_file: Path to the output file.
         skip_commit_info: If True, do not attempt to read Git commit info.
+        max_size_kb: Maximum file size in KB (default: 50).
+        pattern_mode: Pattern matching mode ("exclude" or "include", default: "exclude").
+        pattern_input: Semicolon-separated list of glob patterns.
     """
     logger.info("Starting JSON export process")
     stats: Dict[str, int] = {
@@ -966,14 +1005,20 @@ def export_files_to_json(
     data: List[FileEntry] = []
     ignore_patterns = load_gitignore_patterns(repo_root)
 
-    files_to_process = [
-        f
-        for f in repo_root.rglob("*")
-        if f.is_file()
-        and not f.name.startswith(".")
-        and ".git" not in str(f)
-        and not should_ignore(f, ignore_patterns, repo_root, stats)
-    ]
+    # Use gather_filtered_files for file filtering
+    filtered_files = gather_filtered_files(
+        str(repo_root),
+        max_size_kb=max_size_kb,
+        pattern_mode=pattern_mode,
+        pattern_input=pattern_input or ""  # Convert None to empty string
+    )
+    
+    # Convert to Path objects and apply gitignore patterns
+    files_to_process = []
+    for f in filtered_files:
+        path_obj = Path(f)
+        if not should_ignore(path_obj, ignore_patterns, repo_root, stats):
+            files_to_process.append(path_obj)
     total_files = len(files_to_process)
 
     for i, file_path in enumerate(files_to_process, 1):
@@ -1062,38 +1107,42 @@ def _write_directory_structure(repo_root: Path, outfile: TextIO) -> None:
 
 
 def _process_repository_files(
-    repo_root: Path, outfile: TextIO, stats: Dict[str, int], repo: Optional[Repo]
+    repo_root: Path,
+    outfile: TextIO,
+    stats: Dict[str, int],
+    repo: Optional[Repo],
+    max_size_kb: int = 50,
+    pattern_mode: str = "exclude",
+    pattern_input: Optional[str] = None,
 ) -> None:
-    """Process all repository files and update statistics."""
+    """
+    Process repository files and update statistics.
+    
+    Args:
+        repo_root: Root path of the repository
+        outfile: Output file handle
+        stats: Statistics dictionary to update
+        repo: Optional Git repository object
+        max_size_kb: Maximum file size in KB
+        pattern_mode: Pattern matching mode ("exclude" or "include")
+        pattern_input: Semicolon-separated list of glob patterns
+    """
     ignore_patterns = load_gitignore_patterns(repo_root)
 
-    # Define directories to skip early in the process
-    skip_dirs = {
-        "node_modules",
-        "venv",
-        ".venv",
-        "env",
-        ".env",
-        "dist",
-        "build",
-        ".next",
-        "__pycache__",
-        ".git",
-        ".pytest_cache",
-        ".coverage",
-        ".idea",
-        ".vscode",
-    }
-
+    # Use gather_filtered_files for file filtering
+    filtered_files = gather_filtered_files(
+        str(repo_root),
+        max_size_kb=max_size_kb,
+        pattern_mode=pattern_mode,
+        pattern_input=pattern_input or ""  # Convert None to empty string
+    )
+    
+    # Convert to Path objects and apply gitignore patterns
     files_to_process = []
-    for f in repo_root.rglob("*"):
-        if f.is_file():
-            # Skip files in excluded directories early
-            if any(skip_dir in str(f.parent) for skip_dir in skip_dirs):
-                continue
-            # Apply remaining filters
-            if not f.name.startswith(".") and not should_ignore(f, ignore_patterns, repo_root):
-                files_to_process.append(f)
+    for f in filtered_files:
+        path_obj = Path(f)
+        if not should_ignore(path_obj, ignore_patterns, repo_root):
+            files_to_process.append(path_obj)
 
     total_files = len(files_to_process)
 
