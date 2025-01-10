@@ -559,8 +559,15 @@ Cross-platform compatible with no system dependencies required.""",
         # Process export command arguments if provided
         # Handle --subdir first as it can be used for both local and repo exports
         if args.subdir:
-            args.local_dir = os.path.abspath(args.subdir)
-            logger.info(f"Using subdirectory as source: {args.local_dir}")
+            if args.local_dir:
+                # Combine local_dir + subdir
+                joined_path = os.path.join(os.path.expanduser(args.local_dir), args.subdir)
+                args.local_dir = os.path.abspath(joined_path)
+                logger.info(f"Using combined local directory + subdir: {args.local_dir}")
+            else:
+                # Fallback if only subdir is used
+                args.local_dir = os.path.abspath(os.path.expanduser(args.subdir))
+                logger.info(f"Using subdirectory as source: {args.local_dir}")
             return args
             
         if args.local_dir:

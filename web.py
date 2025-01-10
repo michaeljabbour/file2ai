@@ -145,7 +145,6 @@ from file2ai import EXPORTS_DIR, UPLOADS_DIR, FRONTEND_DIR, prepare_exports_dir
 
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path='')
 app.secret_key = os.urandom(24)  # For flash messages
-app.config['SERVER_NAME'] = 'localhost:8000'  # Configure Flask to use port 8000
 
 # Set up directories with proper permissions
 directories = {
