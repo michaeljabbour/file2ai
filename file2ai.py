@@ -159,7 +159,7 @@ def install_package_support(package: str) -> bool:
     if check_package_support(package):
         return True
     try:
-        logger.info(f"Installing {package}...")
+        logger.debug(f"Installing {package}...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", package])
         importlib.invalidate_caches()  # Ensure the newly installed package is detected
         
@@ -309,7 +309,7 @@ logger = logging.getLogger(__name__)
 
 def install_gitpython_quietly() -> None:
     """Check if GitPython package is available."""
-    logger.info("Checking GitPython dependency...")
+    logger.debug("Checking GitPython dependency...")
     if not check_package_support("git"):
         logger.error("GitPython not found. Please install dependencies first.")
         raise SystemExit(1)
@@ -352,8 +352,10 @@ def setup_logging(operation: str = "general", context: Optional[str] = None) -> 
 
     # Configure logging handlers with full context
     log_file = logs_dir / f"{'-'.join(log_name_parts)}.log"
+    # Use WARNING as default level, but allow override via LOG_LEVEL env var
+    log_level = os.environ.get('LOG_LEVEL', 'WARNING')
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, log_level.upper(), logging.WARNING),
         format="%(asctime)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
@@ -557,18 +559,23 @@ Cross-platform compatible with no system dependencies required.""",
             args.repo_url_sub = None
 
         # Process export command arguments if provided
-        # Handle --subdir first as it can be used for both local and repo exports
-        if args.subdir:
-            if args.local_dir:
-                # Combine local_dir + subdir
-                joined_path = os.path.join(os.path.expanduser(args.local_dir), args.subdir)
-                args.local_dir = os.path.abspath(joined_path)
-                logger.info(f"Using combined local directory + subdir: {args.local_dir}")
-            else:
-                # Fallback if only subdir is used
-                args.local_dir = os.path.abspath(os.path.expanduser(args.subdir))
-                logger.info(f"Using subdirectory as source: {args.local_dir}")
-            return args
+        # Handle path normalization and subdir combination
+        if args.local_dir:
+            # Normalize local_dir first
+            args.local_dir = os.path.abspath(os.path.expanduser(args.local_dir))
+            
+            # If subdir is provided, combine with normalized local_dir
+            if args.subdir:
+                args.local_dir = os.path.abspath(os.path.join(args.local_dir, args.subdir))
+                logger.debug(f"Using combined local directory + subdir: {args.local_dir}")
+        elif args.subdir:
+            # If only subdir provided, treat it as the local_dir
+            args.local_dir = os.path.abspath(os.path.expanduser(args.subdir))
+            logger.debug(f"Using subdirectory as source: {args.local_dir}")
+        
+        # Clear subdir since it's now incorporated into local_dir
+        args.subdir = None
+        return args
             
         if args.local_dir:
             args.repo_url_sub = False
@@ -3100,13 +3107,21 @@ def main() -> None:
     elif args.command == "convert":
         convert_document(args)
     elif args.command == "web":
-        # Import Flask app here to avoid circular imports
-        from web import app
+        # Configure web server environment before importing Flask
+        port = int(args.port or 8000)
+        host = str(args.host or "127.0.0.1")
+        os.environ["FLASK_ENV"] = "production"
+        os.environ["LOG_LEVEL"] = "WARNING"
+        
         # Ensure exports directory exists with proper permissions
         exports_dir = Path(EXPORTS_DIR)
         exports_dir.mkdir(exist_ok=True, mode=0o755)
-        # Start Flask server
-        app.run(host=args.host, port=args.port)
+        
+        # Import Flask app here to avoid circular imports
+        from web import app
+        
+        # Start server with explicit configuration
+        app.run(host=host, port=port)
     else:
         logger.info("file2ai completed successfully")
         sys.exit(0)

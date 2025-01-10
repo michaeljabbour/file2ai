@@ -12,12 +12,25 @@ from werkzeug.datastructures import FileStorage
 
 # Configure logging
 logging.basicConfig(
-    level=os.getenv('LOG_LEVEL', 'INFO'),
+    level=getattr(logging, os.getenv('LOG_LEVEL', 'WARNING').upper(), logging.WARNING),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout)
     ]
 )
+
+# Configure Flask and werkzeug loggers
+for logger_name in ['werkzeug', 'flask', 'flask.app']:
+    log = logging.getLogger(logger_name)
+    log.setLevel(logging.WARNING)
+    # Remove existing handlers to prevent duplicate logging
+    log.handlers = []
+    log.propagate = True
+
+# Set Flask environment variables for production mode
+os.environ['FLASK_DEBUG'] = '0'
+os.environ['FLASK_ENV'] = 'production'
+
 logger = logging.getLogger(__name__)
 
 def matches_pattern(file_path: Union[str, Path], pattern_input: str) -> bool:
@@ -485,7 +498,7 @@ def process_job(
                         if not os.access(str(input_dir), os.R_OK):
                             raise IOError(f"Directory not readable: {input_dir}")
                             
-                        logger.info(f"Processing {len(directory_files)} files from directory: {input_dir}")
+                        logger.debug(f"Processing {len(directory_files)} files from directory: {input_dir}")
                             
                         # Handle subdir if specified
                         if args.subdir:
@@ -495,13 +508,13 @@ def process_job(
                             if not subdir_path.is_dir():
                                 raise IOError(f"Not a directory: {subdir_path}")
                             args.local_dir = str(subdir_path)
-                            logger.info(f"Using subdirectory: {subdir_path}")
+                            logger.debug(f"Using subdirectory: {subdir_path}")
 
                         # Ensure output directory exists
                         output_path.parent.mkdir(parents=True, exist_ok=True)
                         
                         # Export directory
-                        logger.info(f"Starting local export from {args.local_dir} to {output_path}")
+                        logger.debug(f"Starting local export from {args.local_dir} to {output_path}")
                         local_export(args)
                         
                         # Verify output
@@ -960,42 +973,24 @@ if __name__ == "__main__":
     # Load environment variables
     load_env_file()
 
-    # Try multiple ports starting from default (8000)
-    start_port = int(os.environ.get("FLASK_RUN_PORT", 8000))
-    max_port = start_port + 20  # Try up to 20 ports
+    # Configure environment-specific settings
+    flask_env = os.environ.get("FLASK_ENV", "development")
+    debug_mode = flask_env == "development"
+    log_level = os.environ.get("LOG_LEVEL", "WARNING")
     
-    for port in range(start_port, max_port + 1):
-        try:
-            logger.info(f"Attempting to start server on port {port}...")
-            # Configure environment-specific settings
-            flask_env = os.environ.get("FLASK_ENV", "development")
-            debug_mode = flask_env == "development"
-            log_level = os.environ.get("LOG_LEVEL", "INFO" if flask_env == "production" else "DEBUG")
-            
-            # Set logging level based on environment
-            logging.getLogger().setLevel(log_level)
-            
-            # Run app with environment-specific configuration
-            app.run(
-                debug=debug_mode,
-                host="0.0.0.0",
-                port=port,
-                use_reloader=debug_mode
-            )
-            break  # If successful, exit the loop
-        except OSError as e:
-            if "Address already in use" in str(e):
-                logger.warning(f"Port {port} is in use, trying next port...")
-                if port == max_port:
-                    logger.error("\nAll ports from %d to %d are in use.", start_port, max_port)
-                    logger.error("Try one of the following:")
-                    logger.error("1. Set a different port using: export FLASK_RUN_PORT=<port>")
-                    logger.error(
-                        "2. On macOS, disable AirPlay Receiver in "
-                        "System Preferences -> "
-                        "General -> AirDrop & Handoff"
-                    )
-                    logger.error("3. Free up ports in the range %d-%d\n", start_port, max_port)
-                    sys.exit(1)
-                continue
-            raise  # Re-raise other OSErrors
+    # Set logging level based on environment, defaulting to WARNING
+    logging.getLogger().setLevel(getattr(logging, log_level.upper(), logging.WARNING))
+    
+    # Get host and port from environment or use defaults
+    host = os.environ.get("FLASK_RUN_HOST", "127.0.0.1")
+    port = int(os.environ.get("FLASK_RUN_PORT", 8000))
+    
+    logger.info(f"Starting server on {host}:{port} (debug={debug_mode})")
+    
+    # Run app with explicit configuration
+    app.run(
+        debug=debug_mode,
+        host=host,
+        port=port,
+        use_reloader=debug_mode
+    )
