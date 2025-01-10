@@ -3,14 +3,117 @@
 <head>
   <meta charset="UTF-8" />
   <title>File2AI - Minimal Flattened</title>
-  <!-- Load React + ReactDOM from CDN for simplicity -->
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div id="root"></div>
-  <script type="text/babel" src="main.js"></script>
+  <div class="container">
+    <div class="title">
+      <span style="font-size: 2rem">🤖</span>
+      <h1>File2AI</h1>
+    </div>
+    <p class="description">Transform your files into AI-ready format</p>
+
+    <form id="uploadForm" class="card">
+      <div class="input-container">
+        <!-- Input Type Selector -->
+        <div class="field">
+          <select id="inputType" class="input-select">
+            <option value="file">Upload Files</option>
+            <option value="repo">Git Repository</option>
+            <option value="local">Local Directory</option>
+          </select>
+        </div>
+
+        <!-- File Upload Section -->
+        <div id="fileSection" class="input-section">
+          <input type="file" id="fileInput" multiple class="input-field" />
+        </div>
+
+        <!-- Repository Section -->
+        <div id="repoSection" class="input-section" style="display: none">
+          <div class="repo-inputs">
+            <div class="field">
+              <input type="text" id="repoUrl" placeholder="https://github.com/user/repo" class="input-field" />
+            </div>
+            <div class="repo-row">
+              <div class="repo-field">
+                <input type="text" id="branch" placeholder="Branch (optional)" class="input-field" />
+              </div>
+              <div class="repo-field">
+                <input type="password" id="token" placeholder="Access Token (optional)" class="input-field" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Local Directory Section -->
+        <div id="localSection" class="input-section" style="display: none">
+          <p class="text-small">Directory selection requires modern browser support</p>
+          <input type="file" id="localDir" webkitdirectory directory class="input-field" />
+        </div>
+      </div>
+
+      <!-- Options Panel -->
+      <div class="options-panel">
+        <h3 class="panel-title">Processing Options</h3>
+        
+        <!-- File Size Slider -->
+        <div class="field">
+          <label id="maxFileSizeLabel">Include files under: 50KB</label>
+          <input type="range" id="maxFileSize" min="1" max="1000" value="50" class="range-input" />
+        </div>
+
+        <!-- Pattern Filter -->
+        <div class="field">
+          <label>Pattern Filter:</label>
+          <div class="flex">
+            <select id="patternMode" class="pattern-select">
+              <option value="exclude">Exclude</option>
+              <option value="include">Include</option>
+            </select>
+            <input type="text" id="patternInput" placeholder="*.md, src/, etc." class="pattern-input" />
+          </div>
+        </div>
+
+        <!-- Output Format -->
+        <div class="field">
+          <label>Output Format:</label>
+          <select id="outputFormat" class="input-select">
+            <option value="text">Text</option>
+            <option value="json">JSON</option>
+            <option value="pdf">PDF</option>
+            <option value="docx">DOCX</option>
+            <option value="xlsx">XLSX</option>
+            <option value="pptx">PPTX</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Submit Button -->
+      <button type="submit" id="submitButton" class="submit-button">Process Files</button>
+    </form>
+
+    <!-- Status Card -->
+    <div class="status-card card">
+      <h2 class="status-title">Status</h2>
+      
+      <div id="errorContainer" class="error" style="display: none"></div>
+      
+      <div id="progressBar" class="progress-container" style="display: none">
+        <div class="progress-bar" style="width: 0%"></div>
+        <div id="progressText" class="text-small"></div>
+      </div>
+
+      <!-- Preview Section -->
+      <div id="previewContainer" class="preview-section" style="display: none">
+        <div class="preview-header">
+          <span class="preview-title">Text Preview</span>
+        </div>
+        <pre id="previewContent" class="preview-content"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script src="main.js"></script>
 </body>
 </html>
