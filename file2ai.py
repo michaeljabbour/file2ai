@@ -1443,14 +1443,14 @@ def install_pdf_support() -> bool:
     return install_package_support("pypdf")
 
 
-def check_pymupdf_support() -> bool:
-    """Check if PyMuPDF is available for PDF processing."""
-    return check_package_support("pymupdf")
-
-
-def install_pymupdf_support() -> bool:
-    """Install PyMuPDF package for PDF processing."""
-    return install_package_support("pymupdf")
+# PDF support functions are defined at the top of the file:
+# def check_pdf_support() -> bool:
+#     """Check if pypdf is available for PDF processing."""
+#     return check_package_support("pypdf")
+# 
+# def install_pdf_support() -> bool:
+#     """Install pypdf package for PDF processing."""
+#     return install_package_support("pypdf")
 
 
 def _enhance_and_save_image(
@@ -2035,8 +2035,8 @@ def convert_document(args: argparse.Namespace) -> None:
             logger.error(f"Error converting HTML document: {str(e)}")
             sys.exit(1)
 
-    # Handle basic text files
-    elif input_extension in TEXT_EXTENSIONS or output_format == "text":
+    # Handle basic text files (excluding PDFs which have their own handler)
+    elif (input_extension in TEXT_EXTENSIONS or (output_format == "text" and input_extension != ".pdf")):
         logger.info(f"Starting text file conversion from {input_path} to {output_path}")
         
         # Verify file exists and is readable
@@ -2254,98 +2254,69 @@ def convert_document(args: argparse.Namespace) -> None:
             sys.exit(1)
 
     elif input_extension == ".pdf":
-        # Check and install PyMuPDF support first
-        if not check_pymupdf_support():
+        # Check and install PDF support first
+        if not check_pdf_support():
             logger.info("Installing PDF support...")
-            if not install_pymupdf_support():
+            if not install_pdf_support():
                 logger.error("Failed to install PDF support")
                 sys.exit(1)
             logger.info("PDF support installed successfully")
 
         try:
-            from fitz import open as fitz_open, Matrix  # PyMuPDF
+            from pypdf import PdfReader
         except ImportError:
-            logger.error("Failed to import PyMuPDF")
+            logger.error("Failed to import pypdf")
             sys.exit(1)
 
         try:
+            # Verify file access first
+            try:
+                verify_file_access(input_path, skip_in_tests=False)
+            except FileNotFoundError:
+                logger.error(f"Error converting PDF document: Input file does not exist: {input_path}")
+                sys.exit(1)
+            except PermissionError:
+                logger.error(f"Error converting PDF document: Permission denied: {input_path}")
+                sys.exit(1)
+            except Exception as e:
+                logger.error(f"Error converting PDF document: {str(e)}")
+                sys.exit(1)
+
             # Open PDF document
-            pdf_doc = fitz_open(input_path)
+            pdf_doc = PdfReader(input_path)
 
             if output_format == "text":
                 # Extract text from PDF
                 full_text = []
-                for page in pdf_doc:
-                    text = page.get_text()
-                    if text.strip():
-                        full_text.append(text)
+                for page in pdf_doc.pages:
+                    text = page.extract_text()
+                    if text and text.strip():
+                        full_text.append(text.strip())
 
-                output_path.write_text("\n".join(full_text))
-                logger.info(f"Successfully converted PDF to text: {output_path}")
+                # Write the extracted text
+                try:
+                    # Ensure exports directory exists
+                    exports_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Ensure consistent output path format (input_name.pdf.text)
+                    output_path = exports_dir / f"{input_path.stem}.pdf.text"
+                    output_path.write_text("\n".join(full_text))
+                    logger.info(f"Successfully converted PDF to text: {output_path}")
+                except PermissionError as e:
+                    logger.error(f"Error writing output file: {str(e)}")
+                    sys.exit(1)
+                return
 
             elif output_format == "image":
-                # Create images directory inside exports
-                images_dir = exports_dir / "images"
-                images_dir.mkdir(exist_ok=True)
-
-                try:
-                    # Parse page range if specified
-                    if args.pages:
-                        pages_to_process = parse_page_range(args.pages)
-                        # Validate page numbers
-                        max_page = len(pdf_doc)
-                        pages_to_process = [p for p in pages_to_process if 1 <= p <= max_page]
-                        if not pages_to_process:
-                            logger.error(
-                                "No valid pages in range: {} (document has {} pages)".format(
-                                    args.pages, max_page
-                                )
-                            )
-                            sys.exit(1)
-                    else:
-                        pages_to_process = range(1, len(pdf_doc) + 1)
-
-                    for page_num in pages_to_process:
-                        # PyMuPDF uses 0-based indexing
-                        page = pdf_doc[page_num - 1]
-                        # Set resolution for the pixmap
-                        zoom = args.resolution / 72.0  # Convert DPI to zoom factor
-                        matrix = Matrix(zoom, zoom)
-                        pix = page.get_pixmap(matrix=matrix)
-
-                        # Convert to PIL Image for enhancement
-                        img_data = pix.samples
-                        image_path = images_dir / f"{input_path.stem}_page_{page_num}.png"
-
-                        if check_image_enhance_support():
-                            try:
-                                from PIL import Image
-
-                                img = Image.frombytes("RGB", (pix.width, pix.height), img_data)
-
-                                _enhance_and_save_image(img, image_path, args, logger)
-                            except Exception as e:
-                                logger.warning(f"Failed to create PIL image: {e}")
-                                # Fallback to direct save
-                                pix.save(str(image_path))
-                        else:
-                            # Fallback to direct pixmap save if PIL enhancements not available
-                            pix.save(str(image_path))
-
-                        logger.info(f"Created image for page {page_num}: {image_path}")
-
-                    _write_image_list(images_dir, input_path, pages_to_process, output_path, logger)
-
-                    logger.info(f"Successfully converted PDF to images in {images_dir}")
-                finally:
-                    pdf_doc.close()
+                logger.error("PDF to image conversion is no longer supported")
+                sys.exit(1)
 
             else:
                 logger.error(f"Unsupported output format for PDF documents: {output_format}")
                 sys.exit(1)
 
         except Exception as e:
-            logger.error(f"Error converting PDF document: {e}")
+            logger.error(f"Error converting PDF document: {str(e)}")
             sys.exit(1)
 
     elif input_extension in [".html", ".mhtml", ".htm"]:
