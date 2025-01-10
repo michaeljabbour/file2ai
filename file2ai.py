@@ -610,31 +610,36 @@ Cross-platform compatible with no system dependencies required.""",
 
 
 def parse_github_url(
-    url: str, use_subdirectory: bool = False
-) -> Tuple[str, Optional[str], Optional[str]]:
+    url: Optional[str], use_subdirectory: bool = False
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Extract information from a GitHub repository URL, ignoring subdirectories unless
     use_subdirectory is True. Also extracts base repository URL from deep URLs like
     /pulls, /issues, etc.
 
     Args:
-        url: The GitHub repository URL to parse.
+        url: The GitHub repository URL to parse, or None.
         use_subdirectory: If True, extract subdirectory information from deep URLs.
 
     Returns:
         Tuple of (base_repo_url, branch, subdirectory).
-        - base_repo_url: The base GitHub repository URL ending with .git
+        - base_repo_url: The base GitHub repository URL ending with .git, or None if invalid
         - branch: Branch name if specified in URL, None otherwise
         - subdirectory: Subdirectory path if specified and use_subdirectory=True, None otherwise
 
-    Raises:
-        SystemExit: If the URL is not a valid GitHub repository URL.
+    Note:
+        Returns (None, None, None) if the URL is None or invalid.
     """
+    # Handle None or empty URL
+    if not url:
+        logger.debug("No URL provided")
+        return None, None, None
+
     # Step 1: Extract base repository URL first
     base_match = re.match(r"^(https?://github\.com/[^/]+/[^/]+)", url)
     if not base_match:
-        logger.error(f"Invalid GitHub URL: {url}")
-        sys.exit(1)
+        logger.warning(f"Invalid GitHub URL: {url}")
+        return None, None, None
 
     base_repo = base_match.group(1)
     remaining_path = url[len(base_repo):]
@@ -652,7 +657,7 @@ def parse_github_url(
                 )
             else:
                 # Otherwise just remove it and continue with base URL
-                logger.warning(f"Removing suffix {suffix} from URL: {url}")
+                logger.debug(f"Removing suffix {suffix} from URL: {url}")
             remaining_path = remaining_path[len(suffix):]
             break
 
@@ -661,8 +666,11 @@ def parse_github_url(
     branch = tree_match.group(1) if tree_match else None
 
     # If we already have a subdir from special suffixes, don't override it
-    if not subdir:
-        subdir = tree_match.group(2) if tree_match and use_subdirectory else None
+    if not subdir and tree_match and use_subdirectory:
+        try:
+            subdir = tree_match.group(2)
+        except (IndexError, AttributeError):
+            subdir = None
 
     # Step 4: Append .git if missing
     if not base_repo.endswith(".git"):
@@ -671,21 +679,31 @@ def parse_github_url(
     return base_repo, branch, subdir
 
 
-def build_auth_url(base_url: str, token: str) -> str:
+def build_auth_url(base_url: Optional[str], token: Optional[str]) -> Optional[str]:
     """
     Build an authenticated GitHub URL using a token.
-
+    
     Args:
-        base_url: The base GitHub repository URL.
-        token: The GitHub Personal Access Token.
-
+        base_url: The base GitHub repository URL, or None.
+        token: The GitHub Personal Access Token, or None.
+        
     Returns:
-        The authenticated URL.
+        The authenticated URL, or None if inputs are invalid.
     """
-    if not base_url.startswith("https://"):
-        logger.warning("Token-based auth requires HTTPS. Proceeding without token.")
-        return base_url
-    return base_url.replace("https://", f"https://{token}@")
+    if not base_url or not token:
+        logger.debug("Missing URL or token for authentication")
+        return None
+        
+    try:
+        if not base_url.startswith("https://"):
+            logger.warning("Token-based auth requires HTTPS. Converting to HTTPS.")
+            base_url = base_url.replace("http://", "https://", 1)
+            if not base_url.startswith("https://"):
+                base_url = f"https://{base_url}"
+        return base_url.replace("https://", f"https://{token}@", 1)
+    except (AttributeError, TypeError) as e:
+        logger.error(f"Failed to build authenticated URL: {e}")
+        return None
 
 
 def is_text_file(file_path: Path) -> bool:
@@ -912,7 +930,7 @@ def should_ignore(
     return False  # Default to include if no patterns match
 
 
-from web import gather_filtered_files
+from utils import gather_filtered_files
 
 def export_files_to_single_file(
     repo: Optional[Repo],
@@ -1251,10 +1269,25 @@ def clone_and_export(args: argparse.Namespace) -> None:
         masked_token = (
             f"{args.token[:3]}...{args.token[-3:]}" if len(args.token) > 6 else "REDACTED"
         )
-        logger.info(f"Using token: {masked_token}")
-        clone_url = build_auth_url(clone_url, args.token)
+        logger.debug(f"Using token: {masked_token}")
+        auth_url = build_auth_url(clone_url, args.token)
+        if not auth_url:
+            logger.error("Failed to build authenticated URL")
+            sys.exit(1)
+        clone_url = auth_url
 
-    repo_name = clone_url.rstrip("/").split("/")[-1].replace(".git", "")
+    # Verify we have a valid clone URL
+    if not clone_url:
+        logger.error("No valid clone URL provided")
+        sys.exit(1)
+        
+    # Extract repo name safely
+    try:
+        repo_name = clone_url.rstrip("/").split("/")[-1].replace(".git", "")
+    except (AttributeError, IndexError) as e:
+        logger.error(f"Failed to extract repository name from {clone_url}: {e}")
+        sys.exit(1)
+        
     extension = ".json" if args.format == "json" else ".txt"
     output_path = exports_dir / (args.output_file or f"file2ai_export{extension}")
     output_path = _sequential_filename(output_path.resolve())
@@ -1265,8 +1298,10 @@ def clone_and_export(args: argparse.Namespace) -> None:
         logger.info(f"Cloning repository to: {clone_path}")
 
         try:
+            # Ensure all arguments are strings
+            cmd = ["git", "clone", str(clone_url), str(clone_path)]
             subprocess.run(
-                ["git", "clone", clone_url, str(clone_path)],
+                cmd,
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,

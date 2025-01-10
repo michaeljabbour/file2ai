@@ -11,18 +11,6 @@
 # Exit on error
 set -e
 
-# Cleanup function to ensure web server is stopped
-cleanup() {
-    if [[ -n "${WEB_PID}" ]]; then
-        echo "Stopping web server (PID: ${WEB_PID})"
-        kill "${WEB_PID}" 2>/dev/null || true
-        wait "${WEB_PID}" 2>/dev/null || true
-    fi
-}
-
-# Set up cleanup trap
-trap cleanup EXIT
-
 # Ensure script is run as bash
 if [ -z "$BASH" ]; then
     echo "Error: This script must be run with bash" >&2
@@ -123,37 +111,17 @@ python setup_progress.py | (
     done
     echo "success"
 
-    # Configure web server environment
-    export FLASK_RUN_PORT=8000
-    export FLASK_ENV=production
-    export LOG_LEVEL=WARNING
-    export WERKZEUG_LOGGER_LEVEL=WARNING
-    
-    # Start web server with explicit configuration
-    python file2ai.py web --port 8000 --host 127.0.0.1 &
-    WEB_PID=$!
-    
-    # Wait for server to start (up to 10 seconds)
-    max_attempts=10
-    attempt=0
-    while [ $attempt -lt $max_attempts ]; do
-        if curl -s http://localhost:8000 > /dev/null; then
-            echo "success"
-            break
-        fi
-        sleep 1
-        attempt=$((attempt + 1))
-        if [ $attempt -eq $max_attempts ]; then
-            kill $WEB_PID 2>/dev/null || true
-            wait $WEB_PID 2>/dev/null || true
-            echo "Failed to start web server after $max_attempts seconds" >&2
-            exit 1
-        fi
-    done
+    # Print instructions for starting web server manually
+    echo -e "\nTo start the web server manually:"
+    echo -e "\n1. Configure environment (optional):"
+    echo "export FLASK_ENV=development     # For development mode with auto-reload"
+    echo "export LOG_LEVEL=WARNING        # Default logging level"
+    echo "export FLASK_RUN_PORT=8000      # Default port"
+    echo -e "\n2. Start the server:"
+    echo "python file2ai.py web --port 8000 --host 127.0.0.1"
+    echo -e "\nNote: The web interface will be available at http://127.0.0.1:8000\n"
+    echo "success"
 )
 
 # Clean up temporary progress script
 rm -f setup_progress.py
-
-# Ensure web server is stopped (backup explicit cleanup)
-cleanup
