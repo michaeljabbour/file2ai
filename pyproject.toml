@@ -38,7 +38,12 @@ dependencies = [
     "html2text>=2020.1.16",  # For HTML to text conversion
     "flask>=2.0.0",  # For web interface
     "werkzeug>=3.0.0",  # WSGI utilities
-    "jinja2>=3.0.0"  # Template engine
+    "jinja2>=3.0.0",  # Template engine
+    "pytest>=7.0",  # For testing
+    "pytest-cov>=4.0",  # For test coverage
+    "pytest-mock>=3.10.0",  # For mocking in tests
+    "coverage>=7.4.0",  # For detailed coverage reports
+    "pytest-timeout>=2.2.0"  # For test timeouts
 ]
 
 [project.optional-dependencies]
