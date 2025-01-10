@@ -47,13 +47,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = [
-    "pytest>=7.0",  # For testing
-    "pytest-cov>=4.0",  # For test coverage
-    "pytest-mock>=3.10.0",  # For mocking in tests
-    "coverage>=7.4.0",  # For detailed coverage reports
-    "pytest-timeout>=2.2.0"  # For test timeouts
-]
 docs = [
     "sphinx>=7.1.0",  # For documentation generation
     "sphinx-rtd-theme>=2.0.0"  # Documentation theme
