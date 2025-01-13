@@ -243,27 +243,34 @@ def process_job(
                 output_path = None
                 try:
                     # Keep file content in memory using BytesIO
-                    content = file_data.read()
-                    input_stream = io.BytesIO(content)
-                    input_stream.seek(0)
-                    
-                    # Create output path with proper extension
-                    base_name = Path(filename).stem  # Get name without extension
-                    out_filename = f"{base_name}.{output_format}"
-                    output_path = Path(EXPORTS_DIR) / out_filename
-                    logger.info(f"Converting {filename} to {output_path} with format {output_format}")
+                    try:
+                        content = file_data.read()
+                        input_stream = io.BytesIO(content)
+                        input_stream.seek(0)
+                        
+                        # Create output path with proper extension
+                        base_name = Path(filename).stem  # Get name without extension
+                        out_filename = f"{base_name}.{output_format}"
+                        output_path = Path(EXPORTS_DIR) / out_filename
+                        logger.info(f"Converting {filename} to {output_path} with format {output_format}")
 
-                    # Create args namespace with stream
-                    args = Namespace(
-                            command="convert",
-                            input=filename,  # Use filename for extension detection
-                            output=str(output_path.resolve()),
-                            format=output_format,
-                            pages=options.get("pages"),
-                            brightness=brightness,
-                            contrast=contrast,
-                            resolution=resolution,
-                    )
+                        # Create args namespace with stream
+                        args = Namespace(
+                                command="convert",
+                                input=filename,  # Use filename for extension detection
+                                output=str(output_path.resolve()),
+                                format=output_format,
+                                pages=options.get("pages"),
+                                brightness=brightness,
+                                contrast=contrast,
+                                resolution=resolution,
+                        )
+                        
+                        # Add stream to temp_files for cleanup
+                        temp_files.append(input_stream)
+                    except Exception as e:
+                        logger.error(f"Error preparing file {filename}: {e}")
+                        raise IOError(f"Failed to prepare file {filename}: {e}")
 
                     # Convert file
                     logger.info(f"Starting conversion with args: {args}")
@@ -509,13 +516,15 @@ def process_job(
         logger.error(error_msg)
 
     finally:
-        # Clean up temporary files
+        # Clean up temporary files and streams
         for temp_file in temp_files:
             try:
-                if temp_file.exists():
+                if isinstance(temp_file, io.IOBase):
+                    temp_file.close()
+                elif hasattr(temp_file, 'exists') and temp_file.exists():
                     temp_file.unlink()
             except Exception as e:
-                logger.error(f"Error cleaning up temp file {temp_file}: {e}")
+                logger.error(f"Error cleaning up temp file/stream {temp_file}: {e}")
         
         # Ensure job has a final status
         if job["status"] == "processing":

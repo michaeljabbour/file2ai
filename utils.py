@@ -26,6 +26,12 @@ def matches_pattern(file_path: Union[str, Path], pattern_input: str) -> bool:
     # Ensure we have an absolute, normalized path
     try:
         path_obj = Path(file_path).resolve() if isinstance(file_path, str) else Path(file_path).resolve()
+        # Convert to relative path for pattern matching
+        try:
+            path_obj = path_obj.relative_to(Path.cwd())
+        except ValueError:
+            # If path is not under cwd, use absolute path
+            pass
         logger.debug(f"Normalized path for matching: {path_obj}")
     except Exception as e:
         logger.warning(f"Failed to normalize path {file_path}: {e}")

@@ -398,11 +398,16 @@ def parse_args(args=None) -> argparse.Namespace:
         convert - Convert documents between different formats
         web     - Start web interface for file uploads and conversions
     """
-    # Check if first argument is a file path
-    if len(sys.argv) > 1 and not sys.argv[1].startswith("-") and os.path.exists(sys.argv[1]):
-        # Insert 'convert' command and --input before the file path
-        sys.argv.insert(1, "convert")
-        sys.argv.insert(2, "--input")
+    # Check if first argument is a file path or GitHub URL
+    if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
+        if os.path.exists(sys.argv[1]):
+            # Insert 'convert' command and --input before the file path
+            sys.argv.insert(1, "convert")
+            sys.argv.insert(2, "--input")
+        elif validate_github_url(sys.argv[1]):
+            # Insert 'export' command and --repo-url before the URL
+            url = sys.argv.pop(1)
+            sys.argv.extend(["export", "--repo-url", url])
 
     parser = argparse.ArgumentParser(
         description="""Export text files and convert documents between formats using
@@ -1354,10 +1359,12 @@ def clone_and_export(args: argparse.Namespace) -> None:
         branch = args.branch or url_branch
         if branch:
             try:
-                repo.git.checkout(branch)
-                logger.info(f"Checked out branch: {branch}")
+                # Sanitize branch name by removing tabs and extra whitespace
+                clean_branch = branch.replace('\t', '').strip()
+                repo.git.checkout(clean_branch)
+                logger.info(f"Checked out branch: {clean_branch}")
             except exc.GitCommandError as e:
-                logger.error(f"Failed to checkout {branch}: {e}")
+                logger.error(f"Failed to checkout {clean_branch}: {e}")
                 sys.exit(1)
         else:
             logger.info("Using default branch")
