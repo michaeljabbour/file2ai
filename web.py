@@ -123,10 +123,23 @@ def process_job(
     # Initialize temp_files list at the start
     temp_files = []
     
-    # Get filtering options
-    max_file_size_kb = int(options.get("max_file_size_kb", 1000))  # Default 1MB
+    # Get filtering options with validation
+    try:
+        max_file_size_kb = int(options.get("max_file_size_kb", 1000))  # Default 1MB
+        if max_file_size_kb <= 0:
+            max_file_size_kb = 1000  # Reset to default if invalid
+            logger.warning("Invalid max_file_size_kb, using default: 1000")
+    except (TypeError, ValueError):
+        max_file_size_kb = 1000
+        logger.warning("Invalid max_file_size_kb, using default: 1000")
+        
     pattern_mode = options.get("pattern_mode", "exclude")
-    pattern_input = options.get("pattern_input", "")
+    if pattern_mode not in ["exclude", "include"]:
+        pattern_mode = "exclude"
+        logger.warning("Invalid pattern_mode, using default: exclude")
+        
+    pattern_input = str(options.get("pattern_input", "")).strip()
+    logger.debug(f"Filtering options - size: {max_file_size_kb}KB, mode: {pattern_mode}, patterns: {pattern_input}")
     
     # Initialize job status
     if job_id not in conversion_jobs:
@@ -205,16 +218,21 @@ def process_job(
                     logger.info(f"Skipping {filename}: exceeds size limit of {max_file_size_kb}KB")
                     continue
                     
-                # Check pattern match
-                matches = matches_pattern(filename, pattern_input)
+                # Create temporary path for pattern matching
+                temp_path = Path(UPLOADS_DIR) / filename
+                logger.debug(f"Checking pattern match for path: {temp_path}")
+                
+                # Check pattern match using normalized path
+                matches = matches_pattern(str(temp_path), pattern_input)
                 if pattern_mode == "exclude" and matches:
-                    logger.info(f"Skipping {filename}: matches exclude pattern")
+                    logger.debug(f"Skipping {temp_path}: matches exclude pattern")
                     continue
                 elif pattern_mode == "include" and not matches and pattern_input:
-                    logger.info(f"Skipping {filename}: doesn't match include pattern")
+                    logger.debug(f"Skipping {temp_path}: doesn't match include pattern")
                     continue
                     
                 filtered_files[filename] = file_data
+                logger.debug(f"Added file to filtered list: {filename}")
             
             total_files = len(filtered_files)
             if total_files == 0:
@@ -253,23 +271,32 @@ def process_job(
                     # Validate input path and stream
                     if input_stream:
                         logger.debug("Using input stream for conversion")
+                        # Reset stream position to start
+                        input_stream.seek(0)
                     else:
-                        # Ensure input_path is not None before checking
+                        # Only check file existence if we're not using a stream
                         if not input_path:
                             raise IOError("No input path provided and no input stream available")
-                            
-                        # Now safe to check exists() since we know input_path is not None
-                        if not input_path.exists():
-                            raise IOError(f"Input file missing before conversion: {input_path}")
                         
-                        # Check file permissions and readability
-                        if not os.access(str(input_path), os.R_OK):
-                            raise IOError(f"Input file not readable: {input_path}")
-                            
-                        logger.info(f"Input file verified before conversion: {input_path}")
+                        # For file paths, verify existence and permissions
+                        try:
+                            input_path = Path(input_path).resolve()
+                            if not input_path.exists():
+                                raise IOError(f"Input file missing before conversion: {input_path}")
+                            if not os.access(str(input_path), os.R_OK):
+                                raise IOError(f"Input file not readable: {input_path}")
+                            logger.debug(f"Input file verified before conversion: {input_path}")
+                        except Exception as e:
+                            logger.error(f"Error validating input file {input_path}: {e}")
+                            raise IOError(f"Failed to validate input file: {e}")
                     
-                    # Pass input_stream to convert_document
-                    convert_document(args, input_stream=input_stream)
+                    try:
+                        # Pass input_stream to convert_document
+                        convert_document(args, input_stream=input_stream)
+                        logger.debug("Document conversion completed successfully")
+                    except Exception as e:
+                        logger.error(f"Error during document conversion: {e}")
+                        raise
                     
                     # Verify output after conversion
                     if not output_path.exists():

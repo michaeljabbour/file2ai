@@ -384,14 +384,19 @@ def parse_args(args=None) -> argparse.Namespace:
     Usage:
         1. Repository/Directory Export:
            file2ai.py [--repo-url URL | --local-dir DIR] [options]
+           file2ai.py [--repo-url-sub URL] [options]  # For deep URLs with subdirectories
 
         2. Document Conversion:
            file2ai.py convert --input FILE --format FORMAT [options]
            file2ai.py FILE [--format FORMAT] [options]
 
+        3. Web Interface:
+           file2ai.py web [--host HOST] [--port PORT]
+
     Commands:
         export  - Export text files from a repository or local directory (default)
         convert - Convert documents between different formats
+        web     - Start web interface for file uploads and conversions
     """
     # Check if first argument is a file path
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-") and os.path.exists(sys.argv[1]):
@@ -559,8 +564,27 @@ Cross-platform compatible with no system dependencies required.""",
         if not hasattr(args, "repo_url_sub"):
             args.repo_url_sub = None
 
-        # Process export command arguments if provided
-        # Handle path normalization and subdir combination
+        # If no arguments provided, prompt for repository URL
+        if not any([args.repo_url, args.repo_url_sub, args.local_dir]):
+            url = input("Enter GitHub repository URL (or press Enter to skip): ").strip()
+            if url:
+                # Handle deep URLs with --repo-url-sub
+                if "/tree/" in url:
+                    args.repo_url_sub = url
+                else:
+                    args.repo_url = url
+
+        # Handle repo-url-sub by extracting components
+        if args.repo_url_sub:
+            base_url, branch, subdir = parse_github_url(args.repo_url_sub, use_subdirectory=True)
+            if base_url:
+                args.repo_url = base_url
+                if branch and not args.branch:
+                    args.branch = branch
+                if subdir and not args.subdir:
+                    args.subdir = subdir
+
+        # Process local directory paths
         if args.local_dir:
             # Normalize local_dir first
             args.local_dir = os.path.abspath(os.path.expanduser(args.local_dir))
@@ -569,43 +593,11 @@ Cross-platform compatible with no system dependencies required.""",
             if args.subdir:
                 args.local_dir = os.path.abspath(os.path.join(args.local_dir, args.subdir))
                 logger.debug(f"Using combined local directory + subdir: {args.local_dir}")
-        elif args.subdir:
-            # If only subdir provided, treat it as the local_dir
+        elif args.subdir and not args.repo_url and not args.repo_url_sub:
+            # If only subdir provided and no repo URL, treat it as the local_dir
             args.local_dir = os.path.abspath(os.path.expanduser(args.subdir))
             logger.debug(f"Using subdirectory as source: {args.local_dir}")
-        
-        # Clear subdir since it's now incorporated into local_dir
-        args.subdir = None
-        return args
-            
-        if args.local_dir:
-            args.repo_url_sub = False
-            return args
-        if args.repo_url:
-            args.repo_url_sub = False
-            return args
-        if args.repo_url_sub:
-            args.repo_url = args.repo_url_sub
-            args.repo_url_sub = True
-            return args
-
-        # Only prompt if no source arguments were provided
-        tmp_url = input(
-            "Enter the GitHub repository URL (or press Enter to export local directory): "
-        ).strip()
-        if tmp_url:
-            args.repo_url = tmp_url
-        else:
-            tmp_dir = input(
-                "Enter a local directory path for export (or press Enter for current directory): "
-            ).strip()
-            if tmp_dir:
-                args.local_dir = tmp_dir
-            else:
-                args.local_dir = os.getcwd()
-                logger.info(
-                    f"No directory specified, defaulting to current directory: {args.local_dir}"
-                )
+            args.subdir = None
 
     return args
 
@@ -654,9 +646,10 @@ def parse_github_url(
     logger.debug(f"Base repository path: {base_repo}")
 
     # Step 3: Handle special suffixes first (/pulls, /issues, etc.)
-    special_suffixes = ["/pulls", "/issues", "/actions", "/wiki"]
+    special_suffixes = ["/pulls", "/issues", "/actions", "/wiki", "/settings", "/security"]
     remaining_url = url[len(f"https://github.com/{base_repo}"):]
     
+    # Check for special suffixes and remove them
     for suffix in special_suffixes:
         if remaining_url.startswith(suffix):
             logger.debug(f"Removing special suffix: {suffix}")
@@ -669,22 +662,49 @@ def parse_github_url(
     tree_match = re.search(r'/tree/([^/]+)(?:/(.+))?', remaining_url)
     
     if tree_match:
-        # Handle branch
+        # Handle branch with improved sanitization
         raw_branch = tree_match.group(1)
         if raw_branch:
+            # First strip whitespace from ends
             branch = raw_branch.strip()
-            # Sanitize branch name
-            if any(c in branch for c in ['\t', ' ']):
-                sanitized = ''.join(c for c in branch if c not in ['\t', ' '])
-                logger.warning(f"Sanitized branch name from '{branch}' to '{sanitized}'")
+            
+            # Remove any tab characters or internal spaces
+            if any(c in branch for c in ['\t', ' ', '\n', '\r']):
+                # Replace all whitespace with nothing
+                sanitized = re.sub(r'[\s\t\n\r]+', '', branch)
+                # Remove any remaining invalid characters
+                sanitized = re.sub(r'[^a-zA-Z0-9._]', '', sanitized)
+                if sanitized != branch:
+                    logger.warning(f"Sanitized branch name from '{branch}' to '{sanitized}'")
                 branch = sanitized
-            logger.debug(f"Extracted branch: {branch}")
+            
+            # Remove any query parameters or hash fragments
+            branch = branch.split('?')[0].split('#')[0]
+            
+            # Ensure branch name is not empty after sanitization
+            if not branch:
+                logger.warning("Branch name was empty after sanitization")
+                branch = None
+            else:
+                logger.debug(f"Final branch name: {branch}")
         
         # Handle subdirectory if requested
         if use_subdirectory and tree_match.group(2):
             subdir = tree_match.group(2).strip()
+            # Sanitize subdirectory path
             if subdir:
-                logger.debug(f"Extracted subdirectory: {subdir}")
+                # Remove query parameters and hash fragments first
+                subdir = subdir.split('?')[0].split('#')[0].strip()
+                # Remove any ../ attempts and normalize slashes
+                subdir = os.path.normpath(subdir).replace('\\', '/')
+                if subdir.startswith('/'):
+                    subdir = subdir[1:]
+                # Remove any trailing slashes
+                subdir = subdir.rstrip('/')
+                logger.debug(f"Normalized subdirectory: {subdir}")
+                # Check if subdirectory is empty after sanitization
+                if not subdir:
+                    subdir = None
             else:
                 subdir = None
         elif tree_match.group(2):

@@ -66,7 +66,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const hasFiles = state.files && state.files.length > 0;
     const hasRepoUrl = Boolean(state.repoUrl && state.repoUrl.trim());
     const hasLocalDir = Boolean(state.localDir && state.localDir.trim());
-    const isValidGithubUrl = hasRepoUrl && state.repoUrl.trim().match(/^https:\/\/github\.com\/[^/]+\/[^/]+/);
+    const isValidGithubUrl = hasRepoUrl && (
+      state.repoUrl.trim().match(/^https:\/\/github\.com\/[^/]+\/[^/]+/) ||
+      state.repoUrl.trim().match(/^github\.com\/[^/]+\/[^/]+/)
+    );
     
     const isValid = (
       (state.inputType === 'file' && hasFiles) ||
@@ -427,18 +430,31 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (state.inputType === 'repo') {
       console.log('Processing repository export');
       formData.append('command', 'export');
-      const cleanUrl = state.repoUrl.replace(/\/tree\/[^/]+(?:\s+HEAD)?$/, '').trim();
+      // Clean and normalize repository URL
+      let cleanUrl = state.repoUrl.trim();
+      if (!cleanUrl.startsWith('http')) {
+        cleanUrl = 'https://' + cleanUrl;
+      }
+      // Remove /tree/branch and any trailing HEAD
+      cleanUrl = cleanUrl.replace(/\/tree\/[^/]+(?:\s+HEAD)?$/, '');
       formData.append('repo_url', cleanUrl);
       
-      if (!state.branch && state.repoUrl.includes('/tree/')) {
-        const branchMatch = state.repoUrl.match(/\/tree\/([^/\s]+)/);
+      // Extract branch from URL or use provided branch
+      let branch = state.branch;
+      if (!branch && state.repoUrl.includes('/tree/')) {
+        const branchMatch = state.repoUrl.match(/\/tree\/([^/]+)/);
         if (branchMatch) {
-          const cleanBranch = branchMatch[1].replace(/\s+HEAD$/, '').trim();
-          formData.append('branch', cleanBranch);
+          branch = branchMatch[1];
         }
-      } else if (state.branch) {
-        const cleanBranch = state.branch.replace(/\s+HEAD$/, '').trim();
-        formData.append('branch', cleanBranch);
+      }
+      
+      if (branch) {
+        // Clean branch name - remove HEAD and sanitize spaces
+        branch = branch.replace(/\s+HEAD$/, '').trim();
+        // Replace spaces with empty string for compatibility
+        branch = branch.replace(/\s+/g, '');
+        formData.append('branch', branch);
+        console.log('Using branch:', branch);
       }
       
       if (state.token) formData.append('token', state.token);
