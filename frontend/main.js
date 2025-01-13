@@ -4,7 +4,7 @@
 */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Application state
+  // Application state with default values
   const state = {
     inputType: 'file', // 'file' | 'repo' | 'local'
     files: null,
@@ -17,9 +17,9 @@ document.addEventListener('DOMContentLoaded', () => {
     status: 'idle', // 'idle' | 'processing' | 'completed' | 'failed'
     progress: 0,
     error: null,
-    maxFileSize: 50, // Default 50KB
+    maxFileSize: 100, // Default 100KB
     patternMode: 'exclude', // 'exclude' | 'include'
-    patternInput: '',
+    patternInput: '', // Default empty string for no patterns
     preview: null,
     result: null
   };
@@ -63,15 +63,51 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateSubmitButton() {
-    const isValid = (
-      (state.inputType === 'file' && state.files?.length) ||
-      (state.inputType === 'repo' && state.repoUrl) ||
-      (state.inputType === 'local' && state.localDir)
+    const hasFiles = state.files && state.files.length > 0;
+    const hasRepoUrl = Boolean(state.repoUrl && state.repoUrl.trim());
+    const hasLocalDir = Boolean(state.localDir && state.localDir.trim());
+    const isValidGithubUrl = hasRepoUrl && (
+      state.repoUrl.trim().match(/^https:\/\/github\.com\/[^/]+\/[^/]+/) ||
+      state.repoUrl.trim().match(/^github\.com\/[^/]+\/[^/]+/)
     );
-    elements.submitButton.disabled = !isValid || state.status === 'processing';
-    elements.submitButton.textContent = state.status === 'processing' 
-      ? `Processing... ${state.progress}%` 
-      : 'Process Files';
+    
+    const isValid = (
+      (state.inputType === 'file' && hasFiles) ||
+      (state.inputType === 'repo' && isValidGithubUrl) ||
+      (state.inputType === 'local' && hasLocalDir)
+    );
+    
+    console.log('Form validation state:', {
+      inputType: state.inputType,
+      hasFiles,
+      repoUrl: hasRepoUrl,
+      localDir: hasLocalDir,
+      isValid,
+      status: state.status
+    });
+    
+    const isProcessing = state.status === 'processing';
+    const isFailed = state.status === 'failed';
+    
+    // Enable button if form is valid and not processing, or if there was an error
+    elements.submitButton.disabled = (!isValid && !isFailed) || isProcessing;
+    
+    if (isProcessing) {
+      elements.submitButton.textContent = `Processing... ${state.progress}%`;
+      elements.progressBar.style.display = 'block';
+      const progressBarEl = elements.progressBar.querySelector('.progress-bar');
+      if (progressBarEl) {
+        progressBarEl.style.width = `${state.progress}%`;
+      }
+    } else if (isFailed) {
+      elements.submitButton.textContent = 'Failed - Try Again';
+      elements.progressBar.style.display = 'none';
+      // Re-enable button to allow retry
+      elements.submitButton.disabled = false;
+    } else {
+      elements.submitButton.textContent = 'Process Files';
+      elements.progressBar.style.display = 'none';
+    }
   }
 
   // Preview Functions
@@ -92,8 +128,53 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function showPreview() {
     if (!state.preview) return;
+    
+    // Update preview content
     elements.previewContent.textContent = state.preview.preview;
     elements.previewContainer.style.display = 'block';
+    
+    // Add copy button if not already present
+    let copyButton = elements.previewContainer.querySelector('.copy-button');
+    if (!copyButton) {
+      copyButton = document.createElement('button');
+      copyButton.className = 'copy-button';
+      copyButton.textContent = 'Copy';
+      copyButton.addEventListener('click', async () => {
+        if (!navigator.clipboard) {
+          console.error('Clipboard API not available');
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(state.preview.preview);
+          copyButton.textContent = 'Copied!';
+          copyButton.classList.add('copied');
+          setTimeout(() => {
+            copyButton.textContent = 'Copy';
+            copyButton.classList.remove('copied');
+          }, 2000);
+        } catch (err) {
+          console.error('Failed to copy:', err);
+          copyButton.textContent = 'Copy failed';
+          setTimeout(() => {
+            copyButton.textContent = 'Copy';
+          }, 2000);
+        }
+      });
+      
+      // Find or create preview header
+      let previewHeader = elements.previewContainer.querySelector('.preview-header');
+      if (!previewHeader) {
+        previewHeader = document.createElement('div');
+        previewHeader.className = 'preview-header';
+        const title = document.createElement('span');
+        title.className = 'preview-title';
+        title.textContent = 'Text Preview';
+        previewHeader.appendChild(title);
+        elements.previewContainer.insertBefore(previewHeader, elements.previewContent);
+      }
+      
+      previewHeader.appendChild(copyButton);
+    }
   }
 
   function showError(message) {
@@ -101,7 +182,27 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.errorContainer.style.display = 'block';
   }
 
+  // Status polling interval reference
+  let statusInterval = null;
+
+  function startPolling() {
+    if (statusInterval) return; // Don't start multiple intervals
+    statusInterval = setInterval(checkJobStatus, 1000);
+  }
+
+  function stopPolling() {
+    if (statusInterval) {
+      clearInterval(statusInterval);
+      statusInterval = null;
+    }
+  }
+
   async function checkJobStatus() {
+    if (!state.jobId || state.status === 'completed' || state.status === 'failed') {
+      stopPolling();
+      return;
+    }
+
     try {
       const response = await fetch(`/status/${state.jobId}`);
       const data = await response.json();
@@ -110,10 +211,15 @@ document.addEventListener('DOMContentLoaded', () => {
         state.error = data.error;
         state.status = 'failed';
         showError(data.error);
+        stopPolling();
         return;
       }
 
       state.progress = data.progress || 0;
+      const progressBarEl = elements.progressBar.querySelector('.progress-bar');
+      if (progressBarEl) {
+        progressBarEl.style.width = `${state.progress}%`;
+      }
       updateSubmitButton();
 
       if (data.status === 'completed') {
@@ -123,34 +229,68 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         window.location.href = `/download/${state.jobId}`;
         elements.progressBar.style.display = 'none';
+        stopPolling();
       } else if (data.status === 'failed') {
         state.status = 'failed';
         state.error = data.errors?.join('\n') || 'Conversion failed';
         showError(state.error);
-      } else {
-        setTimeout(checkJobStatus, 1000);
+        stopPolling();
       }
     } catch (err) {
       state.error = 'Failed to check job status';
       state.status = 'failed';
       showError(state.error);
+      stopPolling();
     }
   }
+
+  // No example repositories in this version
 
   // Event Listeners
   elements.inputType.addEventListener('change', (e) => {
     state.inputType = e.target.value;
+    // Reset all form state
+    state.status = 'idle';
+    state.error = null;
+    state.files = null;
+    state.repoUrl = '';
+    state.branch = '';
+    state.token = '';
+    state.localDir = '';
+    state.jobId = null;
+    state.progress = 0;
+    
+    // Reset UI elements
+    elements.errorContainer.style.display = 'none';
+    elements.progressBar.style.display = 'none';
+    elements.previewContainer.style.display = 'none';
+    if (elements.repoUrl) elements.repoUrl.value = '';
+    if (elements.branch) elements.branch.value = '';
+    if (elements.token) elements.token.value = '';
+    if (elements.fileInput) elements.fileInput.value = '';
+    
     updateInputSection();
     updateSubmitButton();
+    console.log('Input type changed:', state.inputType);
   });
 
   elements.fileInput.addEventListener('change', (e) => {
     state.files = e.target.files;
+    state.status = 'idle';  // Reset status when new files are selected
+    state.error = null;     // Clear any previous errors
+    elements.errorContainer.style.display = 'none';
+    elements.progressBar.style.display = 'none';
+    console.log('File input change:', {
+      files: state.files,
+      length: state.files?.length,
+      names: Array.from(state.files || []).map(f => f.name)
+    });
     updateSubmitButton();
   });
 
   elements.repoUrl.addEventListener('input', (e) => {
     state.repoUrl = e.target.value;
+    state.status = 'idle';
     updateSubmitButton();
   });
 
@@ -162,10 +302,69 @@ document.addEventListener('DOMContentLoaded', () => {
     state.token = e.target.value;
   });
 
+  // Directory Tree Functions
+  function createDirectoryTree(files) {
+    const tree = {};
+    Array.from(files).forEach(file => {
+      const parts = file.webkitRelativePath.split('/');
+      let current = tree;
+      parts.forEach((part, i) => {
+        if (!current[part]) {
+          current[part] = i === parts.length - 1 ? null : {};
+        }
+        if (i < parts.length - 1) {
+          current = current[part];
+        }
+      });
+    });
+    return tree;
+  }
+
+  function renderDirectoryTree(tree, level = 0) {
+    const container = document.createElement('div');
+    container.className = 'directory-tree';
+    
+    Object.entries(tree).forEach(([name, subtree]) => {
+      const item = document.createElement('div');
+      item.className = `directory-item ${subtree === null ? 'file' : 'folder'}`;
+      item.style.paddingLeft = `${level * 20}px`;
+      item.textContent = name;
+      container.appendChild(item);
+      
+      if (subtree !== null) {
+        container.appendChild(renderDirectoryTree(subtree, level + 1));
+      }
+    });
+    
+    return container;
+  }
+
   elements.localDir.addEventListener('change', (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      state.localDir = file.webkitRelativePath.split('/')[0] || '';
+    const files = e.target.files;
+    if (files?.length) {
+      // Keep the entire directory path instead of only top folder
+      const relativePath = files[0].webkitRelativePath;
+      const folderPath = relativePath.split('/').slice(0, -1).join('/');
+      state.localDir = folderPath || '';
+      // Store directory files for filtering
+      state.files = files;
+      
+      // Create and display directory tree
+      const tree = createDirectoryTree(files);
+      const treeElement = renderDirectoryTree(tree);
+      
+      // Find or create container for directory tree
+      let container = document.getElementById('directoryTree');
+      if (!container) {
+        container = document.createElement('div');
+        container.id = 'directoryTree';
+        elements.sections.local.appendChild(container);
+      }
+      
+      // Update container content
+      container.innerHTML = '';
+      container.appendChild(treeElement);
+      
       updateSubmitButton();
     }
   });
@@ -193,6 +392,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Form Submission
   elements.form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    console.log('Form submitted');
+    
     state.error = null;
     state.status = 'processing';
     state.progress = 0;
@@ -201,30 +402,100 @@ document.addEventListener('DOMContentLoaded', () => {
     updateSubmitButton();
 
     const formData = new FormData();
-    formData.append('format', state.outputFormat);
-    formData.append('max_file_size_kb', state.maxFileSize);
-    formData.append('pattern_mode', state.patternMode);
-    formData.append('pattern_input', state.patternInput);
-
+    console.log('Form state:', {
+      inputType: state.inputType,
+      files: state.files,
+      outputFormat: state.outputFormat,
+      maxFileSize: state.maxFileSize,
+      patternMode: state.patternMode,
+      patternInput: state.patternInput
+    });
+    
+    // Add core parameters with fallback defaults
+    formData.append('format', state.outputFormat || 'text');
+    formData.append('max_file_size_kb', state.maxFileSize || 100);
+    formData.append('pattern_mode', state.patternMode || 'exclude');
+    formData.append('pattern_input', state.patternInput || '');
+    
+    // Handle file uploads
     if (state.inputType === 'file' && state.files?.length) {
+      console.log('Processing file upload');
       formData.append('command', 'convert');
-      Array.from(state.files).forEach((f) => formData.append('file', f));
-    } else if (state.inputType === 'repo') {
+      Array.from(state.files).forEach((f) => {
+        console.log('Appending file:', f.name);
+        formData.append('file', f);
+      });
+    } 
+    // Handle repository export
+    else if (state.inputType === 'repo') {
+      console.log('Processing repository export');
       formData.append('command', 'export');
-      formData.append('repo_url', state.repoUrl);
-      if (state.branch) formData.append('branch', state.branch);
+      // Clean and normalize repository URL
+      let cleanUrl = state.repoUrl.trim();
+      if (!cleanUrl.startsWith('http')) {
+        cleanUrl = 'https://' + cleanUrl;
+      }
+      // Remove /tree/branch and any trailing HEAD
+      cleanUrl = cleanUrl.replace(/\/tree\/[^/]+(?:\s+HEAD)?$/, '');
+      formData.append('repo_url', cleanUrl);
+      
+      // Extract branch from URL or use provided branch
+      let branch = state.branch;
+      if (!branch && state.repoUrl.includes('/tree/')) {
+        const branchMatch = state.repoUrl.match(/\/tree\/([^/]+)/);
+        if (branchMatch) {
+          branch = branchMatch[1];
+        }
+      }
+      
+      if (branch) {
+        // Clean branch name - remove HEAD and sanitize spaces
+        branch = branch.replace(/\s+HEAD$/, '').trim();
+        // Replace spaces with empty string for compatibility
+        branch = branch.replace(/\s+/g, '');
+        formData.append('branch', branch);
+        console.log('Using branch:', branch);
+      }
+      
       if (state.token) formData.append('token', state.token);
-    } else if (state.inputType === 'local') {
+    } 
+    // Handle local directory
+    else if (state.inputType === 'local' && state.files) {
+      console.log('Processing local directory');
       formData.append('command', 'export');
       formData.append('local_dir', state.localDir);
+      
+      // Filter files before sending
+      Array.from(state.files).forEach(file => {
+        const size = file.size / 1024; // Convert to KB
+        if (size <= state.maxFileSize) {
+          const matches = file.webkitRelativePath.match(new RegExp(state.patternInput));
+          if ((state.patternMode === 'include' && matches) || 
+              (state.patternMode === 'exclude' && !matches)) {
+            formData.append('directory_files[]', file);
+          }
+        }
+      });
     }
 
     try {
+      console.log('Sending form data:', {
+        command: formData.get('command'),
+        format: formData.get('format'),
+        files: formData.getAll('file').map(f => f.name)
+      });
+      
       const response = await fetch('/', {
         method: 'POST',
         body: formData
       });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
       const data = await response.json();
+      console.log('Server response:', data);
       
       if (data.error) {
         state.error = data.error;
@@ -232,10 +503,12 @@ document.addEventListener('DOMContentLoaded', () => {
         showError(data.error);
       } else {
         state.jobId = data.job_id;
-        checkJobStatus();
+        console.log('Starting polling for job:', state.jobId);
+        startPolling(); // Start polling for status updates
       }
     } catch (err) {
-      state.error = 'Failed to start conversion';
+      console.error('Form submission error:', err);
+      state.error = 'Failed to start conversion: ' + err.message;
       state.status = 'failed';
       showError(state.error);
     }

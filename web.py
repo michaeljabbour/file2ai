@@ -5,6 +5,7 @@ import sys
 import uuid
 import socket
 import threading
+import io
 from datetime import datetime
 import logging
 from typing import Dict, Optional, List, TypedDict, Union
@@ -66,15 +67,18 @@ class JobStatus(TypedDict):
 
 from file2ai import EXPORTS_DIR, UPLOADS_DIR, FRONTEND_DIR, prepare_exports_dir
 
-app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path='')
+app = Flask(__name__, static_folder=str(Path(FRONTEND_DIR).resolve()), static_url_path='')
 app.secret_key = os.urandom(24)  # For flash messages
 
 # Set up directories with proper permissions
 directories = {
     'uploads': Path(UPLOADS_DIR),
     'exports': Path(EXPORTS_DIR),
-    'frontend': Path(FRONTEND_DIR)
+    'frontend': Path(FRONTEND_DIR).resolve()
 }
+
+# Configure logging for static file serving
+logging.getLogger('werkzeug').setLevel(logging.INFO)
 
 # Ensure required directories exist with proper permissions
 prepare_exports_dir()  # Use the existing function from file2ai.py
@@ -119,10 +123,23 @@ def process_job(
     # Initialize temp_files list at the start
     temp_files = []
     
-    # Get filtering options
-    max_file_size_kb = int(options.get("max_file_size_kb", 1000))  # Default 1MB
+    # Get filtering options with validation
+    try:
+        max_file_size_kb = int(options.get("max_file_size_kb", 1000))  # Default 1MB
+        if max_file_size_kb <= 0:
+            max_file_size_kb = 1000  # Reset to default if invalid
+            logger.warning("Invalid max_file_size_kb, using default: 1000")
+    except (TypeError, ValueError):
+        max_file_size_kb = 1000
+        logger.warning("Invalid max_file_size_kb, using default: 1000")
+        
     pattern_mode = options.get("pattern_mode", "exclude")
-    pattern_input = options.get("pattern_input", "")
+    if pattern_mode not in ["exclude", "include"]:
+        pattern_mode = "exclude"
+        logger.warning("Invalid pattern_mode, using default: exclude")
+        
+    pattern_input = str(options.get("pattern_input", "")).strip()
+    logger.debug(f"Filtering options - size: {max_file_size_kb}KB, mode: {pattern_mode}, patterns: {pattern_input}")
     
     # Initialize job status
     if job_id not in conversion_jobs:
@@ -186,33 +203,36 @@ def process_job(
             
             # Apply filtering
             for filename, file_data in files.items():
-                # Make a copy of the file data to avoid handle issues
-                file_content = file_data.read()
-                file_data.seek(0)  # Reset position for potential reuse
-                
-                # Validate file type
+                # Validate file type first
                 file_ext = os.path.splitext(filename)[1].lower()
                 if file_ext not in valid_types:
                     logger.warning(f"Skipping {filename}: invalid file type")
                     continue
                 
-                # Check file size
-                size_kb = len(file_content) / 1024
+                # Check file size without reading entire content
+                file_data.seek(0, 2)  # Seek to end
+                size_kb = file_data.tell() / 1024
+                file_data.seek(0)  # Reset to beginning
                 
                 if size_kb > max_file_size_kb:
                     logger.info(f"Skipping {filename}: exceeds size limit of {max_file_size_kb}KB")
                     continue
                     
-                # Check pattern match
-                matches = matches_pattern(filename, pattern_input)
+                # Create temporary path for pattern matching
+                temp_path = Path(UPLOADS_DIR) / filename
+                logger.debug(f"Checking pattern match for path: {temp_path}")
+                
+                # Check pattern match using normalized path
+                matches = matches_pattern(str(temp_path), pattern_input)
                 if pattern_mode == "exclude" and matches:
-                    logger.info(f"Skipping {filename}: matches exclude pattern")
+                    logger.debug(f"Skipping {temp_path}: matches exclude pattern")
                     continue
                 elif pattern_mode == "include" and not matches and pattern_input:
-                    logger.info(f"Skipping {filename}: doesn't match include pattern")
+                    logger.debug(f"Skipping {temp_path}: doesn't match include pattern")
                     continue
                     
                 filtered_files[filename] = file_data
+                logger.debug(f"Added file to filtered list: {filename}")
             
             total_files = len(filtered_files)
             if total_files == 0:
@@ -222,45 +242,22 @@ def process_job(
                 input_path = None
                 output_path = None
                 try:
-                    # Save uploaded file
-                    input_path = Path(UPLOADS_DIR) / filename  # Use constant from file2ai module
-                    # Get file content from filtered_files
-                    if isinstance(file_data, (str, bytes)):
-                        file_content = file_data
-                    else:
-                        file_content = file_data.read()
-                        file_data.seek(0)  # Reset position
+                    # Keep file content in memory using BytesIO
+                    content = file_data.read()
+                    input_stream = io.BytesIO(content)
+                    input_stream.seek(0)
                     
-                    # Create and write to file
-                    with open(str(input_path), 'wb') as f:
-                        if isinstance(file_content, str):
-                            f.write(file_content.encode('utf-8'))
-                        else:
-                            f.write(file_content)
-                    temp_files.append(input_path)  # Track for cleanup
-                    
-                    # Convert path to absolute path
-                    input_path = input_path.resolve()
-                    logger.info(f"Using absolute path for conversion: {input_path}")
-                    
-                    # Verify file exists and has content
-                    if not input_path.exists():
-                        raise IOError(f"File not created: {input_path}")
-                    if input_path.stat().st_size == 0:
-                        raise IOError(f"File is empty: {input_path}")
-                    
-                    logger.info(f"Successfully saved uploaded file to: {input_path}")
-
-                    # Create output path
-                    out_filename = f"{filename}.{output_format}"
+                    # Create output path with proper extension
+                    base_name = Path(filename).stem  # Get name without extension
+                    out_filename = f"{base_name}.{output_format}"
                     output_path = Path(EXPORTS_DIR) / out_filename
-                    logger.info(f"Converting {input_path} to {output_path} with format {output_format}")
+                    logger.info(f"Converting {filename} to {output_path} with format {output_format}")
 
-                    # Create args namespace
+                    # Create args namespace with stream
                     args = Namespace(
                             command="convert",
-                            input=str(input_path),
-                            output=str(output_path),
+                            input=filename,  # Use filename for extension detection
+                            output=str(output_path.resolve()),
                             format=output_format,
                             pages=options.get("pages"),
                             brightness=brightness,
@@ -271,17 +268,35 @@ def process_job(
                     # Convert file
                     logger.info(f"Starting conversion with args: {args}")
                     
-                    # Verify input file still exists before conversion
-                    if not input_path.exists():
-                        raise IOError(f"Input file missing before conversion: {input_path}")
-                    
-                    
-                    # Check file permissions and readability
-                    if not os.access(str(input_path), os.R_OK):
-                        raise IOError(f"Input file not readable: {input_path}")
+                    # Validate input path and stream
+                    if input_stream:
+                        logger.debug("Using input stream for conversion")
+                        # Reset stream position to start
+                        input_stream.seek(0)
+                    else:
+                        # Only check file existence if we're not using a stream
+                        if not input_path:
+                            raise IOError("No input path provided and no input stream available")
                         
-                    logger.info(f"Input file verified before conversion: {input_path}")
-                    convert_document(args)
+                        # For file paths, verify existence and permissions
+                        try:
+                            input_path = Path(input_path).resolve()
+                            if not input_path.exists():
+                                raise IOError(f"Input file missing before conversion: {input_path}")
+                            if not os.access(str(input_path), os.R_OK):
+                                raise IOError(f"Input file not readable: {input_path}")
+                            logger.debug(f"Input file verified before conversion: {input_path}")
+                        except Exception as e:
+                            logger.error(f"Error validating input file {input_path}: {e}")
+                            raise IOError(f"Failed to validate input file: {e}")
+                    
+                    try:
+                        # Pass input_stream to convert_document
+                        convert_document(args, input_stream=input_stream)
+                        logger.debug("Document conversion completed successfully")
+                    except Exception as e:
+                        logger.error(f"Error during document conversion: {e}")
+                        raise
                     
                     # Verify output after conversion
                     if not output_path.exists():
@@ -333,10 +348,29 @@ def process_job(
                     output_path = Path(EXPORTS_DIR) / filename
 
                     # Create args namespace for repository export
+                    # Try to detect default branch
+                    default_branch = "main"
+                    try:
+                        # Run git ls-remote to get default branch
+                        import subprocess
+                        result = subprocess.run(
+                            ["git", "ls-remote", "--symref", str(repo_url), "HEAD"],
+                            capture_output=True,
+                            text=True,
+                            check=True
+                        )
+                        # Parse the output to get the default branch name
+                        for line in result.stdout.splitlines():
+                            if "ref:" in line and "HEAD" in line:
+                                default_branch = line.split("/")[-1].strip()
+                                break
+                    except Exception as e:
+                        logger.warning(f"Failed to detect default branch: {e}, falling back to 'main'")
+
                     args = Namespace(
                         command="export",
                         repo_url=str(repo_url),
-                        branch=str(options.get("branch") or "main"),  # Default to main if no branch specified
+                        branch=str(options.get("branch") or default_branch),
                         token=str(options.get("token", "")),
                         output=str(output_path),
                         format=str(options.get("format", "text")),
@@ -502,7 +536,7 @@ def serve_react(path):
     if not path:
         app.logger.info("Serving index.html")
         try:
-            return send_from_directory("frontend", "index.html")
+            return send_from_directory(app.static_folder, "index.html")
         except Exception as e:
             app.logger.error(f"Error serving index.html: {str(e)}")
             return str(e), 500
@@ -510,7 +544,7 @@ def serve_react(path):
     if path.startswith("api/"):
         return "Not found", 404
         
-    frontend_path = Path("frontend") / path
+    frontend_path = Path(app.static_folder) / path
     app.logger.info(f"Checking path: {frontend_path}")
     
     if frontend_path.exists():
@@ -627,17 +661,25 @@ def handle_api():
             if not f.filename:
                 continue
                 
-            # Check file size
-            f.seek(0, 2)  # Seek to end
-            size = f.tell()
-            f.seek(0)  # Reset to beginning
-            if size > MAX_FILE_SIZE:
-                logger.warning(f"Rejected oversized file: {f.filename} ({size} bytes)")
-                return jsonify({"error": f"File {f.filename} exceeds maximum size of 50MB"}), 400
+            try:
+                # Read and store file content
+                content = f.read()
+                size = len(content)
+                if size > MAX_FILE_SIZE:
+                    logger.warning(f"Rejected oversized file: {f.filename} ({size} bytes)")
+                    return jsonify({"error": f"File {f.filename} exceeds maximum size of 50MB"}), 400
                 
-            # Check file extension and MIME type
-            ext = Path(f.filename).suffix.lower()
-            mime_type = f.content_type
+                # Store content in memory for processing
+                f.stream = io.BytesIO(content)
+                f.stream.seek(0)
+                logger.debug(f"Successfully stored content for {f.filename} ({size} bytes)")
+                    
+                # Check file extension and MIME type
+                ext = Path(f.filename).suffix.lower()
+                mime_type = f.content_type
+            except Exception as e:
+                logger.error(f"Error processing file {f.filename}: {str(e)}")
+                return jsonify({"error": f"Error processing file {f.filename}"}), 400
             
             if ext in SUSPICIOUS_EXTENSIONS:
                 logger.warning(f"Rejected suspicious file type: {f.filename}")
