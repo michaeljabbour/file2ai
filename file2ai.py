@@ -33,6 +33,7 @@ __all__ = [
 import argparse
 import fnmatch
 import importlib.util
+import io
 import json
 import logging
 import mimetypes
@@ -635,47 +636,66 @@ def parse_github_url(
         logger.debug("No URL provided")
         return None, None, None
 
-    # Step 1: Extract base repository URL first
-    base_match = re.match(r"^(https?://github\.com/[^/]+/[^/]+)", url)
+    # Step 1: Clean and normalize URL
+    url = url.strip()
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+    logger.debug(f"Normalized URL: {url}")
+
+    # Step 2: Extract base repository URL
+    # Match pattern: https://github.com/owner/repo[/tree/branch[/path]][/pulls|issues|etc]
+    base_match = re.match(r'^https?://github\.com/([^/]+/[^/]+)', url)
     if not base_match:
-        logger.warning(f"Invalid GitHub URL: {url}")
+        logger.warning(f"Invalid GitHub URL format: {url}")
         return None, None, None
 
+    # Get base repository URL without any suffixes
     base_repo = base_match.group(1)
-    remaining_path = url[len(base_repo):]
+    logger.debug(f"Base repository path: {base_repo}")
 
-    # Step 2: Check for URL suffixes that could be subdirectories
+    # Step 3: Handle special suffixes first (/pulls, /issues, etc.)
     special_suffixes = ["/pulls", "/issues", "/actions", "/wiki"]
-    subdir = None
+    remaining_url = url[len(f"https://github.com/{base_repo}"):]
+    
     for suffix in special_suffixes:
-        if remaining_path.startswith(suffix):
-            if use_subdirectory:
-                # These are GitHub virtual paths, warn user they don't exist in repo
-                logger.warning(
-                    f"{suffix} is a GitHub virtual path and doesn't exist in the repository. "
-                    "Exporting from repository root instead."
-                )
-            else:
-                # Otherwise just remove it and continue with base URL
-                logger.debug(f"Removing suffix {suffix} from URL: {url}")
-            remaining_path = remaining_path[len(suffix):]
+        if remaining_url.startswith(suffix):
+            logger.debug(f"Removing special suffix: {suffix}")
+            remaining_url = ""  # These are virtual paths, ignore everything after
             break
 
-    # Step 3: Check for tree/<branch>/<path> pattern
-    tree_match = re.search(r"/tree/([^/]+)(?:/(.+))?$", url)
-    branch = tree_match.group(1) if tree_match else None
+    # Step 4: Extract branch and subdirectory from /tree/ path
+    branch = None
+    subdir = None
+    tree_match = re.search(r'/tree/([^/]+)(?:/(.+))?', remaining_url)
+    
+    if tree_match:
+        # Handle branch
+        raw_branch = tree_match.group(1)
+        if raw_branch:
+            branch = raw_branch.strip()
+            # Sanitize branch name
+            if any(c in branch for c in ['\t', ' ']):
+                sanitized = ''.join(c for c in branch if c not in ['\t', ' '])
+                logger.warning(f"Sanitized branch name from '{branch}' to '{sanitized}'")
+                branch = sanitized
+            logger.debug(f"Extracted branch: {branch}")
+        
+        # Handle subdirectory if requested
+        if use_subdirectory and tree_match.group(2):
+            subdir = tree_match.group(2).strip()
+            if subdir:
+                logger.debug(f"Extracted subdirectory: {subdir}")
+            else:
+                subdir = None
+        elif tree_match.group(2):
+            logger.debug("Ignoring subdirectory (use_subdirectory=False)")
 
-    # If we already have a subdir from special suffixes, don't override it
-    if not subdir and tree_match and use_subdirectory:
-        try:
-            subdir = tree_match.group(2)
-        except (IndexError, AttributeError):
-            subdir = None
-
-    # Step 4: Append .git if missing
-    if not base_repo.endswith(".git"):
-        base_repo += ".git"
-
+    # Step 5: Ensure base repository URL ends with .git
+    base_repo = f"https://github.com/{base_repo}"
+    if not base_repo.endswith('.git'):
+        base_repo += '.git'
+    
+    logger.debug(f"Final parse results - URL: {base_repo}, Branch: {branch}, Subdir: {subdir}")
     return base_repo, branch, subdir
 
 
@@ -1298,24 +1318,16 @@ def clone_and_export(args: argparse.Namespace) -> None:
         logger.info(f"Cloning repository to: {clone_path}")
 
         try:
-            # Ensure all arguments are strings
-            cmd = ["git", "clone", str(clone_url), str(clone_path)]
-            subprocess.run(
-                cmd,
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
+            # Use GitPython to clone repository
+            logger.debug(f"Cloning repository from {clone_url} to {clone_path}")
+            repo = Repo.clone_from(clone_url, clone_path)
             logger.info("Repository cloned successfully")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Git clone failed: {e}")
+        except exc.GitCommandError as e:
+            # Log the actual git command output for debugging
+            logger.error(f"Git clone failed: {e.stderr}")
             sys.exit(1)
-
-        try:
-            repo = Repo(clone_path)
-        except exc.GitError as e:
-            logger.error(f"Failed to initialize repository: {e}")
+        except Exception as e:
+            logger.error(f"Failed to clone repository: {e}")
             sys.exit(1)
 
         # Determine branch: explicit --branch flag takes precedence over URL
@@ -1630,12 +1642,12 @@ def _write_image_list(
     return image_list
 
 
-def verify_file_access(file_path: Path, skip_in_tests: bool = True) -> None:
+def verify_file_access(file_path: Union[Path, io.BytesIO], skip_in_tests: bool = True) -> None:
     """
     Verify that a file exists and is readable.
     
     Args:
-        file_path: Path to the file to verify
+        file_path: Path to the file to verify, or BytesIO stream
         skip_in_tests: Whether to skip verification in test environment
         
     Raises:
@@ -1643,6 +1655,19 @@ def verify_file_access(file_path: Path, skip_in_tests: bool = True) -> None:
         PermissionError: If file isn't accessible due to permissions
         IOError: If file isn't readable for other reasons
     """
+    # Handle BytesIO streams
+    if isinstance(file_path, io.BytesIO):
+        # For BytesIO streams, verify they have content
+        if file_path.tell() == file_path.getbuffer().nbytes and file_path.getbuffer().nbytes > 0:
+            # Stream is at end but has content, seek to start
+            file_path.seek(0)
+        elif file_path.getbuffer().nbytes == 0:
+            error_msg = "Input stream is empty"
+            logger.error(error_msg)
+            raise IOError(error_msg)
+        logger.info("Successfully verified stream has content")
+        return
+
     # Check if we should skip verification in test environment
     in_test = skip_in_tests and 'pytest' in sys.modules
     force_check = os.environ.get('FORCE_FILE_CHECK') == 'true'
@@ -1698,22 +1723,32 @@ def verify_file_access(file_path: Path, skip_in_tests: bool = True) -> None:
 # Function removed - Word to image conversion is no longer supported
 
 
-def convert_document(args: argparse.Namespace) -> None:
+def convert_document(args: argparse.Namespace, input_stream: Optional[io.BytesIO] = None) -> None:
     """
     Convert a document to the specified format.
 
     Args:
         args: Command line arguments containing:
-            - input: Path to input file
+            - input: Path to input file or filename for stream
             - format: Desired output format (pdf, text, image, docx, csv)
             - output: Optional output path
             - brightness: Image brightness adjustment (0.0-2.0)
             - contrast: Image contrast adjustment (0.0-2.0)
             - quality: Image quality setting (1-100)
             - resolution: Image resolution in DPI
+        input_stream: Optional BytesIO stream containing file data
     """
-    input_path = Path(args.input).resolve()  # Get absolute path
-    logger.info(f"Attempting to convert file: {input_path}")
+    # Handle input stream or file path
+    if input_stream is not None:
+        # For streams, we need the filename from args.input for extension detection
+        input_path = Path(args.input)  # Don't resolve() for stream inputs
+        logger.info(f"Attempting to convert file from stream: {input_path.name}")
+        verify_file_access(input_stream)  # Verify stream has content
+    else:
+        # For file paths, resolve to absolute path
+        input_path = Path(args.input).resolve()
+        logger.info(f"Attempting to convert file: {input_path}")
+        verify_file_access(input_path)
     
     # Get input file extension and base name
     input_extension = input_path.suffix.lower()
@@ -1879,7 +1914,12 @@ def convert_document(args: argparse.Namespace) -> None:
         try:
             logger.debug(f"Loading Excel workbook from path: {input_path}")
             try:
-                workbook: "Workbook" = load_workbook(input_path, data_only=True)
+                if input_stream is not None:
+                    # For BytesIO streams, read directly
+                    workbook: "Workbook" = load_workbook(input_stream, data_only=True)
+                else:
+                    # For file paths, open normally
+                    workbook: "Workbook" = load_workbook(input_path, data_only=True)
             except ImportError as e:
                 logger.error(f"Error converting Excel document: Import error - {str(e)}")
                 sys.exit(1)
@@ -1984,7 +2024,12 @@ def convert_document(args: argparse.Namespace) -> None:
                 sys.exit(1)
                 
             try:
-                presentation = Presentation(input_path)
+                if input_stream is not None:
+                    # For BytesIO streams, read directly
+                    presentation = Presentation(input_stream)
+                else:
+                    # For file paths, open normally
+                    presentation = Presentation(input_path)
             except BadZipFile:
                 logger.error("Error loading PowerPoint file: File is not a valid PowerPoint document")
                 sys.exit(1)
@@ -2078,22 +2123,41 @@ def convert_document(args: argparse.Namespace) -> None:
                     sys.exit(1)
 
             # Read HTML content with proper encoding handling
-            for encoding in ['utf-8', 'latin-1']:
-                try:
-                    logger.info(f"Attempting to read HTML file with {encoding} encoding")
-                    with open(input_path, 'r', encoding=encoding) as f:
-                        html_content = f.read()
+            if input_stream is not None:
+                # For BytesIO streams, try decoding directly
+                content = input_stream.getvalue()
+                for encoding in ['utf-8', 'latin-1']:
+                    try:
+                        html_content = content.decode(encoding)
                         if not html_content.strip():
-                            logger.error("HTML file is empty")
+                            logger.error("HTML content is empty")
                             sys.exit(1)
-                        logger.info(f"Successfully read HTML file with {encoding} encoding")
+                        logger.info(f"Successfully decoded HTML content with {encoding} encoding")
                         break
-                except UnicodeDecodeError:
-                    logger.info(f"Failed to read with {encoding} encoding, trying next encoding")
-                    continue
+                    except UnicodeDecodeError:
+                        logger.info(f"Failed to decode with {encoding} encoding, trying next encoding")
+                        continue
+                else:
+                    logger.error("Failed to decode HTML content with supported encodings")
+                    sys.exit(1)
             else:
-                logger.error("Failed to decode HTML file with supported encodings")
-                sys.exit(1)
+                # For file paths, read from file
+                for encoding in ['utf-8', 'latin-1']:
+                    try:
+                        logger.info(f"Attempting to read HTML file with {encoding} encoding")
+                        with open(input_path, 'r', encoding=encoding) as f:
+                            html_content = f.read()
+                            if not html_content.strip():
+                                logger.error("HTML file is empty")
+                                sys.exit(1)
+                            logger.info(f"Successfully read HTML file with {encoding} encoding")
+                            break
+                    except UnicodeDecodeError:
+                        logger.info(f"Failed to read with {encoding} encoding, trying next encoding")
+                        continue
+                else:
+                    logger.error("Failed to decode HTML file with supported encodings")
+                    sys.exit(1)
 
             # Ensure output directory exists
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2106,7 +2170,8 @@ def convert_document(args: argparse.Namespace) -> None:
                     logger.warning("No text content found in HTML")
                 
                 # For HTML to text conversion, ensure we use a consistent output path
-                output_path = exports_dir / f"{base_name}.text"
+                # Keep the original extension in the output filename
+                output_path = exports_dir / f"{base_name}{input_extension}.{args.format}"
                 output_path.write_text(text_content)
                 logger.info(f"Successfully converted HTML to text: {output_path}")
                 return
@@ -2380,8 +2445,13 @@ def convert_document(args: argparse.Namespace) -> None:
                 logger.error(f"Error converting PDF document: {str(e)}")
                 sys.exit(1)
 
-            # Open PDF document
-            pdf_doc = PdfReader(input_path)
+            # Handle input based on type
+            if input_stream is not None:
+                # For BytesIO streams, read directly
+                pdf_doc = PdfReader(input_stream)
+            else:
+                # For file paths, open normally
+                pdf_doc = PdfReader(input_path)
 
             if output_format == "text":
                 # Extract text from PDF

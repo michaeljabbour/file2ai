@@ -23,14 +23,30 @@ def matches_pattern(file_path: Union[str, Path], pattern_input: str) -> bool:
     if not patterns:
         return False
         
-    path_obj = Path(file_path) if isinstance(file_path, str) else file_path
+    # Ensure we have an absolute, normalized path
+    path_obj = Path(file_path).resolve() if isinstance(file_path, str) else Path(file_path).resolve()
+    
+    # Convert patterns to absolute paths if they look like absolute paths
+    normalized_patterns = []
     for pattern in patterns:
+        if pattern.startswith('/'):
+            try:
+                normalized_patterns.append(str(Path(pattern).resolve()))
+            except Exception:
+                normalized_patterns.append(pattern)
+        else:
+            normalized_patterns.append(pattern)
+    
+    for pattern in normalized_patterns:
         try:
             if path_obj.match(pattern):
+                logger.debug(f"Path {path_obj} matches pattern {pattern}")
                 return True
         except Exception as e:
             logger.warning(f"Error matching pattern '{pattern}' against '{path_obj}': {e}")
             continue
+    
+    logger.debug(f"Path {path_obj} does not match any patterns")
     return False
 
 def gather_filtered_files(base_dir: str, max_size_kb: int, pattern_mode: str, pattern_input: str) -> List[str]:
@@ -49,42 +65,50 @@ def gather_filtered_files(base_dir: str, max_size_kb: int, pattern_mode: str, pa
     max_size_bytes = max_size_kb * 1024
     
     try:
-        base_path = Path(base_dir)
+        # Ensure we have an absolute, normalized base path
+        base_path = Path(base_dir).resolve()
         if not base_path.exists():
-            raise IOError(f"Directory not found: {base_dir}")
+            raise IOError(f"Directory not found: {base_path}")
         if not base_path.is_dir():
-            raise IOError(f"Not a directory: {base_dir}")
+            raise IOError(f"Not a directory: {base_path}")
             
+        logger.debug(f"Scanning directory: {base_path}")
+        
         for p in base_path.rglob('*'):
             if not p.is_file():
                 continue
                 
             # Skip hidden files and common ignore patterns
             if any(part.startswith('.') for part in p.parts):
+                logger.debug(f"Skipping hidden file/directory: {p}")
                 continue
                 
+            # Get absolute path
+            abs_path = p.resolve()
+            
             # Check file size
             try:
-                if p.stat().st_size > max_size_bytes:
-                    logger.debug(f"Skipping {p}: exceeds size limit of {max_size_kb}KB")
+                size = abs_path.stat().st_size
+                if size > max_size_bytes:
+                    logger.debug(f"Skipping {abs_path}: exceeds size limit of {max_size_kb}KB ({size/1024:.1f}KB)")
                     continue
             except OSError as e:
-                logger.warning(f"Error checking size of {p}: {e}")
+                logger.warning(f"Error checking size of {abs_path}: {e}")
                 continue
             
-            # Check pattern match
-            str_path = str(p.resolve())
-            matches = matches_pattern(str_path, pattern_input)
+            # Check pattern match using absolute path
+            matches = matches_pattern(abs_path, pattern_input)
             
             # Include/exclude based on pattern_mode
             if pattern_mode == "exclude" and matches:
-                logger.debug(f"Skipping {p}: matches exclude pattern")
+                logger.debug(f"Skipping {abs_path}: matches exclude pattern")
                 continue
             elif pattern_mode == "include" and not matches and pattern_input:
-                logger.debug(f"Skipping {p}: doesn't match include pattern")
+                logger.debug(f"Skipping {abs_path}: doesn't match include pattern")
                 continue
                 
-            filtered_files.append(str_path)
+            filtered_files.append(str(abs_path))
+            logger.debug(f"Including file: {abs_path}")
                     
         logger.info(f"Found {len(filtered_files)} files in {base_dir} after filtering")
     except Exception as e:
