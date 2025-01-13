@@ -159,7 +159,7 @@ def install_package_support(package: str) -> bool:
     if check_package_support(package):
         return True
     try:
-        logger.info(f"Installing {package}...")
+        logger.debug(f"Installing {package}...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", package])
         importlib.invalidate_caches()  # Ensure the newly installed package is detected
         
@@ -309,7 +309,7 @@ logger = logging.getLogger(__name__)
 
 def install_gitpython_quietly() -> None:
     """Check if GitPython package is available."""
-    logger.info("Checking GitPython dependency...")
+    logger.debug("Checking GitPython dependency...")
     if not check_package_support("git"):
         logger.error("GitPython not found. Please install dependencies first.")
         raise SystemExit(1)
@@ -352,8 +352,10 @@ def setup_logging(operation: str = "general", context: Optional[str] = None) -> 
 
     # Configure logging handlers with full context
     log_file = logs_dir / f"{'-'.join(log_name_parts)}.log"
+    # Use WARNING as default level, but allow override via LOG_LEVEL env var
+    log_level = os.environ.get('LOG_LEVEL', 'WARNING')
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, log_level.upper(), logging.WARNING),
         format="%(asctime)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
@@ -448,6 +450,23 @@ Cross-platform compatible with no system dependencies required.""",
         default="text",
         help="Choose the output format (text or json). Default is text.",
     )
+    # File filtering options
+    parser.add_argument(
+        "--max-size-kb",
+        type=int,
+        default=50,
+        help="Maximum file size in KB (default: 50)",
+    )
+    parser.add_argument(
+        "--pattern-mode",
+        choices=["exclude", "include"],
+        default="exclude",
+        help="Pattern matching mode (exclude or include). Default is exclude.",
+    )
+    parser.add_argument(
+        "--pattern-input",
+        help="Semicolon-separated list of glob patterns (e.g., '*.md;build/*')",
+    )
 
     # Create subparsers for different commands
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -540,11 +559,23 @@ Cross-platform compatible with no system dependencies required.""",
             args.repo_url_sub = None
 
         # Process export command arguments if provided
-        # Handle --subdir first as it can be used for both local and repo exports
-        if args.subdir:
-            args.local_dir = os.path.abspath(args.subdir)
-            logger.info(f"Using subdirectory as source: {args.local_dir}")
-            return args
+        # Handle path normalization and subdir combination
+        if args.local_dir:
+            # Normalize local_dir first
+            args.local_dir = os.path.abspath(os.path.expanduser(args.local_dir))
+            
+            # If subdir is provided, combine with normalized local_dir
+            if args.subdir:
+                args.local_dir = os.path.abspath(os.path.join(args.local_dir, args.subdir))
+                logger.debug(f"Using combined local directory + subdir: {args.local_dir}")
+        elif args.subdir:
+            # If only subdir provided, treat it as the local_dir
+            args.local_dir = os.path.abspath(os.path.expanduser(args.subdir))
+            logger.debug(f"Using subdirectory as source: {args.local_dir}")
+        
+        # Clear subdir since it's now incorporated into local_dir
+        args.subdir = None
+        return args
             
         if args.local_dir:
             args.repo_url_sub = False
@@ -579,31 +610,36 @@ Cross-platform compatible with no system dependencies required.""",
 
 
 def parse_github_url(
-    url: str, use_subdirectory: bool = False
-) -> Tuple[str, Optional[str], Optional[str]]:
+    url: Optional[str], use_subdirectory: bool = False
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Extract information from a GitHub repository URL, ignoring subdirectories unless
     use_subdirectory is True. Also extracts base repository URL from deep URLs like
     /pulls, /issues, etc.
 
     Args:
-        url: The GitHub repository URL to parse.
+        url: The GitHub repository URL to parse, or None.
         use_subdirectory: If True, extract subdirectory information from deep URLs.
 
     Returns:
         Tuple of (base_repo_url, branch, subdirectory).
-        - base_repo_url: The base GitHub repository URL ending with .git
+        - base_repo_url: The base GitHub repository URL ending with .git, or None if invalid
         - branch: Branch name if specified in URL, None otherwise
         - subdirectory: Subdirectory path if specified and use_subdirectory=True, None otherwise
 
-    Raises:
-        SystemExit: If the URL is not a valid GitHub repository URL.
+    Note:
+        Returns (None, None, None) if the URL is None or invalid.
     """
+    # Handle None or empty URL
+    if not url:
+        logger.debug("No URL provided")
+        return None, None, None
+
     # Step 1: Extract base repository URL first
     base_match = re.match(r"^(https?://github\.com/[^/]+/[^/]+)", url)
     if not base_match:
-        logger.error(f"Invalid GitHub URL: {url}")
-        sys.exit(1)
+        logger.warning(f"Invalid GitHub URL: {url}")
+        return None, None, None
 
     base_repo = base_match.group(1)
     remaining_path = url[len(base_repo):]
@@ -621,7 +657,7 @@ def parse_github_url(
                 )
             else:
                 # Otherwise just remove it and continue with base URL
-                logger.warning(f"Removing suffix {suffix} from URL: {url}")
+                logger.debug(f"Removing suffix {suffix} from URL: {url}")
             remaining_path = remaining_path[len(suffix):]
             break
 
@@ -630,8 +666,11 @@ def parse_github_url(
     branch = tree_match.group(1) if tree_match else None
 
     # If we already have a subdir from special suffixes, don't override it
-    if not subdir:
-        subdir = tree_match.group(2) if tree_match and use_subdirectory else None
+    if not subdir and tree_match and use_subdirectory:
+        try:
+            subdir = tree_match.group(2)
+        except (IndexError, AttributeError):
+            subdir = None
 
     # Step 4: Append .git if missing
     if not base_repo.endswith(".git"):
@@ -640,21 +679,31 @@ def parse_github_url(
     return base_repo, branch, subdir
 
 
-def build_auth_url(base_url: str, token: str) -> str:
+def build_auth_url(base_url: Optional[str], token: Optional[str]) -> Optional[str]:
     """
     Build an authenticated GitHub URL using a token.
-
+    
     Args:
-        base_url: The base GitHub repository URL.
-        token: The GitHub Personal Access Token.
-
+        base_url: The base GitHub repository URL, or None.
+        token: The GitHub Personal Access Token, or None.
+        
     Returns:
-        The authenticated URL.
+        The authenticated URL, or None if inputs are invalid.
     """
-    if not base_url.startswith("https://"):
-        logger.warning("Token-based auth requires HTTPS. Proceeding without token.")
-        return base_url
-    return base_url.replace("https://", f"https://{token}@")
+    if not base_url or not token:
+        logger.debug("Missing URL or token for authentication")
+        return None
+        
+    try:
+        if not base_url.startswith("https://"):
+            logger.warning("Token-based auth requires HTTPS. Converting to HTTPS.")
+            base_url = base_url.replace("http://", "https://", 1)
+            if not base_url.startswith("https://"):
+                base_url = f"https://{base_url}"
+        return base_url.replace("https://", f"https://{token}@", 1)
+    except (AttributeError, TypeError) as e:
+        logger.error(f"Failed to build authenticated URL: {e}")
+        return None
 
 
 def is_text_file(file_path: Path) -> bool:
@@ -881,12 +930,17 @@ def should_ignore(
     return False  # Default to include if no patterns match
 
 
+from utils import gather_filtered_files
+
 def export_files_to_single_file(
     repo: Optional[Repo],
     repo_name: str,
     repo_root: Path,
     output_file: Path,
     skip_commit_info: bool = False,
+    max_size_kb: int = 50,
+    pattern_mode: str = "exclude",
+    pattern_input: Optional[str] = None,
 ) -> None:
     """
     Export repository (or local dir) text files to a single file.
@@ -897,6 +951,9 @@ def export_files_to_single_file(
         repo_root: Root path of the repository or local directory.
         output_file: Path to the output file.
         skip_commit_info: If True, do not attempt to read Git commit info.
+        max_size_kb: Maximum file size in KB (default: 50).
+        pattern_mode: Pattern matching mode ("exclude" or "include", default: "exclude").
+        pattern_input: Semicolon-separated list of glob patterns.
     """
     logger.info("Starting file export process")
     stats: Dict[str, int] = {
@@ -927,7 +984,15 @@ def export_files_to_single_file(
         outfile.write("\n" + "=" * 80 + "\n\n")
 
         # Process files
-        _process_repository_files(repo_root, outfile, stats, repo if not skip_commit_info else None)
+        _process_repository_files(
+            repo_root,
+            outfile,
+            stats,
+            repo if not skip_commit_info else None,
+            max_size_kb=max_size_kb,
+            pattern_mode=pattern_mode,
+            pattern_input=pattern_input
+        )
 
         # Write summary
         _write_summary(outfile, stats)
@@ -941,6 +1006,9 @@ def export_files_to_json(
     repo_root: Path,
     output_file: Path,
     skip_commit_info: bool = False,
+    max_size_kb: int = 50,
+    pattern_mode: str = "exclude",
+    pattern_input: Optional[str] = None,
 ) -> None:
     """
     Export repository (or local dir) text files to a JSON file.
@@ -951,6 +1019,9 @@ def export_files_to_json(
         repo_root: Root path of the repository or local directory.
         output_file: Path to the output file.
         skip_commit_info: If True, do not attempt to read Git commit info.
+        max_size_kb: Maximum file size in KB (default: 50).
+        pattern_mode: Pattern matching mode ("exclude" or "include", default: "exclude").
+        pattern_input: Semicolon-separated list of glob patterns.
     """
     logger.info("Starting JSON export process")
     stats: Dict[str, int] = {
@@ -966,14 +1037,20 @@ def export_files_to_json(
     data: List[FileEntry] = []
     ignore_patterns = load_gitignore_patterns(repo_root)
 
-    files_to_process = [
-        f
-        for f in repo_root.rglob("*")
-        if f.is_file()
-        and not f.name.startswith(".")
-        and ".git" not in str(f)
-        and not should_ignore(f, ignore_patterns, repo_root, stats)
-    ]
+    # Use gather_filtered_files for file filtering
+    filtered_files = gather_filtered_files(
+        str(repo_root),
+        max_size_kb=max_size_kb,
+        pattern_mode=pattern_mode,
+        pattern_input=pattern_input or ""  # Convert None to empty string
+    )
+    
+    # Convert to Path objects and apply gitignore patterns
+    files_to_process = []
+    for f in filtered_files:
+        path_obj = Path(f)
+        if not should_ignore(path_obj, ignore_patterns, repo_root, stats):
+            files_to_process.append(path_obj)
     total_files = len(files_to_process)
 
     for i, file_path in enumerate(files_to_process, 1):
@@ -1062,38 +1139,42 @@ def _write_directory_structure(repo_root: Path, outfile: TextIO) -> None:
 
 
 def _process_repository_files(
-    repo_root: Path, outfile: TextIO, stats: Dict[str, int], repo: Optional[Repo]
+    repo_root: Path,
+    outfile: TextIO,
+    stats: Dict[str, int],
+    repo: Optional[Repo],
+    max_size_kb: int = 50,
+    pattern_mode: str = "exclude",
+    pattern_input: Optional[str] = None,
 ) -> None:
-    """Process all repository files and update statistics."""
+    """
+    Process repository files and update statistics.
+    
+    Args:
+        repo_root: Root path of the repository
+        outfile: Output file handle
+        stats: Statistics dictionary to update
+        repo: Optional Git repository object
+        max_size_kb: Maximum file size in KB
+        pattern_mode: Pattern matching mode ("exclude" or "include")
+        pattern_input: Semicolon-separated list of glob patterns
+    """
     ignore_patterns = load_gitignore_patterns(repo_root)
 
-    # Define directories to skip early in the process
-    skip_dirs = {
-        "node_modules",
-        "venv",
-        ".venv",
-        "env",
-        ".env",
-        "dist",
-        "build",
-        ".next",
-        "__pycache__",
-        ".git",
-        ".pytest_cache",
-        ".coverage",
-        ".idea",
-        ".vscode",
-    }
-
+    # Use gather_filtered_files for file filtering
+    filtered_files = gather_filtered_files(
+        str(repo_root),
+        max_size_kb=max_size_kb,
+        pattern_mode=pattern_mode,
+        pattern_input=pattern_input or ""  # Convert None to empty string
+    )
+    
+    # Convert to Path objects and apply gitignore patterns
     files_to_process = []
-    for f in repo_root.rglob("*"):
-        if f.is_file():
-            # Skip files in excluded directories early
-            if any(skip_dir in str(f.parent) for skip_dir in skip_dirs):
-                continue
-            # Apply remaining filters
-            if not f.name.startswith(".") and not should_ignore(f, ignore_patterns, repo_root):
-                files_to_process.append(f)
+    for f in filtered_files:
+        path_obj = Path(f)
+        if not should_ignore(path_obj, ignore_patterns, repo_root):
+            files_to_process.append(path_obj)
 
     total_files = len(files_to_process)
 
@@ -1188,10 +1269,25 @@ def clone_and_export(args: argparse.Namespace) -> None:
         masked_token = (
             f"{args.token[:3]}...{args.token[-3:]}" if len(args.token) > 6 else "REDACTED"
         )
-        logger.info(f"Using token: {masked_token}")
-        clone_url = build_auth_url(clone_url, args.token)
+        logger.debug(f"Using token: {masked_token}")
+        auth_url = build_auth_url(clone_url, args.token)
+        if not auth_url:
+            logger.error("Failed to build authenticated URL")
+            sys.exit(1)
+        clone_url = auth_url
 
-    repo_name = clone_url.rstrip("/").split("/")[-1].replace(".git", "")
+    # Verify we have a valid clone URL
+    if not clone_url:
+        logger.error("No valid clone URL provided")
+        sys.exit(1)
+        
+    # Extract repo name safely
+    try:
+        repo_name = clone_url.rstrip("/").split("/")[-1].replace(".git", "")
+    except (AttributeError, IndexError) as e:
+        logger.error(f"Failed to extract repository name from {clone_url}: {e}")
+        sys.exit(1)
+        
     extension = ".json" if args.format == "json" else ".txt"
     output_path = exports_dir / (args.output_file or f"file2ai_export{extension}")
     output_path = _sequential_filename(output_path.resolve())
@@ -1202,8 +1298,10 @@ def clone_and_export(args: argparse.Namespace) -> None:
         logger.info(f"Cloning repository to: {clone_path}")
 
         try:
+            # Ensure all arguments are strings
+            cmd = ["git", "clone", str(clone_url), str(clone_path)]
             subprocess.run(
-                ["git", "clone", clone_url, str(clone_path)],
+                cmd,
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
@@ -3044,13 +3142,21 @@ def main() -> None:
     elif args.command == "convert":
         convert_document(args)
     elif args.command == "web":
-        # Import Flask app here to avoid circular imports
-        from web import app
+        # Configure web server environment before importing Flask
+        port = int(args.port or 8000)
+        host = str(args.host or "127.0.0.1")
+        os.environ["FLASK_ENV"] = "production"
+        os.environ["LOG_LEVEL"] = "WARNING"
+        
         # Ensure exports directory exists with proper permissions
         exports_dir = Path(EXPORTS_DIR)
         exports_dir.mkdir(exist_ok=True, mode=0o755)
-        # Start Flask server
-        app.run(host=args.host, port=args.port)
+        
+        # Import Flask app here to avoid circular imports
+        from web import app
+        
+        # Start server with explicit configuration
+        app.run(host=host, port=port)
     else:
         logger.info("file2ai completed successfully")
         sys.exit(0)

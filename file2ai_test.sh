@@ -111,21 +111,16 @@ python setup_progress.py | (
     done
     echo "success"
 
-    # Start web server
-    python file2ai.py web &
-    WEB_PID=$!
-    sleep 2  # Give the server time to start
-
-    # Check if server is running
-    if curl -s http://localhost:8000 > /dev/null; then
-        echo "success"
-        # Keep the server running in background
-        disown $WEB_PID
-    else
-        kill $WEB_PID 2>/dev/null || true
-        echo "Failed to start web server" >&2
-        exit 1
-    fi
+    # Print instructions for starting web server manually
+    echo -e "\nTo start the web server manually:"
+    echo -e "\n1. Configure environment (optional):"
+    echo "export FLASK_ENV=development     # For development mode with auto-reload"
+    echo "export LOG_LEVEL=WARNING        # Default logging level"
+    echo "export FLASK_RUN_PORT=8000      # Default port"
+    echo -e "\n2. Start the server:"
+    echo "python file2ai.py web --port 8000 --host 127.0.0.1"
+    echo -e "\nNote: The web interface will be available at http://127.0.0.1:8000\n"
+    echo "success"
 )
 
 # Clean up temporary progress script

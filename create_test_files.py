@@ -42,6 +42,10 @@ def create_test_files():
     subtitle.text = "Created for file2ai testing"
     prs.save(str(test_dir / "test.pptx"))
     
+    # Create simple text file
+    text_path = test_dir / "test.txt"
+    text_path.write_text("This is a test file created for file2ai testing.\n")
+    
     # Create PDF file using reportlab
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import letter
