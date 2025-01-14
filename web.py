@@ -127,22 +127,13 @@ def process_job(
     temp_files = []
     
     # Get filtering options with validation
-    try:
-        max_file_size_kb = int(options.get("max_file_size_kb", 1000))  # Default 1MB
-        if max_file_size_kb <= 0:
-            max_file_size_kb = 1000  # Reset to default if invalid
-            logger.warning("Invalid max_file_size_kb, using default: 1000")
-    except (TypeError, ValueError):
-        max_file_size_kb = 1000
-        logger.warning("Invalid max_file_size_kb, using default: 1000")
-        
     pattern_mode = options.get("pattern_mode", "exclude")
     if pattern_mode not in ["exclude", "include"]:
         pattern_mode = "exclude"
         logger.warning("Invalid pattern_mode, using default: exclude")
         
     pattern_input = str(options.get("pattern_input", "")).strip()
-    logger.debug(f"Filtering options - size: {max_file_size_kb}KB, mode: {pattern_mode}, patterns: {pattern_input}")
+    logger.debug(f"Filtering options - mode: {pattern_mode}, patterns: {pattern_input}")
     
     # Initialize job status
     if job_id not in conversion_jobs:
@@ -212,14 +203,8 @@ def process_job(
                     logger.warning(f"Skipping {filename}: invalid file type")
                     continue
                 
-                # Check file size without reading entire content
-                file_data.seek(0, 2)  # Seek to end
-                size_kb = file_data.tell() / 1024
-                file_data.seek(0)  # Reset to beginning
-                
-                if size_kb > max_file_size_kb:
-                    logger.info(f"Skipping {filename}: exceeds size limit of {max_file_size_kb}KB")
-                    continue
+                # Reset file pointer to beginning
+                file_data.seek(0)
                     
                 # Create temporary path for pattern matching
                 temp_path = Path(UPLOADS_DIR) / filename
@@ -402,22 +387,61 @@ def process_job(
 
                     # Export repository
                     try:
-                        # Ensure output directory exists
-                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        # Ensure output directory exists and is writable
+                        try:
+                            output_dir = output_path.parent
+                            output_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            # Verify directory permissions
+                            if not output_dir.exists():
+                                raise IOError(f"Failed to create output directory: {output_dir}")
+                            if not os.access(str(output_dir), os.W_OK):
+                                raise IOError(f"Output directory not writable: {output_dir}")
+                                
+                            # Try to create a test file to verify write permissions
+                            test_file = output_dir / ".write_test"
+                            try:
+                                test_file.touch()
+                                test_file.unlink()
+                            except Exception as e:
+                                raise IOError(f"Cannot write to output directory: {e}")
+                                
+                            logger.debug(f"Output directory verified: {output_dir}")
+                        except Exception as e:
+                            logger.error(f"Output directory error: {e}")
+                            raise IOError(f"Failed to prepare output directory: {e}")
                         
                         # Export repository
                         clone_and_export(args)
                         
-                        # Verify output
-                        if output_path.exists():
-                            job["output_files"] = [output_path]
-                            job["status"] = "completed"
-                            job["progress"] = 100
-                            logger.info(f"Successfully created output file: {output_path}")
-                        else:
+                        # Verify output with detailed error messages
+                        if not output_path.exists():
+                            error_msg = f"Export failed to create output file: {output_path}"
+                            if not output_dir.exists():
+                                error_msg += f" (directory {output_dir} missing)"
+                            elif not os.access(str(output_dir), os.W_OK):
+                                error_msg += f" (directory {output_dir} not writable)"
+                            elif os.path.exists(str(output_path)):
+                                error_msg += " (path exists but is not a regular file)"
                             job["status"] = "failed"
-                            job["errors"].append(f"Export failed to create output file: {output_path}")
-                            logger.error(f"Failed to create output file: {output_path}")
+                            job["errors"].append(error_msg)
+                            logger.error(error_msg)
+                            raise IOError(error_msg)
+                            
+                        # Verify file is not empty
+                        if output_path.stat().st_size == 0:
+                            error_msg = f"Export created empty output file: {output_path}"
+                            job["status"] = "failed"
+                            job["errors"].append(error_msg)
+                            logger.error(error_msg)
+                            raise IOError(error_msg)
+                            
+                        # Success case
+                        job["output_files"] = [output_path]
+                        job["status"] = "completed"
+                        job["progress"] = 100
+                        logger.info(f"Successfully created output file: {output_path}")
+                        
                     except Exception as e:
                         job["status"] = "failed"
                         job["errors"].append(f"Export failed: {str(e)}")
@@ -446,6 +470,30 @@ def process_job(
 
                     # Export local directory
                     try:
+                        # Ensure output directory exists and is writable
+                        try:
+                            output_dir = output_path.parent
+                            output_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            # Verify directory permissions
+                            if not output_dir.exists():
+                                raise IOError(f"Failed to create output directory: {output_dir}")
+                            if not os.access(str(output_dir), os.W_OK):
+                                raise IOError(f"Output directory not writable: {output_dir}")
+                                
+                            # Try to create a test file to verify write permissions
+                            test_file = output_dir / ".write_test"
+                            try:
+                                test_file.touch()
+                                test_file.unlink()
+                            except Exception as e:
+                                raise IOError(f"Cannot write to output directory: {e}")
+                                
+                            logger.debug(f"Output directory verified: {output_dir}")
+                        except Exception as e:
+                            logger.error(f"Output directory error: {e}")
+                            raise IOError(f"Failed to prepare output directory: {e}")
+                            
                         # Get list of files to process
                         directory_files = []
                         if files:
@@ -835,7 +883,6 @@ def handle_api():
                 try:
                     directory_files = gather_filtered_files(
                         dir_path,
-                        max_size_kb=max_file_size,
                         pattern_mode=pattern_mode,
                         pattern_input=request.form.get("pattern_input", "")
                     )
