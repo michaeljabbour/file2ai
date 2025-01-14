@@ -404,42 +404,58 @@ def parse_args(args=None) -> argparse.Namespace:
             # First try to detect what kind of input we have
             input_arg = sys.argv[1]
             try:
-                # Check if it's a file path
-                if os.path.exists(input_arg):
-                    logger.info("Detected file path input, converting to proper command format")
-                    file_path = sys.argv.pop(1)  # Remove the file path
-                    sys.argv.extend(["convert", "--input", file_path])  # Add as proper arguments
-                    logger.warning(
-                        "Legacy file path format detected. Please use this format instead:\n"
-                        f"  python file2ai.py convert --input {file_path} [options]"
-                    )
-                # Check if it's a GitHub URL
-                elif validate_github_url(input_arg):
-                    logger.info("Detected GitHub URL input, converting to proper command format")
-                    url = sys.argv.pop(1)  # Remove the URL
-                    sys.argv.extend(["export", "--repo-url", url])  # Add as proper arguments
-                    logger.warning(
-                        "Legacy URL format detected. Please use this format instead:\n"
-                        f"  python file2ai.py export --repo-url {url} [options]"
-                    )
-                # Check if it's a directory path
-                elif os.path.isdir(input_arg):
-                    logger.info("Detected directory path input, converting to proper command format")
-                    dir_path = sys.argv.pop(1)  # Remove the directory path
-                    sys.argv.extend(["export", "--local-dir", dir_path])  # Add as proper arguments
-                    logger.warning(
-                        "Legacy directory format detected. Please use this format instead:\n"
-                        f"  python file2ai.py export --local-dir {dir_path} [options]"
-                    )
-                else:
-                    # Invalid input - provide detailed error message
+                # First try to detect if it's a file path
+                input_path = Path(input_arg).expanduser()
+                try:
+                    # Resolve the path but don't follow symlinks
+                    input_path = input_path.absolute()
+                    
+                    # Check if it's a file (including PDFs with spaces)
+                    if input_path.is_file():
+                        logger.info("Detected file path input, converting to proper command format")
+                        file_path = sys.argv.pop(1)  # Remove the file path
+                        sys.argv.extend(["convert", "--input", str(input_path)])  # Add as proper arguments
+                        logger.warning(
+                            "Legacy file path format detected. Please use this format instead:\n"
+                            f"  python file2ai.py convert --input {input_path} [options]"
+                        )
+                    # Check if it's a directory
+                    elif input_path.is_dir():
+                        logger.info("Detected directory path input, converting to proper command format")
+                        dir_path = sys.argv.pop(1)  # Remove the directory path
+                        sys.argv.extend(["export", "--local-dir", str(input_path)])  # Add as proper arguments
+                        logger.warning(
+                            "Legacy directory format detected. Please use this format instead:\n"
+                            f"  python file2ai.py export --local-dir {input_path} [options]"
+                        )
+                    # Check if it's a GitHub URL
+                    elif validate_github_url(input_arg):
+                        logger.info("Detected GitHub URL input, converting to proper command format")
+                        url = sys.argv.pop(1)  # Remove the URL
+                        sys.argv.extend(["export", "--repo-url", url])  # Add as proper arguments
+                        logger.warning(
+                            "Legacy URL format detected. Please use this format instead:\n"
+                            f"  python file2ai.py export --repo-url {url} [options]"
+                        )
+                    else:
+                        # Invalid input - provide detailed error message
+                        raise ValueError(
+                            f"Invalid argument: {input_arg}\n"
+                            "The argument is not a valid:\n"
+                            "  - File path (file does not exist)\n"
+                            "  - GitHub URL (must start with https://github.com/)\n"
+                            "  - Directory path (directory does not exist)\n\n"
+                            "Please use one of these formats:\n"
+                            "  python file2ai.py convert --input <file> [options]\n"
+                            "  python file2ai.py export --repo-url <url> [options]\n"
+                            "  python file2ai.py export --local-dir <directory> [options]"
+                        )
+                except Exception as e:
+                    logger.error(f"Error processing path {input_arg}: {e}")
                     raise ValueError(
-                        f"Invalid argument: {input_arg}\n"
-                        "The argument is not a valid:\n"
-                        "  - File path (file does not exist)\n"
-                        "  - GitHub URL (must start with https://github.com/)\n"
-                        "  - Directory path (directory does not exist)\n\n"
-                        "Please use one of these formats:\n"
+                        f"Failed to process path: {input_arg}\n"
+                        "Please verify the path exists and you have permission to access it.\n"
+                        "Use one of these formats:\n"
                         "  python file2ai.py convert --input <file> [options]\n"
                         "  python file2ai.py export --repo-url <url> [options]\n"
                         "  python file2ai.py export --local-dir <directory> [options]"
@@ -508,12 +524,7 @@ Cross-platform compatible with no system dependencies required.""",
         help="Choose the output format (text or json). Default is text.",
     )
     # File filtering options
-    parser.add_argument(
-        "--max-size-kb",
-        type=int,
-        default=50,
-        help="Maximum file size in KB (default: 50)",
-    )
+    # Size limit removed - no longer restricting file sizes
     parser.add_argument(
         "--pattern-mode",
         choices=["exclude", "include"],
@@ -562,12 +573,7 @@ Cross-platform compatible with no system dependencies required.""",
         default="text",
         help="Choose the output format (text or json). Default is text.",
     )
-    export_parser.add_argument(
-        "--max-size-kb",
-        type=int,
-        default=50,
-        help="Maximum file size in KB (default: 50)",
-    )
+    # Size limit removed - no longer restricting file sizes
     export_parser.add_argument(
         "--pattern-mode",
         choices=["exclude", "include"],
@@ -1095,7 +1101,6 @@ def export_files_to_single_file(
     repo_root: Path,
     output_file: Path,
     skip_commit_info: bool = False,
-    max_size_kb: int = 50,
     pattern_mode: str = "exclude",
     pattern_input: Optional[str] = None,
 ) -> None:
@@ -1108,7 +1113,6 @@ def export_files_to_single_file(
         repo_root: Root path of the repository or local directory.
         output_file: Path to the output file.
         skip_commit_info: If True, do not attempt to read Git commit info.
-        max_size_kb: Maximum file size in KB (default: 50).
         pattern_mode: Pattern matching mode ("exclude" or "include", default: "exclude").
         pattern_input: Semicolon-separated list of glob patterns.
     """
@@ -1146,7 +1150,6 @@ def export_files_to_single_file(
             outfile,
             stats,
             repo if not skip_commit_info else None,
-            max_size_kb=max_size_kb,
             pattern_mode=pattern_mode,
             pattern_input=pattern_input
         )
@@ -1163,7 +1166,6 @@ def export_files_to_json(
     repo_root: Path,
     output_file: Path,
     skip_commit_info: bool = False,
-    max_size_kb: int = 50,
     pattern_mode: str = "exclude",
     pattern_input: Optional[str] = None,
 ) -> None:
@@ -1176,7 +1178,6 @@ def export_files_to_json(
         repo_root: Root path of the repository or local directory.
         output_file: Path to the output file.
         skip_commit_info: If True, do not attempt to read Git commit info.
-        max_size_kb: Maximum file size in KB (default: 50).
         pattern_mode: Pattern matching mode ("exclude" or "include", default: "exclude").
         pattern_input: Semicolon-separated list of glob patterns.
     """
@@ -1197,7 +1198,6 @@ def export_files_to_json(
     # Use gather_filtered_files for file filtering
     filtered_files = gather_filtered_files(
         str(repo_root),
-        max_size_kb=max_size_kb,
         pattern_mode=pattern_mode,
         pattern_input=pattern_input or ""  # Convert None to empty string
     )
@@ -1300,7 +1300,6 @@ def _process_repository_files(
     outfile: TextIO,
     stats: Dict[str, int],
     repo: Optional[Repo],
-    max_size_kb: int = 50,
     pattern_mode: str = "exclude",
     pattern_input: Optional[str] = None,
 ) -> None:
@@ -1312,7 +1311,6 @@ def _process_repository_files(
         outfile: Output file handle
         stats: Statistics dictionary to update
         repo: Optional Git repository object
-        max_size_kb: Maximum file size in KB
         pattern_mode: Pattern matching mode ("exclude" or "include")
         pattern_input: Semicolon-separated list of glob patterns
     """
@@ -1321,7 +1319,6 @@ def _process_repository_files(
     # Use gather_filtered_files for file filtering
     filtered_files = gather_filtered_files(
         str(repo_root),
-        max_size_kb=max_size_kb,
         pattern_mode=pattern_mode,
         pattern_input=pattern_input or ""  # Convert None to empty string
     )

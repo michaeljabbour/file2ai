@@ -726,13 +726,7 @@ def handle_api():
     logger.debug(f"Headers: {request.headers}")
     
     # Initialize options with file filtering parameters
-    try:
-        max_file_size = int(request.form.get("max_file_size_kb", "50"))
-        if max_file_size <= 0:
-            raise ValueError("max_file_size_kb must be positive")
-    except ValueError as e:
-        return jsonify({"error": f"Invalid max_file_size_kb: {str(e)}"}), 400
-        
+    max_file_size = 5 * 1024 * 1024 * 1024  # 5GB in bytes
     pattern_mode = request.form.get("pattern_mode", "exclude")
     if pattern_mode not in ["exclude", "include"]:
         return jsonify({"error": "pattern_mode must be 'exclude' or 'include'"}), 400
@@ -752,13 +746,6 @@ def handle_api():
     job_events[job_id] = threading.Event()
 
     # Initialize options with file filtering parameters
-    try:
-        max_file_size = int(request.form.get("max_file_size_kb", "50"))
-        if max_file_size <= 0:
-            raise ValueError("max_file_size_kb must be positive")
-    except ValueError as e:
-        return jsonify({"error": f"Invalid max_file_size_kb: {str(e)}"}), 400
-        
     pattern_mode = request.form.get("pattern_mode", "exclude")
     if pattern_mode not in ["exclude", "include"]:
         return jsonify({"error": "pattern_mode must be 'exclude' or 'include'"}), 400
@@ -775,7 +762,7 @@ def handle_api():
             return jsonify({"error": "No files selected"}), 400
 
         # Define security limits
-        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB limit
+        MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024  # 5GB limit
         ALLOWED_EXTENSIONS = {'.txt', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.html', '.htm'}
         SUSPICIOUS_EXTENSIONS = {'.exe', '.bat', '.cmd', '.sh', '.js', '.php', '.py'}
         ALLOWED_MIMETYPES = {
@@ -793,17 +780,16 @@ def handle_api():
                 continue
                 
             try:
-                # Read and store file content
-                content = f.read()
+                # Create a copy of the file stream
+                content = f.stream.read()
                 size = len(content)
                 if size > MAX_FILE_SIZE:
                     logger.warning(f"Rejected oversized file: {f.filename} ({size} bytes)")
-                    return jsonify({"error": f"File {f.filename} exceeds maximum size of 50MB"}), 400
+                    return jsonify({"error": f"File {f.filename} exceeds maximum size of 5GB"}), 400
                 
-                # Store content in memory for processing
-                f.stream = io.BytesIO(content)
+                # Reset stream position and store content
                 f.stream.seek(0)
-                logger.debug(f"Successfully stored content for {f.filename} ({size} bytes)")
+                logger.debug(f"Successfully processed {f.filename} ({size} bytes)")
                     
                 # Check file extension and MIME type
                 ext = Path(f.filename).suffix.lower()

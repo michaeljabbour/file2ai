@@ -17,7 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     status: 'idle', // 'idle' | 'processing' | 'completed' | 'failed'
     progress: 0,
     error: null,
-    maxFileSize: 100, // Default 100KB
+    maxFileSize: 999999999, // No size limit
     patternMode: 'exclude', // 'exclude' | 'include'
     patternInput: '', // Default empty string for no patterns
     preview: null,
@@ -34,8 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
     token: document.getElementById('token'),
     localDir: document.getElementById('localDir'),
     outputFormat: document.getElementById('outputFormat'),
-    maxFileSize: document.getElementById('maxFileSize'),
-    maxFileSizeLabel: document.getElementById('maxFileSizeLabel'),
+    // Size limit controls removed
     patternMode: document.getElementById('patternMode'),
     patternInput: document.getElementById('patternInput'),
     submitButton: document.getElementById('submitButton'),
@@ -58,9 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function updateMaxFileSizeLabel() {
-    elements.maxFileSizeLabel.textContent = `Include files under: ${state.maxFileSize}KB`;
-  }
+  // Size limit label removed
 
   function updateSubmitButton() {
     const hasFiles = state.files && state.files.length > 0;
@@ -459,13 +456,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.outputFormat = e.target.value;
   });
 
-  elements.maxFileSize.addEventListener('input', (e) => {
-    const newValue = parseInt(e.target.value, 10);
-    if (!isNaN(newValue)) {
-      state.maxFileSize = newValue;
-      updateMaxFileSizeLabel();
-    }
-  });
+  // Size limit event listener removed
 
   elements.patternMode.addEventListener('change', (e) => {
     state.patternMode = e.target.value;
@@ -499,7 +490,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Add core parameters with fallback defaults
     formData.append('format', state.outputFormat || 'text');
-    formData.append('max_file_size_kb', state.maxFileSize || 100);
     formData.append('pattern_mode', state.patternMode || 'exclude');
     formData.append('pattern_input', state.patternInput || '');
     
@@ -559,15 +549,13 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // Filter and append files
       Array.from(state.files).forEach(file => {
-        const size = file.size / 1024; // Convert to KB
-        if (size <= state.maxFileSize) {
-          // Use proper pattern matching based on file's relative path
-          const relativePath = file.webkitRelativePath;
-          let shouldInclude = true;
-          
-          if (state.patternInput) {
-            const patterns = state.patternInput.split(';').filter(p => p.trim());
-            const matches = patterns.some(pattern => {
+        // Use proper pattern matching based on file's relative path
+        const relativePath = file.webkitRelativePath;
+        let shouldInclude = true;
+        
+        if (state.patternInput) {
+          const patterns = state.patternInput.split(';').filter(p => p.trim());
+          const matches = patterns.some(pattern => {
               // Normalize pattern to match backend's Path.match() behavior
               let normalizedPattern = pattern.trim();
               // Remove trailing slashes
@@ -635,6 +623,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Initialize UI
   updateInputSection();
-  updateMaxFileSizeLabel();
   updateSubmitButton();
 });
