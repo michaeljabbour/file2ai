@@ -45,7 +45,7 @@
             </div>
         <form id="uploadForm">
             <div class="input-type">
-                <select id="inputType">
+                <select id="inputType" devinid="inputTypeSelect">
                     <option value="file">File Upload</option>
                     <option value="repo">GitHub Repository</option>
                     <option value="local">Local Directory</option>
@@ -106,7 +106,7 @@
             <div id="localSection" class="input-section" style="display: none">
                 <div class="field">
                     <label>Select Directory</label>
-                    <input type="file" id="localDir" webkitdirectory directory multiple>
+                    <input type="file" id="localDir" devinid="localDir" webkitdirectory directory multiple>
                     <div id="directoryTree"></div>
                 </div>
             </div>
@@ -232,6 +232,8 @@
             </div>
         </footer>
     </div>
+    <!-- Add minimatch bundle -->
+    <script src="lib/browser-bundle.js"></script>
     <script src="main.js"></script>
 </body>
 </html>

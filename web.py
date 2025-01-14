@@ -8,9 +8,10 @@ import threading
 import io
 from datetime import datetime
 import logging
-from typing import Dict, Optional, List, TypedDict, Union
+from typing import Dict, Optional, List, TypedDict, Union, cast
 import werkzeug.datastructures
-from werkzeug.datastructures import FileStorage
+from werkzeug.datastructures import FileStorage, MultiDict
+from werkzeug.utils import secure_filename
 
 # Configure logging
 logging.basicConfig(
@@ -107,7 +108,7 @@ job_events = {}
 def process_job(
     job_id: str,
     command: str,
-    files: Optional[Union[Dict[str, FileStorage], werkzeug.datastructures.MultiDict]] = None,
+    files: Optional[Union[Dict[str, FileStorage], 'werkzeug.datastructures.MultiDict[str, FileStorage]']] = None,
     options: Optional[ConversionOptions] = None,
 ) -> None:
     """Background processing for all job types
@@ -438,27 +439,55 @@ def process_job(
                         directory_files = []
                         if files:
                             # Handle both MultiDict and dictionary cases
-                            if hasattr(files, 'getlist'):  # MultiDict from request.files
-                                directory_files = files.getlist("directory_files[]")
-                                logger.debug(f"Found {len(directory_files)} files from MultiDict")
-                            elif isinstance(files, dict):
-                                directory_files = files.get("directory_files", [])
-                                logger.debug(f"Found {len(directory_files)} files from dict")
-                            else:
-                                logger.warning(f"Unexpected files type: {type(files)}")
+                            try:
+                                if isinstance(files, MultiDict):
+                                    directory_files = cast(MultiDict, files).getlist("directory_files[]")
+                                    logger.debug(f"Found {len(directory_files)} files from MultiDict")
+                                elif isinstance(files, dict):
+                                    if "directory_files[]" in files:  # Check array-style key first
+                                        directory_files = files["directory_files[]"]
+                                        if not isinstance(directory_files, list):
+                                            directory_files = [directory_files]
+                                    else:
+                                        directory_files = files.get("directory_files", [])
+                                        if not isinstance(directory_files, list):
+                                            directory_files = [directory_files]
+                                    logger.debug(f"Found {len(directory_files)} files from dict")
+                                else:
+                                    logger.warning(f"Unexpected files type: {type(files)}")
+                                    directory_files = []
+                                
+                                # Validate and sanitize filenames
+                                directory_files = [f for f in directory_files if hasattr(f, 'filename')]
+                                for file in directory_files:
+                                    file.filename = secure_filename(file.filename)
+                            except Exception as e:
+                                logger.error(f"Error processing directory files: {e}")
                                 directory_files = []
                             logger.debug(f"Total files to process: {len(directory_files)}")
                         
                         # Verify input directory exists and is readable
-                        input_dir = Path(str(local_dir))
-                        if not input_dir.exists():
-                            raise IOError(f"Directory not found: {input_dir}")
-                        if not input_dir.is_dir():
-                            raise IOError(f"Not a directory: {input_dir}")
-                        if not os.access(str(input_dir), os.R_OK):
-                            raise IOError(f"Directory not readable: {input_dir}")
-                            
-                        logger.debug(f"Processing directory: {input_dir}")
+                        try:
+                            input_dir = Path(str(local_dir)).resolve()
+                            if not input_dir.exists():
+                                raise IOError(f"Directory not found: {input_dir}")
+                            if not input_dir.is_dir():
+                                raise IOError(f"Not a directory: {input_dir}")
+                            if not os.access(str(input_dir), os.R_OK):
+                                raise IOError(f"Directory not readable: {input_dir}")
+                            # Check for symlink loops
+                            if input_dir.is_symlink():
+                                real_path = input_dir.resolve(strict=True)
+                                if not real_path.exists():
+                                    raise IOError(f"Broken symlink: {input_dir} -> {real_path}")
+                            # Verify path is absolute and normalized
+                            if not input_dir.is_absolute():
+                                raise IOError(f"Directory path must be absolute: {input_dir}")
+                                
+                            logger.debug(f"Processing directory: {input_dir}")
+                        except Exception as e:
+                            logger.error(f"Directory validation error: {e}")
+                            raise IOError(f"Failed to validate directory: {e}")
                         
                         # Handle subdir if specified
                         if args.subdir:

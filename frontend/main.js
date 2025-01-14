@@ -568,12 +568,22 @@ document.addEventListener('DOMContentLoaded', () => {
           if (state.patternInput) {
             const patterns = state.patternInput.split(';').filter(p => p.trim());
             const matches = patterns.some(pattern => {
-              // Convert glob pattern to regex
-              const regexPattern = pattern.trim()
-                .replace(/\./g, '\\.')
-                .replace(/\*/g, '.*')
-                .replace(/\?/g, '.');
-              return new RegExp(regexPattern).test(relativePath);
+              // Normalize pattern to match backend's Path.match() behavior
+              let normalizedPattern = pattern.trim();
+              // Remove trailing slashes
+              while (normalizedPattern.endsWith('/')) {
+                normalizedPattern = normalizedPattern.slice(0, -1);
+              }
+              // Handle directory patterns
+              if (normalizedPattern.includes('/') && !normalizedPattern.startsWith('**/')) {
+                normalizedPattern = `**/${normalizedPattern}`;
+              }
+              // Handle extension patterns
+              if (normalizedPattern.startsWith('*.') && !normalizedPattern.includes('/')) {
+                normalizedPattern = `**/${normalizedPattern}`;
+              }
+              // Use minimatch for glob pattern matching
+              return minimatch(relativePath, normalizedPattern);
             });
             
             shouldInclude = (state.patternMode === 'include') ? matches : !matches;
