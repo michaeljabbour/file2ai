@@ -1,119 +1,236 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>File2AI - Minimal Flattened</title>
-  <link rel="stylesheet" href="styles.css" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File2AI</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="container">
-    <div class="title">
-      <span style="font-size: 2rem">🤖</span>
-      <h1>File2AI</h1>
-    </div>
-    <p class="description">Transform your files into AI-ready format</p>
-
-    <form id="uploadForm" class="card">
-      <div class="input-container">
-        <!-- Input Type Selector -->
-        <div class="field">
-          <select id="inputType" class="input-select">
-            <option value="file">Upload Files</option>
-            <option value="repo">Git Repository</option>
-            <option value="local">Local Directory</option>
-          </select>
-        </div>
-
-        <!-- File Upload Section -->
-        <div id="fileSection" class="input-section">
-          <input type="file" id="fileInput" multiple class="input-field" />
-        </div>
-
-        <!-- Repository Section -->
-        <div id="repoSection" class="input-section" style="display: none">
-          <div class="repo-inputs">
-            <div class="field">
-              <input type="text" id="repoUrl" placeholder="https://github.com/user/repo" class="input-field" />
+    <div id="root" class="min-h-screen bg-gradient">
+        <!-- Header -->
+        <header class="bg-white border-b">
+            <div class="container mx-auto px-4 py-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <div class="bg-primary text-white p-2 rounded-lg">
+                            <!-- Command icon -->
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z"></path>
+                            </svg>
+                        </div>
+                        <h1 class="text-xl font-bold gradient-text">File2AI</h1>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <a href="https://github.com/michaeljabbour/file2ai" class="text-gray-600 hover:text-gray-900 flex items-center gap-1">
+                            <!-- GitHub icon -->
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+                            </svg>
+                            <span>View on GitHub</span>
+                        </a>
+                    </div>
+                </div>
             </div>
-            <div class="repo-row">
-              <div class="repo-field">
-                <input type="text" id="branch" placeholder="Branch (optional)" class="input-field" />
-              </div>
-              <div class="repo-field">
-                <input type="password" id="token" placeholder="Access Token (optional)" class="input-field" />
-              </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="container mx-auto px-4 py-8">
+            <div class="text-center mb-12">
+                <h2 class="text-4xl font-bold mb-4">Transform Your Files into AI-Ready Format</h2>
+                <p class="text-gray-600 max-w-2xl mx-auto">
+                    Convert any file or repository into a clean, processed format perfect for AI analysis. 
+                    Support for multiple file types and GitHub repositories.
+                </p>
             </div>
-          </div>
+        <form id="uploadForm">
+            <div class="input-type">
+                <select id="inputType" devinid="inputTypeSelect">
+                    <option value="file">File Upload</option>
+                    <option value="repo">GitHub Repository</option>
+                    <option value="local">Local Directory</option>
+                </select>
+            </div>
+
+            <div id="fileSection" class="input-section">
+                <div class="upload-area">
+                    <input type="file" id="fileInput" multiple style="display: none">
+                    <!-- File icon -->
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-4 text-gray-400">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                    <button type="button" class="bg-primary text-white px-6 py-3 rounded-lg hover:bg-primary-dark transition-colors" onclick="document.getElementById('fileInput').click()">
+                        Choose Files
+                    </button>
+                    <p class="mt-2 text-gray-500">or drag and drop files here</p>
+                </div>
+                <!-- Directory structure preview -->
+                <div id="directoryPreview" class="mt-4" style="display: none">
+                    <h3 class="text-lg font-semibold mb-3 flex items-center justify-between">
+                        Directory Structure
+                        <button class="text-sm bg-blue-100 text-primary px-3 py-1 rounded-md hover:bg-blue-200 transition-colors flex items-center gap-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                                <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                            </svg>
+                            Copy
+                        </button>
+                    </h3>
+                    <div class="directory-tree bg-gray-50 border rounded-lg p-4 font-mono text-sm"></div>
+                </div>
+            </div>
+
+            <div id="repoSection" class="input-section" style="display: none">
+                <div class="field">
+                    <label>GitHub Repository URL</label>
+                    <input type="text" id="repoUrl" placeholder="https://github.com/username/repo">
+                </div>
+                <div class="field">
+                    <label>Branch (optional)</label>
+                    <input type="text" id="branch" placeholder="main">
+                </div>
+                <div class="field">
+                    <label>Access Token (optional)</label>
+                    <input type="password" id="token" placeholder="ghp_xxxxxxxxxxxx">
+                </div>
+                <div class="field">
+                    <label>Subdirectory (optional)</label>
+                    <input type="text" id="subdir" placeholder="path/to/subdir">
+                </div>
+            </div>
+
+            <div id="localSection" class="input-section" style="display: none">
+                <div class="field">
+                    <label>Select Directory</label>
+                    <input type="file" id="localDir" devinid="localDir" webkitdirectory directory multiple>
+                    <div id="directoryTree"></div>
+                </div>
+            </div>
+
+            <div class="options-panel">
+                <h3>Processing Options</h3>
+                <div class="field">
+                    <label>Output Format</label>
+                    <select id="outputFormat">
+                        <option value="text">Text</option>
+                        <option value="json">JSON</option>
+                    </select>
+                </div>
+                <!-- File size limit removed - no longer restricting file sizes -->
+                <div class="field">
+                    <label>Pattern Filter</label>
+                    <select id="patternMode">
+                        <option value="exclude">Exclude</option>
+                        <option value="include">Include</option>
+                    </select>
+                    <input type="text" id="patternInput" placeholder="*.md;build/*">
+                    <p class="help-text">Use semicolons to separate multiple patterns: *.md;build/*;test/*</p>
+                </div>
+                <div class="field">
+                    <input type="checkbox" id="skipRemove">
+                    <label for="skipRemove">Skip removal of cloned repository after export</label>
+                </div>
+            </div>
+
+            <div class="submit-section">
+                <button type="submit" id="submitButton" disabled>Process Files</button>
+            </div>
+        </form>
+
+        <div id="errorContainer" class="error" style="display: none"></div>
+        <div id="progressBar" class="progress-container" style="display: none">
+            <div class="progress-bar"></div>
         </div>
 
-        <!-- Local Directory Section -->
-        <div id="localSection" class="input-section" style="display: none">
-          <p class="text-small">Directory selection requires modern browser support</p>
-          <input type="file" id="localDir" webkitdirectory directory class="input-field" />
+        <div id="previewContainer" class="preview-section" style="display: none">
+            <pre id="previewContent"></pre>
         </div>
-      </div>
-
-      <!-- Options Panel -->
-      <div class="options-panel">
-        <h3 class="panel-title">Processing Options</h3>
         
-        <!-- File Size Slider -->
-        <div class="field">
-          <label id="maxFileSizeLabel">Include files under: 50KB</label>
-          <input type="range" id="maxFileSize" min="1" max="1000" value="50" class="range-input" />
-        </div>
-
-        <!-- Pattern Filter -->
-        <div class="field">
-          <label>Pattern Filter:</label>
-          <div class="flex">
-            <select id="patternMode" class="pattern-select">
-              <option value="exclude">Exclude</option>
-              <option value="include">Include</option>
-            </select>
-            <input type="text" id="patternInput" placeholder="*.md, src/, etc." class="pattern-input" />
-          </div>
-        </div>
-
-        <!-- Output Format -->
-        <div class="field">
-          <label>Output Format:</label>
-          <select id="outputFormat" class="input-select">
-            <option value="text">Text</option>
-            <option value="json">JSON</option>
-            <option value="pdf">PDF</option>
-            <option value="docx">DOCX</option>
-            <option value="xlsx">XLSX</option>
-            <option value="pptx">PPTX</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- Submit Button -->
-      <button type="submit" id="submitButton" class="submit-button">Process Files</button>
-    </form>
-
-    <!-- Status Card -->
-    <div class="status-card card">
-      <h2 class="status-title">Status</h2>
-      
-      <div id="errorContainer" class="error" style="display: none"></div>
-      
-      <div id="progressBar" class="progress-container" style="display: none">
-        <div class="progress-bar" style="width: 0%"></div>
-        <div id="progressText" class="text-small"></div>
-      </div>
-
-      <!-- Preview Section -->
-      <div id="previewContainer" class="preview-section" style="display: none">
-        <div class="preview-header">
-          <span class="preview-title">Text Preview</span>
-        </div>
-        <pre id="previewContent" class="preview-content"></pre>
-      </div>
+        <!-- Footer -->
+        <footer class="bg-white border-t mt-16">
+            <div class="container mx-auto px-4 py-8">
+                <div class="grid grid-cols-2 gap-8">
+                    <div>
+                        <h3 class="font-semibold mb-4">About File2AI</h3>
+                        <p class="text-gray-600 text-sm">
+                            Transform your files into AI-ready format with ease. Supports multiple formats including:
+                        </p>
+                        <ul class="mt-2 grid grid-cols-2 gap-2 text-sm text-gray-600">
+                            <li class="flex items-center gap-1">
+                                <svg class="text-primary" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                    <polyline points="14 2 14 8 20 8"></polyline>
+                                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                                    <polyline points="10 9 9 9 8 9"></polyline>
+                                </svg>
+                                PDF Documents
+                            </li>
+                            <li class="flex items-center gap-1">
+                                <svg class="text-primary" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M3 3h18v18H3zM21 9H3M21 15H3M12 3v18"></path>
+                                </svg>
+                                CSV & Excel Files
+                            </li>
+                            <li class="flex items-center gap-1">
+                                <svg class="text-primary" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="16 18 22 12 16 6"></polyline>
+                                    <polyline points="8 6 2 12 8 18"></polyline>
+                                </svg>
+                                HTML & Code Files
+                            </li>
+                            <li class="flex items-center gap-1">
+                                <svg class="text-primary" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+                                </svg>
+                                GitHub Repositories
+                            </li>
+                            <li class="flex items-center gap-1">
+                                <svg class="text-primary" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                    <polyline points="21 15 16 10 5 21"></polyline>
+                                </svg>
+                                Image Text (OCR)
+                            </li>
+                            <li class="flex items-center gap-1">
+                                <svg class="text-primary" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                                </svg>
+                                Local Directories
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="text-right">
+                        <h3 class="font-semibold mb-4">Quick Links</h3>
+                        <ul class="space-y-2 text-sm">
+                            <li>
+                                <a href="#" class="text-gray-600 hover:text-primary">Documentation</a>
+                            </li>
+                            <li>
+                                <a href="https://github.com/michaeljabbour/file2ai" class="text-gray-600 hover:text-primary">GitHub Repository</a>
+                            </li>
+                            <li>
+                                <a href="#" class="text-gray-600 hover:text-primary">Support</a>
+                            </li>
+                            <li>
+                                <a href="#" class="text-gray-600 hover:text-primary">Suggest a Feature</a>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="text-center text-sm text-gray-600 mt-8">
+                    © 2024 File2AI. All rights reserved.
+                </div>
+            </div>
+        </footer>
     </div>
-  </div>
-
-  <script src="main.js"></script>
+    <!-- Add minimatch bundle -->
+    <script src="lib/browser-bundle.js"></script>
+    <script src="main.js"></script>
 </body>
 </html>

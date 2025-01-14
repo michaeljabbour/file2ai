@@ -5,10 +5,14 @@ import sys
 import uuid
 import socket
 import threading
+import io
+import re
 from datetime import datetime
 import logging
-from typing import Dict, Optional, List, TypedDict, Union
-from werkzeug.datastructures import FileStorage
+from typing import Dict, Optional, List, TypedDict, Union, cast
+import werkzeug.datastructures
+from werkzeug.datastructures import FileStorage, MultiDict
+from werkzeug.utils import secure_filename
 
 # Configure logging
 logging.basicConfig(
@@ -66,15 +70,18 @@ class JobStatus(TypedDict):
 
 from file2ai import EXPORTS_DIR, UPLOADS_DIR, FRONTEND_DIR, prepare_exports_dir
 
-app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path='')
+app = Flask(__name__, static_folder=str(Path(FRONTEND_DIR).resolve()), static_url_path='')
 app.secret_key = os.urandom(24)  # For flash messages
 
 # Set up directories with proper permissions
 directories = {
     'uploads': Path(UPLOADS_DIR),
     'exports': Path(EXPORTS_DIR),
-    'frontend': Path(FRONTEND_DIR)
+    'frontend': Path(FRONTEND_DIR).resolve()
 }
+
+# Configure logging for static file serving
+logging.getLogger('werkzeug').setLevel(logging.INFO)
 
 # Ensure required directories exist with proper permissions
 prepare_exports_dir()  # Use the existing function from file2ai.py
@@ -102,7 +109,7 @@ job_events = {}
 def process_job(
     job_id: str,
     command: str,
-    files: Optional[Dict[str, FileStorage]] = None,
+    files: Optional[Union[Dict[str, FileStorage], 'werkzeug.datastructures.MultiDict[str, FileStorage]']] = None,
     options: Optional[ConversionOptions] = None,
 ) -> None:
     """Background processing for all job types
@@ -119,10 +126,14 @@ def process_job(
     # Initialize temp_files list at the start
     temp_files = []
     
-    # Get filtering options
-    max_file_size_kb = int(options.get("max_file_size_kb", 1000))  # Default 1MB
+    # Get filtering options with validation
     pattern_mode = options.get("pattern_mode", "exclude")
-    pattern_input = options.get("pattern_input", "")
+    if pattern_mode not in ["exclude", "include"]:
+        pattern_mode = "exclude"
+        logger.warning("Invalid pattern_mode, using default: exclude")
+        
+    pattern_input = str(options.get("pattern_input", "")).strip()
+    logger.debug(f"Filtering options - mode: {pattern_mode}, patterns: {pattern_input}")
     
     # Initialize job status
     if job_id not in conversion_jobs:
@@ -186,33 +197,30 @@ def process_job(
             
             # Apply filtering
             for filename, file_data in files.items():
-                # Make a copy of the file data to avoid handle issues
-                file_content = file_data.read()
-                file_data.seek(0)  # Reset position for potential reuse
-                
-                # Validate file type
+                # Validate file type first
                 file_ext = os.path.splitext(filename)[1].lower()
                 if file_ext not in valid_types:
                     logger.warning(f"Skipping {filename}: invalid file type")
                     continue
                 
-                # Check file size
-                size_kb = len(file_content) / 1024
-                
-                if size_kb > max_file_size_kb:
-                    logger.info(f"Skipping {filename}: exceeds size limit of {max_file_size_kb}KB")
-                    continue
+                # Reset file pointer to beginning
+                file_data.seek(0)
                     
-                # Check pattern match
-                matches = matches_pattern(filename, pattern_input)
+                # Create temporary path for pattern matching
+                temp_path = Path(UPLOADS_DIR) / filename
+                logger.debug(f"Checking pattern match for path: {temp_path}")
+                
+                # Check pattern match using normalized path and uploads directory as base
+                matches = matches_pattern(str(temp_path), pattern_input, base_dir=UPLOADS_DIR)
                 if pattern_mode == "exclude" and matches:
-                    logger.info(f"Skipping {filename}: matches exclude pattern")
+                    logger.debug(f"Skipping {temp_path}: matches exclude pattern")
                     continue
                 elif pattern_mode == "include" and not matches and pattern_input:
-                    logger.info(f"Skipping {filename}: doesn't match include pattern")
+                    logger.debug(f"Skipping {temp_path}: doesn't match include pattern")
                     continue
                     
                 filtered_files[filename] = file_data
+                logger.debug(f"Added file to filtered list: {filename}")
             
             total_files = len(filtered_files)
             if total_files == 0:
@@ -222,66 +230,68 @@ def process_job(
                 input_path = None
                 output_path = None
                 try:
-                    # Save uploaded file
-                    input_path = Path(UPLOADS_DIR) / filename  # Use constant from file2ai module
-                    # Get file content from filtered_files
-                    if isinstance(file_data, (str, bytes)):
-                        file_content = file_data
-                    else:
-                        file_content = file_data.read()
-                        file_data.seek(0)  # Reset position
-                    
-                    # Create and write to file
-                    with open(str(input_path), 'wb') as f:
-                        if isinstance(file_content, str):
-                            f.write(file_content.encode('utf-8'))
-                        else:
-                            f.write(file_content)
-                    temp_files.append(input_path)  # Track for cleanup
-                    
-                    # Convert path to absolute path
-                    input_path = input_path.resolve()
-                    logger.info(f"Using absolute path for conversion: {input_path}")
-                    
-                    # Verify file exists and has content
-                    if not input_path.exists():
-                        raise IOError(f"File not created: {input_path}")
-                    if input_path.stat().st_size == 0:
-                        raise IOError(f"File is empty: {input_path}")
-                    
-                    logger.info(f"Successfully saved uploaded file to: {input_path}")
+                    # Keep file content in memory using BytesIO
+                    try:
+                        content = file_data.read()
+                        input_stream = io.BytesIO(content)
+                        input_stream.seek(0)
+                        
+                        # Create output path with proper extension
+                        base_name = Path(filename).stem  # Get name without extension
+                        out_filename = f"{base_name}.{output_format}"
+                        output_path = Path(EXPORTS_DIR) / out_filename
+                        logger.info(f"Converting {filename} to {output_path} with format {output_format}")
 
-                    # Create output path
-                    out_filename = f"{filename}.{output_format}"
-                    output_path = Path(EXPORTS_DIR) / out_filename
-                    logger.info(f"Converting {input_path} to {output_path} with format {output_format}")
-
-                    # Create args namespace
-                    args = Namespace(
-                            command="convert",
-                            input=str(input_path),
-                            output=str(output_path),
-                            format=output_format,
-                            pages=options.get("pages"),
-                            brightness=brightness,
-                            contrast=contrast,
-                            resolution=resolution,
-                    )
+                        # Create args namespace with stream
+                        args = Namespace(
+                                command="convert",
+                                input=filename,  # Use filename for extension detection
+                                output=str(output_path.resolve()),
+                                format=output_format,
+                                pages=options.get("pages"),
+                                brightness=brightness,
+                                contrast=contrast,
+                                resolution=resolution,
+                        )
+                        
+                        # Add stream to temp_files for cleanup
+                        temp_files.append(input_stream)
+                    except Exception as e:
+                        logger.error(f"Error preparing file {filename}: {e}")
+                        raise IOError(f"Failed to prepare file {filename}: {e}")
 
                     # Convert file
                     logger.info(f"Starting conversion with args: {args}")
                     
-                    # Verify input file still exists before conversion
-                    if not input_path.exists():
-                        raise IOError(f"Input file missing before conversion: {input_path}")
-                    
-                    
-                    # Check file permissions and readability
-                    if not os.access(str(input_path), os.R_OK):
-                        raise IOError(f"Input file not readable: {input_path}")
+                    # Validate input path and stream
+                    if input_stream:
+                        logger.debug("Using input stream for conversion")
+                        # Reset stream position to start
+                        input_stream.seek(0)
+                    else:
+                        # Only check file existence if we're not using a stream
+                        if not input_path:
+                            raise IOError("No input path provided and no input stream available")
                         
-                    logger.info(f"Input file verified before conversion: {input_path}")
-                    convert_document(args)
+                        # For file paths, verify existence and permissions
+                        try:
+                            input_path = Path(input_path).resolve()
+                            if not input_path.exists():
+                                raise IOError(f"Input file missing before conversion: {input_path}")
+                            if not os.access(str(input_path), os.R_OK):
+                                raise IOError(f"Input file not readable: {input_path}")
+                            logger.debug(f"Input file verified before conversion: {input_path}")
+                        except Exception as e:
+                            logger.error(f"Error validating input file {input_path}: {e}")
+                            raise IOError(f"Failed to validate input file: {e}")
+                    
+                    try:
+                        # Pass input_stream to convert_document
+                        convert_document(args, input_stream=input_stream)
+                        logger.debug("Document conversion completed successfully")
+                    except Exception as e:
+                        logger.error(f"Error during document conversion: {e}")
+                        raise
                     
                     # Verify output after conversion
                     if not output_path.exists():
@@ -333,10 +343,39 @@ def process_job(
                     output_path = Path(EXPORTS_DIR) / filename
 
                     # Create args namespace for repository export
+                    # Try to detect default branch
+                    default_branch = "main"
+                    try:
+                        # Run git ls-remote to get default branch
+                        import subprocess
+                        result = subprocess.run(
+                            ["git", "ls-remote", "--symref", str(repo_url), "HEAD"],
+                            capture_output=True,
+                            text=True,
+                            check=True
+                        )
+                        # Parse the output to get the default branch name
+                        for line in result.stdout.splitlines():
+                            if "ref:" in line and "HEAD" in line:
+                                default_branch = line.split("/")[-1].strip()
+                                break
+                    except Exception as e:
+                        logger.warning(f"Failed to detect default branch: {e}, falling back to 'main'")
+
+                    # Sanitize branch name
+                    branch = options.get("branch") or default_branch
+                    if branch:
+                        branch = branch.replace('\t', '').replace('HEAD', '').strip()
+                        if not branch or not re.match(r'^[a-zA-Z0-9._-]+$', branch):
+                            logger.warning(f"Invalid branch name: {branch}, defaulting to 'main'")
+                            branch = 'main'
+                    else:
+                        branch = 'main'
+                    
                     args = Namespace(
                         command="export",
                         repo_url=str(repo_url),
-                        branch=str(options.get("branch") or "main"),  # Default to main if no branch specified
+                        branch=str(branch),
                         token=str(options.get("token", "")),
                         output=str(output_path),
                         format=str(options.get("format", "text")),
@@ -348,22 +387,61 @@ def process_job(
 
                     # Export repository
                     try:
-                        # Ensure output directory exists
-                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        # Ensure output directory exists and is writable
+                        try:
+                            output_dir = output_path.parent
+                            output_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            # Verify directory permissions
+                            if not output_dir.exists():
+                                raise IOError(f"Failed to create output directory: {output_dir}")
+                            if not os.access(str(output_dir), os.W_OK):
+                                raise IOError(f"Output directory not writable: {output_dir}")
+                                
+                            # Try to create a test file to verify write permissions
+                            test_file = output_dir / ".write_test"
+                            try:
+                                test_file.touch()
+                                test_file.unlink()
+                            except Exception as e:
+                                raise IOError(f"Cannot write to output directory: {e}")
+                                
+                            logger.debug(f"Output directory verified: {output_dir}")
+                        except Exception as e:
+                            logger.error(f"Output directory error: {e}")
+                            raise IOError(f"Failed to prepare output directory: {e}")
                         
                         # Export repository
                         clone_and_export(args)
                         
-                        # Verify output
-                        if output_path.exists():
-                            job["output_files"] = [output_path]
-                            job["status"] = "completed"
-                            job["progress"] = 100
-                            logger.info(f"Successfully created output file: {output_path}")
-                        else:
+                        # Verify output with detailed error messages
+                        if not output_path.exists():
+                            error_msg = f"Export failed to create output file: {output_path}"
+                            if not output_dir.exists():
+                                error_msg += f" (directory {output_dir} missing)"
+                            elif not os.access(str(output_dir), os.W_OK):
+                                error_msg += f" (directory {output_dir} not writable)"
+                            elif os.path.exists(str(output_path)):
+                                error_msg += " (path exists but is not a regular file)"
                             job["status"] = "failed"
-                            job["errors"].append(f"Export failed to create output file: {output_path}")
-                            logger.error(f"Failed to create output file: {output_path}")
+                            job["errors"].append(error_msg)
+                            logger.error(error_msg)
+                            raise IOError(error_msg)
+                            
+                        # Verify file is not empty
+                        if output_path.stat().st_size == 0:
+                            error_msg = f"Export created empty output file: {output_path}"
+                            job["status"] = "failed"
+                            job["errors"].append(error_msg)
+                            logger.error(error_msg)
+                            raise IOError(error_msg)
+                            
+                        # Success case
+                        job["output_files"] = [output_path]
+                        job["status"] = "completed"
+                        job["progress"] = 100
+                        logger.info(f"Successfully created output file: {output_path}")
+                        
                     except Exception as e:
                         job["status"] = "failed"
                         job["errors"].append(f"Export failed: {str(e)}")
@@ -373,7 +451,7 @@ def process_job(
                     # Create output path for local directory
                     dir_name = Path(str(local_dir)).name
                     format_ext = str(options.get("format", "text"))
-                    filename = f"{dir_name}_export.{format_ext}"
+                    filename = f"{dir_name}_export.txt"
                     output_path = Path(EXPORTS_DIR) / filename
 
                     # Create args namespace for local export
@@ -392,24 +470,84 @@ def process_job(
 
                     # Export local directory
                     try:
+                        # Ensure output directory exists and is writable
+                        try:
+                            output_dir = output_path.parent
+                            output_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            # Verify directory permissions
+                            if not output_dir.exists():
+                                raise IOError(f"Failed to create output directory: {output_dir}")
+                            if not os.access(str(output_dir), os.W_OK):
+                                raise IOError(f"Output directory not writable: {output_dir}")
+                                
+                            # Try to create a test file to verify write permissions
+                            test_file = output_dir / ".write_test"
+                            try:
+                                test_file.touch()
+                                test_file.unlink()
+                            except Exception as e:
+                                raise IOError(f"Cannot write to output directory: {e}")
+                                
+                            logger.debug(f"Output directory verified: {output_dir}")
+                        except Exception as e:
+                            logger.error(f"Output directory error: {e}")
+                            raise IOError(f"Failed to prepare output directory: {e}")
+                            
                         # Get list of files to process
                         directory_files = []
-                        if isinstance(files, dict):
-                            directory_files = files.get("directory_files", [])
-                        if not directory_files:
-                            raise IOError(f"No files found in directory: {local_dir}")
-                            
+                        if files:
+                            # Handle both MultiDict and dictionary cases
+                            try:
+                                if isinstance(files, MultiDict):
+                                    directory_files = cast(MultiDict, files).getlist("directory_files[]")
+                                    logger.debug(f"Found {len(directory_files)} files from MultiDict")
+                                elif isinstance(files, dict):
+                                    if "directory_files[]" in files:  # Check array-style key first
+                                        directory_files = files["directory_files[]"]
+                                        if not isinstance(directory_files, list):
+                                            directory_files = [directory_files]
+                                    else:
+                                        directory_files = files.get("directory_files", [])
+                                        if not isinstance(directory_files, list):
+                                            directory_files = [directory_files]
+                                    logger.debug(f"Found {len(directory_files)} files from dict")
+                                else:
+                                    logger.warning(f"Unexpected files type: {type(files)}")
+                                    directory_files = []
+                                
+                                # Validate and sanitize filenames
+                                directory_files = [f for f in directory_files if hasattr(f, 'filename')]
+                                for file in directory_files:
+                                    file.filename = secure_filename(file.filename)
+                            except Exception as e:
+                                logger.error(f"Error processing directory files: {e}")
+                                directory_files = []
+                            logger.debug(f"Total files to process: {len(directory_files)}")
+                        
                         # Verify input directory exists and is readable
-                        input_dir = Path(str(local_dir))
-                        if not input_dir.exists():
-                            raise IOError(f"Directory not found: {input_dir}")
-                        if not input_dir.is_dir():
-                            raise IOError(f"Not a directory: {input_dir}")
-                        if not os.access(str(input_dir), os.R_OK):
-                            raise IOError(f"Directory not readable: {input_dir}")
-                            
-                        logger.debug(f"Processing {len(directory_files)} files from directory: {input_dir}")
-                            
+                        try:
+                            input_dir = Path(str(local_dir)).resolve()
+                            if not input_dir.exists():
+                                raise IOError(f"Directory not found: {input_dir}")
+                            if not input_dir.is_dir():
+                                raise IOError(f"Not a directory: {input_dir}")
+                            if not os.access(str(input_dir), os.R_OK):
+                                raise IOError(f"Directory not readable: {input_dir}")
+                            # Check for symlink loops
+                            if input_dir.is_symlink():
+                                real_path = input_dir.resolve(strict=True)
+                                if not real_path.exists():
+                                    raise IOError(f"Broken symlink: {input_dir} -> {real_path}")
+                            # Verify path is absolute and normalized
+                            if not input_dir.is_absolute():
+                                raise IOError(f"Directory path must be absolute: {input_dir}")
+                                
+                            logger.debug(f"Processing directory: {input_dir}")
+                        except Exception as e:
+                            logger.error(f"Directory validation error: {e}")
+                            raise IOError(f"Failed to validate directory: {e}")
+                        
                         # Handle subdir if specified
                         if args.subdir:
                             subdir_path = input_dir / args.subdir
@@ -419,6 +557,31 @@ def process_job(
                                 raise IOError(f"Not a directory: {subdir_path}")
                             args.local_dir = str(subdir_path)
                             logger.debug(f"Using subdirectory: {subdir_path}")
+
+                        # Save uploaded files to temporary directory if provided
+                        if directory_files:
+                            temp_dir = Path(UPLOADS_DIR) / f"local_export_{job_id}"
+                            temp_dir.mkdir(parents=True, exist_ok=True)
+                            logger.debug(f"Created temporary directory: {temp_dir}")
+                            
+                            for file in directory_files:
+                                if hasattr(file, 'filename'):  # Handle FileStorage objects
+                                    rel_path = file.filename
+                                    # Try to get relative path from form data
+                                    if hasattr(file, 'webkitRelativePath'):
+                                        rel_path = file.webkitRelativePath
+                                    elif hasattr(file, 'headers'):
+                                        # Extract relative path from Content-Disposition header if available
+                                        content_disp = file.headers.get('Content-Disposition', '')
+                                        if 'filename=' in content_disp:
+                                            rel_path = content_disp.split('filename=')[-1].strip('"')
+                                    dest = temp_dir / rel_path
+                                    dest.parent.mkdir(parents=True, exist_ok=True)
+                                    file.save(str(dest))
+                            
+                            # Update local_dir to point to our temporary directory
+                            args.local_dir = str(temp_dir)
+                            logger.debug(f"Using temporary directory for files: {temp_dir}")
 
                         # Ensure output directory exists
                         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -475,13 +638,15 @@ def process_job(
         logger.error(error_msg)
 
     finally:
-        # Clean up temporary files
+        # Clean up temporary files and streams
         for temp_file in temp_files:
             try:
-                if temp_file.exists():
+                if isinstance(temp_file, io.IOBase):
+                    temp_file.close()
+                elif hasattr(temp_file, 'exists') and temp_file.exists():
                     temp_file.unlink()
             except Exception as e:
-                logger.error(f"Error cleaning up temp file {temp_file}: {e}")
+                logger.error(f"Error cleaning up temp file/stream {temp_file}: {e}")
         
         # Ensure job has a final status
         if job["status"] == "processing":
@@ -502,7 +667,7 @@ def serve_react(path):
     if not path:
         app.logger.info("Serving index.html")
         try:
-            return send_from_directory("frontend", "index.html")
+            return send_from_directory(app.static_folder, "index.html")
         except Exception as e:
             app.logger.error(f"Error serving index.html: {str(e)}")
             return str(e), 500
@@ -510,7 +675,7 @@ def serve_react(path):
     if path.startswith("api/"):
         return "Not found", 404
         
-    frontend_path = Path("frontend") / path
+    frontend_path = Path(app.static_folder) / path
     app.logger.info(f"Checking path: {frontend_path}")
     
     if frontend_path.exists():
@@ -561,13 +726,7 @@ def handle_api():
     logger.debug(f"Headers: {request.headers}")
     
     # Initialize options with file filtering parameters
-    try:
-        max_file_size = int(request.form.get("max_file_size_kb", "50"))
-        if max_file_size <= 0:
-            raise ValueError("max_file_size_kb must be positive")
-    except ValueError as e:
-        return jsonify({"error": f"Invalid max_file_size_kb: {str(e)}"}), 400
-        
+    max_file_size = 5 * 1024 * 1024 * 1024  # 5GB in bytes
     pattern_mode = request.form.get("pattern_mode", "exclude")
     if pattern_mode not in ["exclude", "include"]:
         return jsonify({"error": "pattern_mode must be 'exclude' or 'include'"}), 400
@@ -587,13 +746,6 @@ def handle_api():
     job_events[job_id] = threading.Event()
 
     # Initialize options with file filtering parameters
-    try:
-        max_file_size = int(request.form.get("max_file_size_kb", "50"))
-        if max_file_size <= 0:
-            raise ValueError("max_file_size_kb must be positive")
-    except ValueError as e:
-        return jsonify({"error": f"Invalid max_file_size_kb: {str(e)}"}), 400
-        
     pattern_mode = request.form.get("pattern_mode", "exclude")
     if pattern_mode not in ["exclude", "include"]:
         return jsonify({"error": "pattern_mode must be 'exclude' or 'include'"}), 400
@@ -610,7 +762,7 @@ def handle_api():
             return jsonify({"error": "No files selected"}), 400
 
         # Define security limits
-        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB limit
+        MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024  # 5GB limit
         ALLOWED_EXTENSIONS = {'.txt', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.html', '.htm'}
         SUSPICIOUS_EXTENSIONS = {'.exe', '.bat', '.cmd', '.sh', '.js', '.php', '.py'}
         ALLOWED_MIMETYPES = {
@@ -627,17 +779,24 @@ def handle_api():
             if not f.filename:
                 continue
                 
-            # Check file size
-            f.seek(0, 2)  # Seek to end
-            size = f.tell()
-            f.seek(0)  # Reset to beginning
-            if size > MAX_FILE_SIZE:
-                logger.warning(f"Rejected oversized file: {f.filename} ({size} bytes)")
-                return jsonify({"error": f"File {f.filename} exceeds maximum size of 50MB"}), 400
+            try:
+                # Create a copy of the file stream
+                content = f.stream.read()
+                size = len(content)
+                if size > MAX_FILE_SIZE:
+                    logger.warning(f"Rejected oversized file: {f.filename} ({size} bytes)")
+                    return jsonify({"error": f"File {f.filename} exceeds maximum size of 5GB"}), 400
                 
-            # Check file extension and MIME type
-            ext = Path(f.filename).suffix.lower()
-            mime_type = f.content_type
+                # Reset stream position and store content
+                f.stream.seek(0)
+                logger.debug(f"Successfully processed {f.filename} ({size} bytes)")
+                    
+                # Check file extension and MIME type
+                ext = Path(f.filename).suffix.lower()
+                mime_type = f.content_type
+            except Exception as e:
+                logger.error(f"Error processing file {f.filename}: {str(e)}")
+                return jsonify({"error": f"Error processing file {f.filename}"}), 400
             
             if ext in SUSPICIOUS_EXTENSIONS:
                 logger.warning(f"Rejected suspicious file type: {f.filename}")
@@ -703,25 +862,25 @@ def handle_api():
             if not Path(dir_path).exists():
                 return jsonify({"error": f"Directory not found: {dir_path}"}), 400
                 
-            # Gather filtered files from directory
-            try:
-                directory_files = gather_filtered_files(
-                    dir_path,
-                    max_size_kb=max_file_size,
-                    pattern_mode=pattern_mode,
-                    pattern_input=request.form.get("pattern_input", "")
-                )
-            except Exception as e:
-                return jsonify({"error": f"Error scanning directory: {str(e)}"}), 400
-                
+            # Handle uploaded directory files
+            directory_files = request.files.getlist("directory_files[]")
             if not directory_files:
-                return jsonify({"error": f"No matching files found in directory: {dir_path}"}), 400
-                
+                # If no files uploaded, scan directory locally
+                try:
+                    directory_files = gather_filtered_files(
+                        dir_path,
+                        pattern_mode=pattern_mode,
+                        pattern_input=request.form.get("pattern_input", "")
+                    )
+                except Exception as e:
+                    return jsonify({"error": f"Error scanning directory: {str(e)}"}), 400
+                    
+                if not directory_files:
+                    return jsonify({"error": f"No matching files found in directory: {dir_path}"}), 400
+            
+            logger.debug(f"Processing {len(directory_files)} files from directory")
             options["local_dir"] = dir_path
-            files = {
-                "local_dir": dir_path,
-                "directory_files": directory_files
-            }
+            files = request.files  # Pass the MultiDict directly for proper file handling
 
         else:
             return jsonify({
@@ -746,7 +905,7 @@ def get_preview(job_id):
         return jsonify({"error": "No output files available"}), 404
         
     # Get the first text file
-    text_files = [f for f in job["output_files"] if str(f).endswith(".text")]
+    text_files = [f for f in job["output_files"] if str(f).endswith(".txt")]
     if not text_files:
         return jsonify({"error": "No text preview available"}), 404
         
@@ -849,19 +1008,45 @@ def cleanup_job(job_id):
 
     job = conversion_jobs[job_id]
 
-    # Remove output files
-    for output_path in job["output_files"]:
-        try:
-            if output_path.exists():
-                output_path.unlink()
-        except Exception as e:
-            logger.error("Error cleaning up %s: %s", output_path, e)
-
-    # Remove job data
-    del conversion_jobs[job_id]
-    del job_events[job_id]
-
-    return jsonify({"status": "cleaned"})
+    try:
+        # Clean up temporary directory if it exists
+        temp_dir = Path(UPLOADS_DIR) / f"local_export_{job_id}"
+        if temp_dir.exists():
+            try:
+                # Verify this is actually our temp directory
+                if temp_dir.is_relative_to(Path(UPLOADS_DIR)) and "local_export_" in temp_dir.name:
+                    import shutil
+                    shutil.rmtree(str(temp_dir))
+                    logger.info(f"Cleaned up temporary directory: {temp_dir}")
+                else:
+                    logger.warning(f"Suspicious temp directory path: {temp_dir}, skipping cleanup")
+            except Exception as e:
+                logger.error(f"Error cleaning up temporary directory {temp_dir}: {e}")
+                
+        # Clean up output files
+        for output_path in job["output_files"]:
+            try:
+                if output_path.exists():
+                    # Verify this is actually our output file
+                    if output_path.is_relative_to(Path(EXPORTS_DIR)):
+                        output_path.unlink()
+                        logger.info(f"Cleaned up output file: {output_path}")
+                    else:
+                        logger.warning(f"Suspicious output file path: {output_path}, skipping cleanup")
+            except Exception as e:
+                logger.error(f"Error cleaning up output file {output_path}: {e}")
+                
+        # Remove job data
+        if job_id in job_events:
+            del job_events[job_id]
+        del conversion_jobs[job_id]
+        logger.info(f"Cleaned up job data for {job_id}")
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        error_msg = f"Error during cleanup: {str(e)}"
+        logger.error(error_msg)
+        return jsonify({"error": error_msg}), 500
 
 
 def load_env_file():

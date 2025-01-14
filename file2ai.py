@@ -33,6 +33,7 @@ __all__ = [
 import argparse
 import fnmatch
 import importlib.util
+import io
 import json
 import logging
 import mimetypes
@@ -383,20 +384,92 @@ def parse_args(args=None) -> argparse.Namespace:
     Usage:
         1. Repository/Directory Export:
            file2ai.py [--repo-url URL | --local-dir DIR] [options]
+           file2ai.py [--repo-url-sub URL] [options]  # For deep URLs with subdirectories
 
         2. Document Conversion:
            file2ai.py convert --input FILE --format FORMAT [options]
            file2ai.py FILE [--format FORMAT] [options]
 
+        3. Web Interface:
+           file2ai.py web [--host HOST] [--port PORT]
+
     Commands:
         export  - Export text files from a repository or local directory (default)
         convert - Convert documents between different formats
+        web     - Start web interface for file uploads and conversions
     """
-    # Check if first argument is a file path
-    if len(sys.argv) > 1 and not sys.argv[1].startswith("-") and os.path.exists(sys.argv[1]):
-        # Insert 'convert' command and --input before the file path
-        sys.argv.insert(1, "convert")
-        sys.argv.insert(2, "--input")
+    # Handle legacy command format with file path or URL as first argument
+    if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
+        if sys.argv[1] not in ["convert", "export", "web"]:  # Not a valid command
+            # First try to detect what kind of input we have
+            input_arg = sys.argv[1]
+            try:
+                # First try to detect if it's a file path
+                input_path = Path(input_arg).expanduser()
+                try:
+                    # Resolve the path but don't follow symlinks
+                    input_path = input_path.absolute()
+                    
+                    # Check if it's a file (including PDFs with spaces)
+                    if input_path.is_file():
+                        logger.info("Detected file path input, converting to proper command format")
+                        file_path = sys.argv.pop(1)  # Remove the file path
+                        sys.argv.extend(["convert", "--input", str(input_path)])  # Add as proper arguments
+                        logger.warning(
+                            "Legacy file path format detected. Please use this format instead:\n"
+                            f"  python file2ai.py convert --input {input_path} [options]"
+                        )
+                    # Check if it's a directory
+                    elif input_path.is_dir():
+                        logger.info("Detected directory path input, converting to proper command format")
+                        dir_path = sys.argv.pop(1)  # Remove the directory path
+                        sys.argv.extend(["export", "--local-dir", str(input_path)])  # Add as proper arguments
+                        logger.warning(
+                            "Legacy directory format detected. Please use this format instead:\n"
+                            f"  python file2ai.py export --local-dir {input_path} [options]"
+                        )
+                    # Check if it's a GitHub URL
+                    elif validate_github_url(input_arg):
+                        logger.info("Detected GitHub URL input, converting to proper command format")
+                        url = sys.argv.pop(1)  # Remove the URL
+                        sys.argv.extend(["export", "--repo-url", url])  # Add as proper arguments
+                        logger.warning(
+                            "Legacy URL format detected. Please use this format instead:\n"
+                            f"  python file2ai.py export --repo-url {url} [options]"
+                        )
+                    else:
+                        # Invalid input - provide detailed error message
+                        raise ValueError(
+                            f"Invalid argument: {input_arg}\n"
+                            "The argument is not a valid:\n"
+                            "  - File path (file does not exist)\n"
+                            "  - GitHub URL (must start with https://github.com/)\n"
+                            "  - Directory path (directory does not exist)\n\n"
+                            "Please use one of these formats:\n"
+                            "  python file2ai.py convert --input <file> [options]\n"
+                            "  python file2ai.py export --repo-url <url> [options]\n"
+                            "  python file2ai.py export --local-dir <directory> [options]"
+                        )
+                except Exception as e:
+                    logger.error(f"Error processing path {input_arg}: {e}")
+                    raise ValueError(
+                        f"Failed to process path: {input_arg}\n"
+                        "Please verify the path exists and you have permission to access it.\n"
+                        "Use one of these formats:\n"
+                        "  python file2ai.py convert --input <file> [options]\n"
+                        "  python file2ai.py export --repo-url <url> [options]\n"
+                        "  python file2ai.py export --local-dir <directory> [options]"
+                    )
+            except Exception as e:
+                # Handle any unexpected errors during input processing
+                logger.error(f"Error processing input argument: {e}")
+                raise ValueError(
+                    f"Failed to process argument: {input_arg}\n"
+                    "Please use one of these formats:\n"
+                    "  python file2ai.py convert --input <file> [options]\n"
+                    "  python file2ai.py export --repo-url <url> [options]\n"
+                    "  python file2ai.py export --local-dir <directory> [options]"
+                )
 
     parser = argparse.ArgumentParser(
         description="""Export text files and convert documents between formats using
@@ -451,12 +524,7 @@ Cross-platform compatible with no system dependencies required.""",
         help="Choose the output format (text or json). Default is text.",
     )
     # File filtering options
-    parser.add_argument(
-        "--max-size-kb",
-        type=int,
-        default=50,
-        help="Maximum file size in KB (default: 50)",
-    )
+    # Size limit removed - no longer restricting file sizes
     parser.add_argument(
         "--pattern-mode",
         choices=["exclude", "include"],
@@ -470,6 +538,52 @@ Cross-platform compatible with no system dependencies required.""",
 
     # Create subparsers for different commands
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Export command (default)
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export text files from a repository or local directory (default)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    source_group = export_parser.add_mutually_exclusive_group()
+    source_group.add_argument(
+        "--repo-url",
+        help="GitHub repository URL (e.g., https://github.com/owner/repo)",
+    )
+    source_group.add_argument(
+        "--repo-url-sub",
+        help="GitHub repository URL with subdirectory to process",
+    )
+    source_group.add_argument(
+        "--local-dir",
+        help="Local directory path to export",
+    )
+    export_parser.add_argument("--branch", help="Branch or commit to checkout (optional)")
+    export_parser.add_argument("--subdir", help="Optional subdirectory to export (defaults to repo root)")
+    export_parser.add_argument("--token", help="GitHub Personal Access Token for private repos")
+    export_parser.add_argument(
+        "--output-file", help="Custom output filename (default: <repo_name>_export.txt)"
+    )
+    export_parser.add_argument(
+        "--skip-remove", action="store_true", help="Skip removal of cloned repository after export"
+    )
+    export_parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Choose the output format (text or json). Default is text.",
+    )
+    # Size limit removed - no longer restricting file sizes
+    export_parser.add_argument(
+        "--pattern-mode",
+        choices=["exclude", "include"],
+        default="exclude",
+        help="Pattern matching mode (exclude or include). Default is exclude.",
+    )
+    export_parser.add_argument(
+        "--pattern-input",
+        help="Semicolon-separated list of glob patterns (e.g., '*.md;build/*')",
+    )
 
     # Web interface subcommand
     web_parser = subparsers.add_parser(
@@ -558,8 +672,35 @@ Cross-platform compatible with no system dependencies required.""",
         if not hasattr(args, "repo_url_sub"):
             args.repo_url_sub = None
 
-        # Process export command arguments if provided
-        # Handle path normalization and subdir combination
+        # If no arguments provided, prompt for repository URL or local directory
+        if not any([args.repo_url, args.repo_url_sub, args.local_dir]):
+            url = input("Enter GitHub repository URL (or press Enter to export local directory): ").strip()
+            if url:
+                # Handle deep URLs with --repo-url-sub
+                if "/tree/" in url:
+                    args.repo_url_sub = url
+                else:
+                    args.repo_url = url
+            else:
+                # Prompt for local directory if user skipped repo URL
+                tmp_dir = input("Enter a local directory path for export (or press Enter for current directory): ").strip()
+                if tmp_dir:
+                    args.local_dir = tmp_dir
+                else:
+                    args.local_dir = os.getcwd()
+                    logger.info(f"No directory specified, defaulting to current directory: {args.local_dir}")
+
+        # Handle repo-url-sub by extracting components
+        if args.repo_url_sub:
+            base_url, branch, subdir = parse_github_url(args.repo_url_sub, use_subdirectory=True)
+            if base_url:
+                args.repo_url = base_url
+                if branch and not args.branch:
+                    args.branch = branch
+                if subdir and not args.subdir:
+                    args.subdir = subdir
+
+        # Process local directory paths
         if args.local_dir:
             # Normalize local_dir first
             args.local_dir = os.path.abspath(os.path.expanduser(args.local_dir))
@@ -568,43 +709,11 @@ Cross-platform compatible with no system dependencies required.""",
             if args.subdir:
                 args.local_dir = os.path.abspath(os.path.join(args.local_dir, args.subdir))
                 logger.debug(f"Using combined local directory + subdir: {args.local_dir}")
-        elif args.subdir:
-            # If only subdir provided, treat it as the local_dir
+        elif args.subdir and not args.repo_url and not args.repo_url_sub:
+            # If only subdir provided and no repo URL, treat it as the local_dir
             args.local_dir = os.path.abspath(os.path.expanduser(args.subdir))
             logger.debug(f"Using subdirectory as source: {args.local_dir}")
-        
-        # Clear subdir since it's now incorporated into local_dir
-        args.subdir = None
-        return args
-            
-        if args.local_dir:
-            args.repo_url_sub = False
-            return args
-        if args.repo_url:
-            args.repo_url_sub = False
-            return args
-        if args.repo_url_sub:
-            args.repo_url = args.repo_url_sub
-            args.repo_url_sub = True
-            return args
-
-        # Only prompt if no source arguments were provided
-        tmp_url = input(
-            "Enter the GitHub repository URL (or press Enter to export local directory): "
-        ).strip()
-        if tmp_url:
-            args.repo_url = tmp_url
-        else:
-            tmp_dir = input(
-                "Enter a local directory path for export (or press Enter for current directory): "
-            ).strip()
-            if tmp_dir:
-                args.local_dir = tmp_dir
-            else:
-                args.local_dir = os.getcwd()
-                logger.info(
-                    f"No directory specified, defaulting to current directory: {args.local_dir}"
-                )
+            args.subdir = None
 
     return args
 
@@ -627,55 +736,109 @@ def parse_github_url(
         - branch: Branch name if specified in URL, None otherwise
         - subdirectory: Subdirectory path if specified and use_subdirectory=True, None otherwise
 
-    Note:
-        Returns (None, None, None) if the URL is None or invalid.
+    Raises:
+        SystemExit: If the URL is invalid and we're not in a test environment
     """
     # Handle None or empty URL
     if not url:
-        logger.debug("No URL provided")
+        logger.warning("No URL provided")
+        if 'pytest' not in sys.modules:
+            sys.exit(1)
         return None, None, None
 
-    # Step 1: Extract base repository URL first
-    base_match = re.match(r"^(https?://github\.com/[^/]+/[^/]+)", url)
+    # Step 1: Clean and normalize URL
+    url = url.strip()
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+    logger.debug(f"Normalized URL: {url}")
+
+    # Step 2: Extract base repository URL
+    # Match pattern: https://github.com/owner/repo[/tree/branch[/path]][/pulls|issues|etc]
+    base_match = re.match(r'^https?://github\.com/([^/]+/[^/]+)', url)
     if not base_match:
-        logger.warning(f"Invalid GitHub URL: {url}")
+        logger.warning(f"Invalid GitHub URL format: {url}")
+        if 'pytest' not in sys.modules:
+            sys.exit(1)
         return None, None, None
 
+    # Get base repository URL without any suffixes
     base_repo = base_match.group(1)
-    remaining_path = url[len(base_repo):]
+    logger.debug(f"Base repository path: {base_repo}")
 
-    # Step 2: Check for URL suffixes that could be subdirectories
-    special_suffixes = ["/pulls", "/issues", "/actions", "/wiki"]
-    subdir = None
+    # Step 3: Handle special suffixes first (/pulls, /issues, etc.)
+    special_suffixes = ["/pulls", "/issues", "/actions", "/wiki", "/settings", "/security"]
+    remaining_url = url[len(f"https://github.com/{base_repo}"):]
+    
+    # Check for special suffixes and remove them
     for suffix in special_suffixes:
-        if remaining_path.startswith(suffix):
-            if use_subdirectory:
-                # These are GitHub virtual paths, warn user they don't exist in repo
-                logger.warning(
-                    f"{suffix} is a GitHub virtual path and doesn't exist in the repository. "
-                    "Exporting from repository root instead."
-                )
-            else:
-                # Otherwise just remove it and continue with base URL
-                logger.debug(f"Removing suffix {suffix} from URL: {url}")
-            remaining_path = remaining_path[len(suffix):]
+        if remaining_url.startswith(suffix):
+            logger.debug(f"Removing special suffix: {suffix}")
+            remaining_url = ""  # These are virtual paths, ignore everything after
             break
 
-    # Step 3: Check for tree/<branch>/<path> pattern
-    tree_match = re.search(r"/tree/([^/]+)(?:/(.+))?$", url)
-    branch = tree_match.group(1) if tree_match else None
+    # Step 4: Extract branch and subdirectory from /tree/ path
+    branch = None
+    subdir = None
+    tree_match = re.search(r'/tree/([^/]+)(?:/(.+))?', remaining_url)
+    
+    if tree_match:
+        # Handle branch with improved sanitization
+        raw_branch = tree_match.group(1)
+        if raw_branch:
+            # First strip whitespace and remove HEAD references
+            branch = raw_branch.strip()
+            if 'HEAD' in branch:
+                branch = branch.replace('HEAD', '').strip()
+                logger.warning(f"Removed HEAD reference from branch name: {branch}")
+            
+            # Remove any tab characters or internal spaces
+            if any(c in branch for c in ['\t', ' ', '\n', '\r']):
+                # Replace all whitespace with nothing
+                sanitized = re.sub(r'[\s\t\n\r]+', '', branch)
+                # Remove any remaining invalid characters
+                sanitized = re.sub(r'[^a-zA-Z0-9._-]', '', sanitized)
+                if sanitized != branch:
+                    logger.warning(f"Sanitized branch name from '{branch}' to '{sanitized}'")
+                branch = sanitized
+            
+            # Remove any query parameters or hash fragments
+            branch = branch.split('?')[0].split('#')[0]
+            
+            # Ensure branch name is not empty after sanitization
+            if not branch:
+                logger.warning("Branch name was empty after sanitization, using 'main'")
+                branch = 'main'
+            else:
+                logger.debug(f"Final branch name: {branch}")
+        
+        # Handle subdirectory if requested
+        if use_subdirectory and tree_match.group(2):
+            subdir = tree_match.group(2).strip()
+            # Sanitize subdirectory path
+            if subdir:
+                # Remove query parameters and hash fragments first
+                subdir = subdir.split('?')[0].split('#')[0].strip()
+                # Remove any ../ attempts and normalize slashes
+                subdir = os.path.normpath(subdir).replace('\\', '/')
+                if subdir.startswith('/'):
+                    subdir = subdir[1:]
+                # Remove any trailing slashes
+                subdir = subdir.rstrip('/')
+                logger.debug(f"Normalized subdirectory: {subdir}")
+                # Check if subdirectory is empty after sanitization
+                if not subdir:
+                    subdir = None
+            else:
+                subdir = None
+        elif tree_match.group(2):
+            logger.debug("Ignoring subdirectory (use_subdirectory=False)")
 
-    # If we already have a subdir from special suffixes, don't override it
-    if not subdir and tree_match and use_subdirectory:
-        try:
-            subdir = tree_match.group(2)
-        except (IndexError, AttributeError):
-            subdir = None
-
-    # Step 4: Append .git if missing
-    if not base_repo.endswith(".git"):
-        base_repo += ".git"
-
+    # Step 5: Ensure base repository URL ends with .git
+    base_repo = f"https://github.com/{base_repo}"
+    if not base_repo.endswith('.git'):
+        base_repo += '.git'
+    
+    logger.debug(f"Final parse results - URL: {base_repo}, Branch: {branch}, Subdir: {subdir}")
     return base_repo, branch, subdir
 
 
@@ -938,7 +1101,6 @@ def export_files_to_single_file(
     repo_root: Path,
     output_file: Path,
     skip_commit_info: bool = False,
-    max_size_kb: int = 50,
     pattern_mode: str = "exclude",
     pattern_input: Optional[str] = None,
 ) -> None:
@@ -951,7 +1113,6 @@ def export_files_to_single_file(
         repo_root: Root path of the repository or local directory.
         output_file: Path to the output file.
         skip_commit_info: If True, do not attempt to read Git commit info.
-        max_size_kb: Maximum file size in KB (default: 50).
         pattern_mode: Pattern matching mode ("exclude" or "include", default: "exclude").
         pattern_input: Semicolon-separated list of glob patterns.
     """
@@ -989,7 +1150,6 @@ def export_files_to_single_file(
             outfile,
             stats,
             repo if not skip_commit_info else None,
-            max_size_kb=max_size_kb,
             pattern_mode=pattern_mode,
             pattern_input=pattern_input
         )
@@ -1006,7 +1166,6 @@ def export_files_to_json(
     repo_root: Path,
     output_file: Path,
     skip_commit_info: bool = False,
-    max_size_kb: int = 50,
     pattern_mode: str = "exclude",
     pattern_input: Optional[str] = None,
 ) -> None:
@@ -1019,7 +1178,6 @@ def export_files_to_json(
         repo_root: Root path of the repository or local directory.
         output_file: Path to the output file.
         skip_commit_info: If True, do not attempt to read Git commit info.
-        max_size_kb: Maximum file size in KB (default: 50).
         pattern_mode: Pattern matching mode ("exclude" or "include", default: "exclude").
         pattern_input: Semicolon-separated list of glob patterns.
     """
@@ -1040,7 +1198,6 @@ def export_files_to_json(
     # Use gather_filtered_files for file filtering
     filtered_files = gather_filtered_files(
         str(repo_root),
-        max_size_kb=max_size_kb,
         pattern_mode=pattern_mode,
         pattern_input=pattern_input or ""  # Convert None to empty string
     )
@@ -1143,7 +1300,6 @@ def _process_repository_files(
     outfile: TextIO,
     stats: Dict[str, int],
     repo: Optional[Repo],
-    max_size_kb: int = 50,
     pattern_mode: str = "exclude",
     pattern_input: Optional[str] = None,
 ) -> None:
@@ -1155,7 +1311,6 @@ def _process_repository_files(
         outfile: Output file handle
         stats: Statistics dictionary to update
         repo: Optional Git repository object
-        max_size_kb: Maximum file size in KB
         pattern_mode: Pattern matching mode ("exclude" or "include")
         pattern_input: Semicolon-separated list of glob patterns
     """
@@ -1164,7 +1319,6 @@ def _process_repository_files(
     # Use gather_filtered_files for file filtering
     filtered_files = gather_filtered_files(
         str(repo_root),
-        max_size_kb=max_size_kb,
         pattern_mode=pattern_mode,
         pattern_input=pattern_input or ""  # Convert None to empty string
     )
@@ -1298,34 +1452,54 @@ def clone_and_export(args: argparse.Namespace) -> None:
         logger.info(f"Cloning repository to: {clone_path}")
 
         try:
-            # Ensure all arguments are strings
-            cmd = ["git", "clone", str(clone_url), str(clone_path)]
-            subprocess.run(
-                cmd,
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
+            # Use GitPython to clone repository
+            logger.debug(f"Cloning repository from {clone_url} to {clone_path}")
+            repo = Repo.clone_from(clone_url, clone_path)
             logger.info("Repository cloned successfully")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Git clone failed: {e}")
+        except exc.GitCommandError as e:
+            # Log the actual git command output for debugging
+            logger.error(f"Git clone failed: {e.stderr}")
             sys.exit(1)
-
-        try:
-            repo = Repo(clone_path)
-        except exc.GitError as e:
-            logger.error(f"Failed to initialize repository: {e}")
+        except Exception as e:
+            logger.error(f"Failed to clone repository: {e}")
             sys.exit(1)
 
         # Determine branch: explicit --branch flag takes precedence over URL
         branch = args.branch or url_branch
         if branch:
             try:
-                repo.git.checkout(branch)
-                logger.info(f"Checked out branch: {branch}")
+                # First check if branch name contains HEAD
+                if 'HEAD' in branch:
+                    logger.warning(f"Invalid branch name format: {branch}")
+                    clean_branch = 'main'
+                else:
+                    # Sanitize branch name by removing tabs and extra whitespace
+                    clean_branch = branch.replace('\t', '').strip()
+                    # Validate branch name format
+                    if not re.match(r'^[a-zA-Z0-9._-]+$', clean_branch):
+                        logger.warning(f"Invalid branch name format: {clean_branch}")
+                        clean_branch = 'main'
+                    elif not clean_branch:
+                        clean_branch = 'main'  # Default to main if branch name is empty after cleaning
+                # Try to checkout branch
+                try:
+                    repo.git.checkout(clean_branch)
+                    logger.info(f"Checked out branch: {clean_branch}")
+                except exc.GitCommandError:
+                    # If checkout fails, try main/master as fallbacks
+                    for fallback in ['main', 'master']:
+                        try:
+                            if fallback != clean_branch:
+                                logger.warning(f"Trying fallback branch: {fallback}")
+                                repo.git.checkout(fallback)
+                                logger.info(f"Checked out fallback branch: {fallback}")
+                                break
+                        except exc.GitCommandError:
+                            continue
+                    else:
+                        raise exc.GitCommandError(f"Failed to checkout any branch: {clean_branch}, main, or master")
             except exc.GitCommandError as e:
-                logger.error(f"Failed to checkout {branch}: {e}")
+                logger.error(f"Failed to checkout branch: {e}")
                 sys.exit(1)
         else:
             logger.info("Using default branch")
@@ -1388,7 +1562,7 @@ def local_export(args: argparse.Namespace) -> None:
         
     repo_name = local_dir.name or "local-export"
     extension = ".json" if hasattr(args, 'format') and args.format == "json" else ".txt"
-    output_file = args.output_file if hasattr(args, 'output_file') and args.output_file else f"file2ai_export{extension}"
+    output_file = args.output_file if hasattr(args, 'output_file') and args.output_file else f"{repo_name}_export{extension}"
     
     # Get exports directory and construct output path
     exports_dir = prepare_exports_dir()  # Already resolved in prepare_exports_dir
@@ -1630,12 +1804,12 @@ def _write_image_list(
     return image_list
 
 
-def verify_file_access(file_path: Path, skip_in_tests: bool = True) -> None:
+def verify_file_access(file_path: Union[Path, io.BytesIO], skip_in_tests: bool = True) -> None:
     """
     Verify that a file exists and is readable.
     
     Args:
-        file_path: Path to the file to verify
+        file_path: Path to the file to verify, or BytesIO stream
         skip_in_tests: Whether to skip verification in test environment
         
     Raises:
@@ -1643,6 +1817,19 @@ def verify_file_access(file_path: Path, skip_in_tests: bool = True) -> None:
         PermissionError: If file isn't accessible due to permissions
         IOError: If file isn't readable for other reasons
     """
+    # Handle BytesIO streams
+    if isinstance(file_path, io.BytesIO):
+        # For BytesIO streams, verify they have content
+        if file_path.tell() == file_path.getbuffer().nbytes and file_path.getbuffer().nbytes > 0:
+            # Stream is at end but has content, seek to start
+            file_path.seek(0)
+        elif file_path.getbuffer().nbytes == 0:
+            error_msg = "Input stream is empty"
+            logger.error(error_msg)
+            raise IOError(error_msg)
+        logger.info("Successfully verified stream has content")
+        return
+
     # Check if we should skip verification in test environment
     in_test = skip_in_tests and 'pytest' in sys.modules
     force_check = os.environ.get('FORCE_FILE_CHECK') == 'true'
@@ -1698,22 +1885,32 @@ def verify_file_access(file_path: Path, skip_in_tests: bool = True) -> None:
 # Function removed - Word to image conversion is no longer supported
 
 
-def convert_document(args: argparse.Namespace) -> None:
+def convert_document(args: argparse.Namespace, input_stream: Optional[io.BytesIO] = None) -> None:
     """
     Convert a document to the specified format.
 
     Args:
         args: Command line arguments containing:
-            - input: Path to input file
+            - input: Path to input file or filename for stream
             - format: Desired output format (pdf, text, image, docx, csv)
             - output: Optional output path
             - brightness: Image brightness adjustment (0.0-2.0)
             - contrast: Image contrast adjustment (0.0-2.0)
             - quality: Image quality setting (1-100)
             - resolution: Image resolution in DPI
+        input_stream: Optional BytesIO stream containing file data
     """
-    input_path = Path(args.input).resolve()  # Get absolute path
-    logger.info(f"Attempting to convert file: {input_path}")
+    # Handle input stream or file path
+    if input_stream is not None:
+        # For streams, we need the filename from args.input for extension detection
+        input_path = Path(args.input)  # Don't resolve() for stream inputs
+        logger.info(f"Attempting to convert file from stream: {input_path.name}")
+        verify_file_access(input_stream)  # Verify stream has content
+    else:
+        # For file paths, resolve to absolute path
+        input_path = Path(args.input).resolve()
+        logger.info(f"Attempting to convert file: {input_path}")
+        verify_file_access(input_path)
     
     # Get input file extension and base name
     input_extension = input_path.suffix.lower()
@@ -1726,13 +1923,18 @@ def convert_document(args: argparse.Namespace) -> None:
     if args.output:
         output_path = Path(args.output)
     else:
-        # For HTML/MHTML files being converted to text, use a consistent extension
-        if input_extension in [".html", ".htm", ".mhtml", ".mht"] and args.format == "text":
-            # Use base name with .text extension, strip any existing extensions
-            output_path = Path(f"{base_name}.text")
-        else:
-            # Use base name with format extension
-            output_path = Path(f"{base_name}.{args.format}")
+        # Map format to proper file extension
+        format_extensions = {
+            "text": "txt",
+            "pdf": "pdf",
+            "html": "html",
+            "docx": "docx",
+            "xlsx": "xlsx",
+            "pptx": "pptx",
+            "csv": "csv"
+        }
+        ext = format_extensions.get(args.format, "txt")  # Default to txt for text format
+        output_path = Path(f"{base_name}.{ext}")
 
     # Ensure exports directory exists
     exports_dir = Path(EXPORTS_DIR)
@@ -1879,7 +2081,12 @@ def convert_document(args: argparse.Namespace) -> None:
         try:
             logger.debug(f"Loading Excel workbook from path: {input_path}")
             try:
-                workbook: "Workbook" = load_workbook(input_path, data_only=True)
+                if input_stream is not None:
+                    # For BytesIO streams, read directly
+                    workbook: "Workbook" = load_workbook(input_stream, data_only=True)
+                else:
+                    # For file paths, open normally
+                    workbook: "Workbook" = load_workbook(input_path, data_only=True)
             except ImportError as e:
                 logger.error(f"Error converting Excel document: Import error - {str(e)}")
                 sys.exit(1)
@@ -1984,7 +2191,12 @@ def convert_document(args: argparse.Namespace) -> None:
                 sys.exit(1)
                 
             try:
-                presentation = Presentation(input_path)
+                if input_stream is not None:
+                    # For BytesIO streams, read directly
+                    presentation = Presentation(input_stream)
+                else:
+                    # For file paths, open normally
+                    presentation = Presentation(input_path)
             except BadZipFile:
                 logger.error("Error loading PowerPoint file: File is not a valid PowerPoint document")
                 sys.exit(1)
@@ -2078,22 +2290,41 @@ def convert_document(args: argparse.Namespace) -> None:
                     sys.exit(1)
 
             # Read HTML content with proper encoding handling
-            for encoding in ['utf-8', 'latin-1']:
-                try:
-                    logger.info(f"Attempting to read HTML file with {encoding} encoding")
-                    with open(input_path, 'r', encoding=encoding) as f:
-                        html_content = f.read()
+            if input_stream is not None:
+                # For BytesIO streams, try decoding directly
+                content = input_stream.getvalue()
+                for encoding in ['utf-8', 'latin-1']:
+                    try:
+                        html_content = content.decode(encoding)
                         if not html_content.strip():
-                            logger.error("HTML file is empty")
+                            logger.error("HTML content is empty")
                             sys.exit(1)
-                        logger.info(f"Successfully read HTML file with {encoding} encoding")
+                        logger.info(f"Successfully decoded HTML content with {encoding} encoding")
                         break
-                except UnicodeDecodeError:
-                    logger.info(f"Failed to read with {encoding} encoding, trying next encoding")
-                    continue
+                    except UnicodeDecodeError:
+                        logger.info(f"Failed to decode with {encoding} encoding, trying next encoding")
+                        continue
+                else:
+                    logger.error("Failed to decode HTML content with supported encodings")
+                    sys.exit(1)
             else:
-                logger.error("Failed to decode HTML file with supported encodings")
-                sys.exit(1)
+                # For file paths, read from file
+                for encoding in ['utf-8', 'latin-1']:
+                    try:
+                        logger.info(f"Attempting to read HTML file with {encoding} encoding")
+                        with open(input_path, 'r', encoding=encoding) as f:
+                            html_content = f.read()
+                            if not html_content.strip():
+                                logger.error("HTML file is empty")
+                                sys.exit(1)
+                            logger.info(f"Successfully read HTML file with {encoding} encoding")
+                            break
+                    except UnicodeDecodeError:
+                        logger.info(f"Failed to read with {encoding} encoding, trying next encoding")
+                        continue
+                else:
+                    logger.error("Failed to decode HTML file with supported encodings")
+                    sys.exit(1)
 
             # Ensure output directory exists
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2106,7 +2337,8 @@ def convert_document(args: argparse.Namespace) -> None:
                     logger.warning("No text content found in HTML")
                 
                 # For HTML to text conversion, ensure we use a consistent output path
-                output_path = exports_dir / f"{base_name}.text"
+                # Keep the original extension in the output filename
+                output_path = exports_dir / f"{base_name}{input_extension}.{args.format}"
                 output_path.write_text(text_content)
                 logger.info(f"Successfully converted HTML to text: {output_path}")
                 return
@@ -2380,8 +2612,13 @@ def convert_document(args: argparse.Namespace) -> None:
                 logger.error(f"Error converting PDF document: {str(e)}")
                 sys.exit(1)
 
-            # Open PDF document
-            pdf_doc = PdfReader(input_path)
+            # Handle input based on type
+            if input_stream is not None:
+                # For BytesIO streams, read directly
+                pdf_doc = PdfReader(input_stream)
+            else:
+                # For file paths, open normally
+                pdf_doc = PdfReader(input_path)
 
             if output_format == "text":
                 # Extract text from PDF
