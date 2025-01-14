@@ -6,6 +6,7 @@ import uuid
 import socket
 import threading
 import io
+import re
 from datetime import datetime
 import logging
 from typing import Dict, Optional, List, TypedDict, Union, cast
@@ -224,8 +225,8 @@ def process_job(
                 temp_path = Path(UPLOADS_DIR) / filename
                 logger.debug(f"Checking pattern match for path: {temp_path}")
                 
-                # Check pattern match using normalized path
-                matches = matches_pattern(str(temp_path), pattern_input)
+                # Check pattern match using normalized path and uploads directory as base
+                matches = matches_pattern(str(temp_path), pattern_input, base_dir=UPLOADS_DIR)
                 if pattern_mode == "exclude" and matches:
                     logger.debug(f"Skipping {temp_path}: matches exclude pattern")
                     continue
@@ -376,10 +377,20 @@ def process_job(
                     except Exception as e:
                         logger.warning(f"Failed to detect default branch: {e}, falling back to 'main'")
 
+                    # Sanitize branch name
+                    branch = options.get("branch") or default_branch
+                    if branch:
+                        branch = branch.replace('\t', '').replace('HEAD', '').strip()
+                        if not branch or not re.match(r'^[a-zA-Z0-9._-]+$', branch):
+                            logger.warning(f"Invalid branch name: {branch}, defaulting to 'main'")
+                            branch = 'main'
+                    else:
+                        branch = 'main'
+                    
                     args = Namespace(
                         command="export",
                         repo_url=str(repo_url),
-                        branch=str(options.get("branch") or default_branch),
+                        branch=str(branch),
                         token=str(options.get("token", "")),
                         output=str(output_path),
                         format=str(options.get("format", "text")),
@@ -964,19 +975,45 @@ def cleanup_job(job_id):
 
     job = conversion_jobs[job_id]
 
-    # Remove output files
-    for output_path in job["output_files"]:
-        try:
-            if output_path.exists():
-                output_path.unlink()
-        except Exception as e:
-            logger.error("Error cleaning up %s: %s", output_path, e)
-
-    # Remove job data
-    del conversion_jobs[job_id]
-    del job_events[job_id]
-
-    return jsonify({"status": "cleaned"})
+    try:
+        # Clean up temporary directory if it exists
+        temp_dir = Path(UPLOADS_DIR) / f"local_export_{job_id}"
+        if temp_dir.exists():
+            try:
+                # Verify this is actually our temp directory
+                if temp_dir.is_relative_to(Path(UPLOADS_DIR)) and "local_export_" in temp_dir.name:
+                    import shutil
+                    shutil.rmtree(str(temp_dir))
+                    logger.info(f"Cleaned up temporary directory: {temp_dir}")
+                else:
+                    logger.warning(f"Suspicious temp directory path: {temp_dir}, skipping cleanup")
+            except Exception as e:
+                logger.error(f"Error cleaning up temporary directory {temp_dir}: {e}")
+                
+        # Clean up output files
+        for output_path in job["output_files"]:
+            try:
+                if output_path.exists():
+                    # Verify this is actually our output file
+                    if output_path.is_relative_to(Path(EXPORTS_DIR)):
+                        output_path.unlink()
+                        logger.info(f"Cleaned up output file: {output_path}")
+                    else:
+                        logger.warning(f"Suspicious output file path: {output_path}, skipping cleanup")
+            except Exception as e:
+                logger.error(f"Error cleaning up output file {output_path}: {e}")
+                
+        # Remove job data
+        if job_id in job_events:
+            del job_events[job_id]
+        del conversion_jobs[job_id]
+        logger.info(f"Cleaned up job data for {job_id}")
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        error_msg = f"Error during cleanup: {str(e)}"
+        logger.error(error_msg)
+        return jsonify({"error": error_msg}), 500
 
 
 def load_env_file():

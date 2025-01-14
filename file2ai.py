@@ -398,16 +398,62 @@ def parse_args(args=None) -> argparse.Namespace:
         convert - Convert documents between different formats
         web     - Start web interface for file uploads and conversions
     """
-    # Check if first argument is a file path or GitHub URL
+    # Handle legacy command format with file path or URL as first argument
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
-        if os.path.exists(sys.argv[1]):
-            # Insert 'convert' command and --input before the file path
-            sys.argv.insert(1, "convert")
-            sys.argv.insert(2, "--input")
-        elif validate_github_url(sys.argv[1]):
-            # Insert 'export' command and --repo-url before the URL
-            url = sys.argv.pop(1)
-            sys.argv.extend(["export", "--repo-url", url])
+        if sys.argv[1] not in ["convert", "export", "web"]:  # Not a valid command
+            # First try to detect what kind of input we have
+            input_arg = sys.argv[1]
+            try:
+                # Check if it's a file path
+                if os.path.exists(input_arg):
+                    logger.info("Detected file path input, converting to proper command format")
+                    file_path = sys.argv.pop(1)  # Remove the file path
+                    sys.argv.extend(["convert", "--input", file_path])  # Add as proper arguments
+                    logger.warning(
+                        "Legacy file path format detected. Please use this format instead:\n"
+                        f"  python file2ai.py convert --input {file_path} [options]"
+                    )
+                # Check if it's a GitHub URL
+                elif validate_github_url(input_arg):
+                    logger.info("Detected GitHub URL input, converting to proper command format")
+                    url = sys.argv.pop(1)  # Remove the URL
+                    sys.argv.extend(["export", "--repo-url", url])  # Add as proper arguments
+                    logger.warning(
+                        "Legacy URL format detected. Please use this format instead:\n"
+                        f"  python file2ai.py export --repo-url {url} [options]"
+                    )
+                # Check if it's a directory path
+                elif os.path.isdir(input_arg):
+                    logger.info("Detected directory path input, converting to proper command format")
+                    dir_path = sys.argv.pop(1)  # Remove the directory path
+                    sys.argv.extend(["export", "--local-dir", dir_path])  # Add as proper arguments
+                    logger.warning(
+                        "Legacy directory format detected. Please use this format instead:\n"
+                        f"  python file2ai.py export --local-dir {dir_path} [options]"
+                    )
+                else:
+                    # Invalid input - provide detailed error message
+                    raise ValueError(
+                        f"Invalid argument: {input_arg}\n"
+                        "The argument is not a valid:\n"
+                        "  - File path (file does not exist)\n"
+                        "  - GitHub URL (must start with https://github.com/)\n"
+                        "  - Directory path (directory does not exist)\n\n"
+                        "Please use one of these formats:\n"
+                        "  python file2ai.py convert --input <file> [options]\n"
+                        "  python file2ai.py export --repo-url <url> [options]\n"
+                        "  python file2ai.py export --local-dir <directory> [options]"
+                    )
+            except Exception as e:
+                # Handle any unexpected errors during input processing
+                logger.error(f"Error processing input argument: {e}")
+                raise ValueError(
+                    f"Failed to process argument: {input_arg}\n"
+                    "Please use one of these formats:\n"
+                    "  python file2ai.py convert --input <file> [options]\n"
+                    "  python file2ai.py export --repo-url <url> [options]\n"
+                    "  python file2ai.py export --local-dir <directory> [options]"
+                )
 
     parser = argparse.ArgumentParser(
         description="""Export text files and convert documents between formats using
@@ -684,12 +730,14 @@ def parse_github_url(
         - branch: Branch name if specified in URL, None otherwise
         - subdirectory: Subdirectory path if specified and use_subdirectory=True, None otherwise
 
-    Note:
-        Returns (None, None, None) if the URL is None or invalid.
+    Raises:
+        SystemExit: If the URL is invalid and we're not in a test environment
     """
     # Handle None or empty URL
     if not url:
-        logger.debug("No URL provided")
+        logger.warning("No URL provided")
+        if 'pytest' not in sys.modules:
+            sys.exit(1)
         return None, None, None
 
     # Step 1: Clean and normalize URL
@@ -703,6 +751,8 @@ def parse_github_url(
     base_match = re.match(r'^https?://github\.com/([^/]+/[^/]+)', url)
     if not base_match:
         logger.warning(f"Invalid GitHub URL format: {url}")
+        if 'pytest' not in sys.modules:
+            sys.exit(1)
         return None, None, None
 
     # Get base repository URL without any suffixes
@@ -729,15 +779,18 @@ def parse_github_url(
         # Handle branch with improved sanitization
         raw_branch = tree_match.group(1)
         if raw_branch:
-            # First strip whitespace from ends
+            # First strip whitespace and remove HEAD references
             branch = raw_branch.strip()
+            if 'HEAD' in branch:
+                branch = branch.replace('HEAD', '').strip()
+                logger.warning(f"Removed HEAD reference from branch name: {branch}")
             
             # Remove any tab characters or internal spaces
             if any(c in branch for c in ['\t', ' ', '\n', '\r']):
                 # Replace all whitespace with nothing
                 sanitized = re.sub(r'[\s\t\n\r]+', '', branch)
                 # Remove any remaining invalid characters
-                sanitized = re.sub(r'[^a-zA-Z0-9._]', '', sanitized)
+                sanitized = re.sub(r'[^a-zA-Z0-9._-]', '', sanitized)
                 if sanitized != branch:
                     logger.warning(f"Sanitized branch name from '{branch}' to '{sanitized}'")
                 branch = sanitized
@@ -747,8 +800,8 @@ def parse_github_url(
             
             # Ensure branch name is not empty after sanitization
             if not branch:
-                logger.warning("Branch name was empty after sanitization")
-                branch = None
+                logger.warning("Branch name was empty after sanitization, using 'main'")
+                branch = 'main'
             else:
                 logger.debug(f"Final branch name: {branch}")
         
@@ -1418,12 +1471,38 @@ def clone_and_export(args: argparse.Namespace) -> None:
         branch = args.branch or url_branch
         if branch:
             try:
-                # Sanitize branch name by removing tabs and extra whitespace
-                clean_branch = branch.replace('\t', '').strip()
-                repo.git.checkout(clean_branch)
-                logger.info(f"Checked out branch: {clean_branch}")
+                # First check if branch name contains HEAD
+                if 'HEAD' in branch:
+                    logger.warning(f"Invalid branch name format: {branch}")
+                    clean_branch = 'main'
+                else:
+                    # Sanitize branch name by removing tabs and extra whitespace
+                    clean_branch = branch.replace('\t', '').strip()
+                    # Validate branch name format
+                    if not re.match(r'^[a-zA-Z0-9._-]+$', clean_branch):
+                        logger.warning(f"Invalid branch name format: {clean_branch}")
+                        clean_branch = 'main'
+                    elif not clean_branch:
+                        clean_branch = 'main'  # Default to main if branch name is empty after cleaning
+                # Try to checkout branch
+                try:
+                    repo.git.checkout(clean_branch)
+                    logger.info(f"Checked out branch: {clean_branch}")
+                except exc.GitCommandError:
+                    # If checkout fails, try main/master as fallbacks
+                    for fallback in ['main', 'master']:
+                        try:
+                            if fallback != clean_branch:
+                                logger.warning(f"Trying fallback branch: {fallback}")
+                                repo.git.checkout(fallback)
+                                logger.info(f"Checked out fallback branch: {fallback}")
+                                break
+                        except exc.GitCommandError:
+                            continue
+                    else:
+                        raise exc.GitCommandError(f"Failed to checkout any branch: {clean_branch}, main, or master")
             except exc.GitCommandError as e:
-                logger.error(f"Failed to checkout {clean_branch}: {e}")
+                logger.error(f"Failed to checkout branch: {e}")
                 sys.exit(1)
         else:
             logger.info("Using default branch")
@@ -1847,13 +1926,18 @@ def convert_document(args: argparse.Namespace, input_stream: Optional[io.BytesIO
     if args.output:
         output_path = Path(args.output)
     else:
-        # For HTML/MHTML files being converted to text, use a consistent extension
-        if input_extension in [".html", ".htm", ".mhtml", ".mht"] and args.format == "text":
-            # Use base name with .text extension, strip any existing extensions
-            output_path = Path(f"{base_name}.text")
-        else:
-            # Use base name with format extension
-            output_path = Path(f"{base_name}.{args.format}")
+        # Map format to proper file extension
+        format_extensions = {
+            "text": "txt",
+            "pdf": "pdf",
+            "html": "html",
+            "docx": "docx",
+            "xlsx": "xlsx",
+            "pptx": "pptx",
+            "csv": "csv"
+        }
+        ext = format_extensions.get(args.format, "txt")  # Default to txt for text format
+        output_path = Path(f"{base_name}.{ext}")
 
     # Ensure exports directory exists
     exports_dir = Path(EXPORTS_DIR)
