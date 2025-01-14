@@ -71,10 +71,22 @@ document.addEventListener('DOMContentLoaded', () => {
       state.repoUrl.trim().match(/^github\.com\/[^/]+\/[^/]+/)
     );
     
+    // For local directory mode, we consider it valid if we have files with webkitRelativePath
+    const hasValidLocalDir = state.inputType === 'local' && hasFiles && 
+      Array.from(state.files).some(f => f.webkitRelativePath);
+    
+    // If we have valid local directory files, ensure state.localDir is set
+    if (hasValidLocalDir && !state.localDir) {
+      const firstFile = state.files[0];
+      if (firstFile?.webkitRelativePath) {
+        state.localDir = firstFile.webkitRelativePath.split('/')[0];
+      }
+    }
+    
     const isValid = (
       (state.inputType === 'file' && hasFiles) ||
       (state.inputType === 'repo' && isValidGithubUrl) ||
-      (state.inputType === 'local' && hasLocalDir)
+      hasValidLocalDir
     );
     
     console.log('Form validation state:', {
@@ -339,13 +351,87 @@ document.addEventListener('DOMContentLoaded', () => {
     return container;
   }
 
+  // Configure directory input element when input type changes
+  function configureDirectoryInput() {
+    if (elements.localDir && state.inputType === 'local') {
+      // Create a new input element with directory selection enabled
+      const newInput = document.createElement('input');
+      newInput.type = 'file';
+      newInput.id = elements.localDir.id;
+      newInput.className = elements.localDir.className;
+      
+      // Set directory selection attributes
+      newInput.setAttribute('webkitdirectory', '');
+      newInput.setAttribute('directory', '');
+      newInput.setAttribute('multiple', '');
+      newInput.webkitdirectory = true;
+      newInput.directory = true;
+      newInput.multiple = true;
+      
+      // Replace old input with new one
+      const parent = elements.localDir.parentNode;
+      parent.replaceChild(newInput, elements.localDir);
+      elements.localDir = newInput;
+      
+      // Reattach event listener to new input
+      elements.localDir.addEventListener('change', (e) => {
+        const files = e.target.files;
+        if (files?.length) {
+          // Get directory path from first file
+          const relativePath = files[0].webkitRelativePath;
+          const dirPath = relativePath.split('/')[0];
+          state.localDir = dirPath;
+          state.files = files;
+          
+          // Create and display directory tree
+          const tree = createDirectoryTree(files);
+          const treeElement = renderDirectoryTree(tree);
+          
+          // Find or create container for directory tree
+          let container = document.getElementById('directoryTree');
+          if (!container) {
+            container = document.createElement('div');
+            container.id = 'directoryTree';
+            elements.sections.local.appendChild(container);
+          }
+          
+          // Update container content
+          container.innerHTML = '';
+          container.appendChild(treeElement);
+          
+          console.log('Directory selected:', {
+            dirPath,
+            fileCount: files.length,
+            firstFile: relativePath
+          });
+          
+          updateSubmitButton();
+        }
+      });
+      
+      console.log('Directory input reconfigured:', {
+        webkitdirectory: elements.localDir.webkitdirectory,
+        directory: elements.localDir.directory,
+        multiple: elements.localDir.multiple
+      });
+    }
+  }
+  
+  // Initial configuration
+  configureDirectoryInput();
+  
+  // Reconfigure when input type changes
+  elements.inputType.addEventListener('change', () => {
+    configureDirectoryInput();
+  });
+
   elements.localDir.addEventListener('change', (e) => {
     const files = e.target.files;
     if (files?.length) {
-      // Keep the entire directory path instead of only top folder
+      // Get directory path from first file
       const relativePath = files[0].webkitRelativePath;
-      const folderPath = relativePath.split('/').slice(0, -1).join('/');
-      state.localDir = folderPath || '';
+      const dirPath = relativePath.split('/')[0];
+      state.localDir = dirPath;
       // Store directory files for filtering
       state.files = files;
       
@@ -463,16 +549,39 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (state.inputType === 'local' && state.files) {
       console.log('Processing local directory');
       formData.append('command', 'export');
-      formData.append('local_dir', state.localDir);
       
-      // Filter files before sending
+      // Get directory path from first file's relative path
+      if (state.files[0]?.webkitRelativePath) {
+        const dirPath = state.files[0].webkitRelativePath.split('/')[0];
+        formData.append('local_dir', dirPath);
+        console.log('Using directory path:', dirPath);
+      }
+      
+      // Filter and append files
       Array.from(state.files).forEach(file => {
         const size = file.size / 1024; // Convert to KB
         if (size <= state.maxFileSize) {
-          const matches = file.webkitRelativePath.match(new RegExp(state.patternInput));
-          if ((state.patternMode === 'include' && matches) || 
-              (state.patternMode === 'exclude' && !matches)) {
+          // Use proper pattern matching based on file's relative path
+          const relativePath = file.webkitRelativePath;
+          let shouldInclude = true;
+          
+          if (state.patternInput) {
+            const patterns = state.patternInput.split(';').filter(p => p.trim());
+            const matches = patterns.some(pattern => {
+              // Convert glob pattern to regex
+              const regexPattern = pattern.trim()
+                .replace(/\./g, '\\.')
+                .replace(/\*/g, '.*')
+                .replace(/\?/g, '.');
+              return new RegExp(regexPattern).test(relativePath);
+            });
+            
+            shouldInclude = (state.patternMode === 'include') ? matches : !matches;
+          }
+          
+          if (shouldInclude) {
             formData.append('directory_files[]', file);
+            console.log('Including file:', relativePath);
           }
         }
       });

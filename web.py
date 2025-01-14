@@ -9,6 +9,7 @@ import io
 from datetime import datetime
 import logging
 from typing import Dict, Optional, List, TypedDict, Union
+import werkzeug.datastructures
 from werkzeug.datastructures import FileStorage
 
 # Configure logging
@@ -106,7 +107,7 @@ job_events = {}
 def process_job(
     job_id: str,
     command: str,
-    files: Optional[Dict[str, FileStorage]] = None,
+    files: Optional[Union[Dict[str, FileStorage], werkzeug.datastructures.MultiDict]] = None,
     options: Optional[ConversionOptions] = None,
 ) -> None:
     """Background processing for all job types
@@ -414,7 +415,7 @@ def process_job(
                     # Create output path for local directory
                     dir_name = Path(str(local_dir)).name
                     format_ext = str(options.get("format", "text"))
-                    filename = f"{dir_name}_export.{format_ext}"
+                    filename = f"{dir_name}_export.txt"
                     output_path = Path(EXPORTS_DIR) / filename
 
                     # Create args namespace for local export
@@ -435,11 +436,19 @@ def process_job(
                     try:
                         # Get list of files to process
                         directory_files = []
-                        if isinstance(files, dict):
-                            directory_files = files.get("directory_files", [])
-                        if not directory_files:
-                            raise IOError(f"No files found in directory: {local_dir}")
-                            
+                        if files:
+                            # Handle both MultiDict and dictionary cases
+                            if hasattr(files, 'getlist'):  # MultiDict from request.files
+                                directory_files = files.getlist("directory_files[]")
+                                logger.debug(f"Found {len(directory_files)} files from MultiDict")
+                            elif isinstance(files, dict):
+                                directory_files = files.get("directory_files", [])
+                                logger.debug(f"Found {len(directory_files)} files from dict")
+                            else:
+                                logger.warning(f"Unexpected files type: {type(files)}")
+                                directory_files = []
+                            logger.debug(f"Total files to process: {len(directory_files)}")
+                        
                         # Verify input directory exists and is readable
                         input_dir = Path(str(local_dir))
                         if not input_dir.exists():
@@ -449,8 +458,8 @@ def process_job(
                         if not os.access(str(input_dir), os.R_OK):
                             raise IOError(f"Directory not readable: {input_dir}")
                             
-                        logger.debug(f"Processing {len(directory_files)} files from directory: {input_dir}")
-                            
+                        logger.debug(f"Processing directory: {input_dir}")
+                        
                         # Handle subdir if specified
                         if args.subdir:
                             subdir_path = input_dir / args.subdir
@@ -460,6 +469,31 @@ def process_job(
                                 raise IOError(f"Not a directory: {subdir_path}")
                             args.local_dir = str(subdir_path)
                             logger.debug(f"Using subdirectory: {subdir_path}")
+
+                        # Save uploaded files to temporary directory if provided
+                        if directory_files:
+                            temp_dir = Path(UPLOADS_DIR) / f"local_export_{job_id}"
+                            temp_dir.mkdir(parents=True, exist_ok=True)
+                            logger.debug(f"Created temporary directory: {temp_dir}")
+                            
+                            for file in directory_files:
+                                if hasattr(file, 'filename'):  # Handle FileStorage objects
+                                    rel_path = file.filename
+                                    # Try to get relative path from form data
+                                    if hasattr(file, 'webkitRelativePath'):
+                                        rel_path = file.webkitRelativePath
+                                    elif hasattr(file, 'headers'):
+                                        # Extract relative path from Content-Disposition header if available
+                                        content_disp = file.headers.get('Content-Disposition', '')
+                                        if 'filename=' in content_disp:
+                                            rel_path = content_disp.split('filename=')[-1].strip('"')
+                                    dest = temp_dir / rel_path
+                                    dest.parent.mkdir(parents=True, exist_ok=True)
+                                    file.save(str(dest))
+                            
+                            # Update local_dir to point to our temporary directory
+                            args.local_dir = str(temp_dir)
+                            logger.debug(f"Using temporary directory for files: {temp_dir}")
 
                         # Ensure output directory exists
                         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -754,25 +788,26 @@ def handle_api():
             if not Path(dir_path).exists():
                 return jsonify({"error": f"Directory not found: {dir_path}"}), 400
                 
-            # Gather filtered files from directory
-            try:
-                directory_files = gather_filtered_files(
-                    dir_path,
-                    max_size_kb=max_file_size,
-                    pattern_mode=pattern_mode,
-                    pattern_input=request.form.get("pattern_input", "")
-                )
-            except Exception as e:
-                return jsonify({"error": f"Error scanning directory: {str(e)}"}), 400
-                
+            # Handle uploaded directory files
+            directory_files = request.files.getlist("directory_files[]")
             if not directory_files:
-                return jsonify({"error": f"No matching files found in directory: {dir_path}"}), 400
-                
+                # If no files uploaded, scan directory locally
+                try:
+                    directory_files = gather_filtered_files(
+                        dir_path,
+                        max_size_kb=max_file_size,
+                        pattern_mode=pattern_mode,
+                        pattern_input=request.form.get("pattern_input", "")
+                    )
+                except Exception as e:
+                    return jsonify({"error": f"Error scanning directory: {str(e)}"}), 400
+                    
+                if not directory_files:
+                    return jsonify({"error": f"No matching files found in directory: {dir_path}"}), 400
+            
+            logger.debug(f"Processing {len(directory_files)} files from directory")
             options["local_dir"] = dir_path
-            files = {
-                "local_dir": dir_path,
-                "directory_files": directory_files
-            }
+            files = request.files  # Pass the MultiDict directly for proper file handling
 
         else:
             return jsonify({
@@ -797,7 +832,7 @@ def get_preview(job_id):
         return jsonify({"error": "No output files available"}), 404
         
     # Get the first text file
-    text_files = [f for f in job["output_files"] if str(f).endswith(".text")]
+    text_files = [f for f in job["output_files"] if str(f).endswith(".txt")]
     if not text_files:
         return jsonify({"error": "No text preview available"}), 404
         

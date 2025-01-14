@@ -16,12 +16,12 @@ def matches_pattern(file_path: Union[str, Path], pattern_input: str) -> bool:
     Returns:
         bool: True if file matches any pattern, False otherwise
     """
-    if not pattern_input:
-        return False
+    if not pattern_input or not pattern_input.strip():
+        return False  # No patterns means no matches
         
     patterns = [p.strip() for p in pattern_input.split(';') if p.strip()]
     if not patterns:
-        return False
+        return False  # Empty patterns list means no matches
         
     # Ensure we have an absolute, normalized path
     try:
@@ -37,7 +37,7 @@ def matches_pattern(file_path: Union[str, Path], pattern_input: str) -> bool:
         logger.warning(f"Failed to normalize path {file_path}: {e}")
         return False
     
-    # Handle patterns - don't try to resolve them as they may be glob patterns
+    # Handle patterns - convert glob patterns to proper format
     normalized_patterns = []
     for pattern in patterns:
         pattern = pattern.strip()
@@ -46,6 +46,14 @@ def matches_pattern(file_path: Union[str, Path], pattern_input: str) -> bool:
         # Remove any trailing slashes that might interfere with matching
         while pattern.endswith('/'):
             pattern = pattern[:-1]
+        # Handle directory-specific patterns (e.g., build/*)
+        if '/' in pattern:
+            # Ensure pattern matches full path for directory patterns
+            if not pattern.startswith('**/'):
+                pattern = f'**/{pattern}'
+        # Handle extension patterns (e.g., *.md)
+        elif pattern.startswith('*.'):
+            pattern = f'**/{pattern}'
         normalized_patterns.append(pattern)
         logger.debug(f"Normalized pattern: {pattern}")
     
@@ -53,6 +61,10 @@ def matches_pattern(file_path: Union[str, Path], pattern_input: str) -> bool:
         try:
             if path_obj.match(pattern):
                 logger.debug(f"Path {path_obj} matches pattern {pattern}")
+                return True
+            # Also try matching against the file name for extension patterns
+            if pattern.startswith('*.') and path_obj.name.endswith(pattern[1:]):
+                logger.debug(f"Path {path_obj} matches extension pattern {pattern}")
                 return True
         except Exception as e:
             logger.warning(f"Error matching pattern '{pattern}' against '{path_obj}': {e}")
@@ -119,14 +131,17 @@ def gather_filtered_files(base_dir: str, max_size_kb: int, pattern_mode: str, pa
                     
                     # Check pattern match using absolute path
                     matches = matches_pattern(abs_path, pattern_input)
+                    logger.debug(f"Pattern match result for {abs_path}: {matches} (mode: {pattern_mode})")
                     
                     # Include/exclude based on pattern_mode
                     if pattern_mode == "exclude" and matches:
                         logger.debug(f"Skipping {abs_path}: matches exclude pattern")
                         continue
-                    elif pattern_mode == "include" and not matches and pattern_input:
+                    elif pattern_mode == "include" and not matches and pattern_input.strip():
                         logger.debug(f"Skipping {abs_path}: doesn't match include pattern")
                         continue
+                    
+                    logger.debug(f"Including file {abs_path} (passed pattern filter)")
                         
                     filtered_files.append(str(abs_path))
                     logger.debug(f"Including file: {abs_path}")

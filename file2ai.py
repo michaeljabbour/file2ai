@@ -482,6 +482,57 @@ Cross-platform compatible with no system dependencies required.""",
     # Create subparsers for different commands
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
+    # Export command (default)
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export text files from a repository or local directory (default)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    source_group = export_parser.add_mutually_exclusive_group()
+    source_group.add_argument(
+        "--repo-url",
+        help="GitHub repository URL (e.g., https://github.com/owner/repo)",
+    )
+    source_group.add_argument(
+        "--repo-url-sub",
+        help="GitHub repository URL with subdirectory to process",
+    )
+    source_group.add_argument(
+        "--local-dir",
+        help="Local directory path to export",
+    )
+    export_parser.add_argument("--branch", help="Branch or commit to checkout (optional)")
+    export_parser.add_argument("--subdir", help="Optional subdirectory to export (defaults to repo root)")
+    export_parser.add_argument("--token", help="GitHub Personal Access Token for private repos")
+    export_parser.add_argument(
+        "--output-file", help="Custom output filename (default: <repo_name>_export.txt)"
+    )
+    export_parser.add_argument(
+        "--skip-remove", action="store_true", help="Skip removal of cloned repository after export"
+    )
+    export_parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Choose the output format (text or json). Default is text.",
+    )
+    export_parser.add_argument(
+        "--max-size-kb",
+        type=int,
+        default=50,
+        help="Maximum file size in KB (default: 50)",
+    )
+    export_parser.add_argument(
+        "--pattern-mode",
+        choices=["exclude", "include"],
+        default="exclude",
+        help="Pattern matching mode (exclude or include). Default is exclude.",
+    )
+    export_parser.add_argument(
+        "--pattern-input",
+        help="Semicolon-separated list of glob patterns (e.g., '*.md;build/*')",
+    )
+
     # Web interface subcommand
     web_parser = subparsers.add_parser(
         "web",
@@ -569,15 +620,23 @@ Cross-platform compatible with no system dependencies required.""",
         if not hasattr(args, "repo_url_sub"):
             args.repo_url_sub = None
 
-        # If no arguments provided, prompt for repository URL
+        # If no arguments provided, prompt for repository URL or local directory
         if not any([args.repo_url, args.repo_url_sub, args.local_dir]):
-            url = input("Enter GitHub repository URL (or press Enter to skip): ").strip()
+            url = input("Enter GitHub repository URL (or press Enter to export local directory): ").strip()
             if url:
                 # Handle deep URLs with --repo-url-sub
                 if "/tree/" in url:
                     args.repo_url_sub = url
                 else:
                     args.repo_url = url
+            else:
+                # Prompt for local directory if user skipped repo URL
+                tmp_dir = input("Enter a local directory path for export (or press Enter for current directory): ").strip()
+                if tmp_dir:
+                    args.local_dir = tmp_dir
+                else:
+                    args.local_dir = os.getcwd()
+                    logger.info(f"No directory specified, defaulting to current directory: {args.local_dir}")
 
         # Handle repo-url-sub by extracting components
         if args.repo_url_sub:
@@ -1427,7 +1486,7 @@ def local_export(args: argparse.Namespace) -> None:
         
     repo_name = local_dir.name or "local-export"
     extension = ".json" if hasattr(args, 'format') and args.format == "json" else ".txt"
-    output_file = args.output_file if hasattr(args, 'output_file') and args.output_file else f"file2ai_export{extension}"
+    output_file = args.output_file if hasattr(args, 'output_file') and args.output_file else f"{repo_name}_export{extension}"
     
     # Get exports directory and construct output path
     exports_dir = prepare_exports_dir()  # Already resolved in prepare_exports_dir
