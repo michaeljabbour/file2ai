@@ -114,33 +114,44 @@ def matches_pattern(file_path: Union[str, Path], pattern_input: Optional[str], b
         
         for pattern in normalized_patterns:
             try:
+                # Convert all paths and pattern to lowercase for case-insensitive matching
+                lower_path_str = path_str.lower()
+                lower_path_name = path_obj.name.lower()
+                lower_pattern = pattern.lower()
+                lower_path_parts = [p.lower() for p in path_parts]
+
                 # Handle all pattern types with fnmatch
-                if pattern.startswith('*.'):
+                if lower_pattern.startswith('*.'):
                     # Extension pattern - match against filename
-                    if fnmatch.fnmatch(path_obj.name, pattern):
+                    if fnmatch.fnmatch(lower_path_name, lower_pattern):
                         logger.debug(f"Path {path_obj} matches extension pattern {pattern}")
                         return True
-                elif '/' in pattern:
+                elif '/' in lower_pattern:
                     # Directory pattern - try full path match first
-                    if fnmatch.fnmatch(path_str, pattern):
+                    if fnmatch.fnmatch(lower_path_str, lower_pattern):
                         logger.debug(f"Path {path_obj} matches directory pattern {pattern}")
                         return True
                     # Then check if file is under matched directory
-                    pattern_dir = pattern.split('/')[0]
-                    if pattern_dir in path_parts:
-                        dir_index = path_parts.index(pattern_dir)
+                    pattern_dir = lower_pattern.split('/')[0]
+                    if pattern_dir in lower_path_parts:
+                        dir_index = lower_path_parts.index(pattern_dir)
                         # Check if this is actually the directory we want
-                        if dir_index < len(path_parts):  # File is in or under the directory
+                        if dir_index < len(lower_path_parts):  # File is in or under the directory
                             logger.debug(f"Path {path_obj} is in or under directory {pattern_dir}")
                             return True
                 elif '*' in pattern:
+                    # Validate pattern format
+                    if pattern.startswith('**') and not pattern.startswith('**/'):
+                        logger.warning(f"Invalid pattern format: {pattern} (** must be followed by /)")
+                        return False
+                    
                     # Wildcard pattern - try matching against both full path and filename
-                    if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(path_obj.name, pattern):
+                    if fnmatch.fnmatch(lower_path_str, lower_pattern) or fnmatch.fnmatch(lower_path_name, lower_pattern):
                         logger.debug(f"Path {path_obj} matches wildcard pattern {pattern}")
                         return True
                     # Also try matching against any part of the path
-                    for part in path_parts:
-                        if fnmatch.fnmatch(part, pattern):
+                    for part in lower_path_parts:
+                        if fnmatch.fnmatch(part, lower_pattern):
                             logger.debug(f"Path {path_obj} matches wildcard pattern {pattern} at part {part}")
                             return True
                 else:

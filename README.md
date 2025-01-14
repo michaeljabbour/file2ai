@@ -125,13 +125,29 @@ Note: The script will automatically install GitPython if it's not already availa
 
 ## Quick Start Usage
 
-You can run `file2ai.py` directly without installing anything else, as the script handles dependencies automatically. Below are common usage patterns:
+You can run `file2ai.py` directly without installing anything else, as the script handles dependencies automatically. The tool uses subcommands to organize functionality:
+
+- `convert` - Convert files between formats
+- `export` - Export text from repositories or directories
+- `web` - Start the web interface
+
+IMPORTANT: Always use the appropriate subcommand (convert/export/web) when running the tool. For example:
+```bash
+# Correct usage:
+python file2ai.py convert --input document.pdf
+python file2ai.py export --repo-url https://github.com/owner/repo.git
+python file2ai.py export --local-dir /path/to/directory
+
+# Incorrect usage (will fail):
+python file2ai.py document.pdf          # Missing 'convert' subcommand
+python file2ai.py /path/to/directory    # Missing 'export' subcommand
+```
 
 ### 1. Export From a Remote GitHub Repo
 
 Basic usage:
 ```bash
-python file2ai.py --repo-url https://github.com/owner/repo.git
+python file2ai.py export --repo-url https://github.com/owner/repo.git
 ```
 
 Deep URL handling:
@@ -163,7 +179,7 @@ python file2ai.py --skip-remove https://github.com/owner/repo.git
 ### 2. Export From a Local Directory
 
 ```bash
-python file2ai.py --local-dir /path/to/local/project
+python file2ai.py export --local-dir /path/to/local/project
 ```
 
 - If the directory contains a `.git` folder, file2ai will attempt to gather commit info for each file
@@ -172,7 +188,7 @@ python file2ai.py --local-dir /path/to/local/project
 ### 3. Custom Output Filename
 
 ```bash
-python file2ai.py --output-file my_export.txt https://github.com/owner/repo.git
+python file2ai.py export --output-file my_export.txt --repo-url https://github.com/owner/repo.git
 ```
 
 This places the file in `exports/my_export.txt`.
@@ -314,16 +330,31 @@ file2ai is designed to work across different platforms:
 - Tested on Python 3.11 and 3.12
 - 47% test coverage with comprehensive test suite
 
-### Image Processing Features
+### Pattern Matching Features
 
-1. **Enhanced Image Quality**
+1. **File Pattern Matching**
+   ```bash
+   # Case-insensitive pattern matching (these are equivalent):
+   python file2ai.py export --local-dir ./project --pattern-mode include --pattern-input "*.TXT"
+   python file2ai.py export --local-dir ./project --pattern-mode include --pattern-input "*.txt"
+   
+   # Multiple patterns (semicolon-separated):
+   python file2ai.py export --local-dir ./project --pattern-mode include --pattern-input "*.md;*.txt"
+   
+   # Directory patterns:
+   python file2ai.py export --local-dir ./project --pattern-mode include --pattern-input "src/**/*.py"
+   ```
+
+2. **Image Processing Features**
+
+3. **Enhanced Image Quality**
    ```bash
    # Default enhancement settings
-   python file2ai.py document.pdf --format image
+   python file2ai.py convert --input document.pdf --format image
    # Uses optimal values (brightness: 1.50, contrast: 1.20)
    
    # Custom enhancement
-   python file2ai.py document.pdf --format image --brightness 1.3 --contrast 1.1
+   python file2ai.py convert --input document.pdf --format image --brightness 1.3 --contrast 1.1
    ```
 
 2. **Pure Python Conversion**
