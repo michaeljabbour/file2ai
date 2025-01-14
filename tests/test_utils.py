@@ -77,28 +77,18 @@ def test_gather_filtered_files_basic(tmp_path):
     (tmp_path / "test.md").write_text("test")
     
     # Test include mode
-    files = gather_filtered_files(str(tmp_path), max_size_kb=100, 
+    files = gather_filtered_files(str(tmp_path),
                                 pattern_mode="include", pattern_input="*.txt")
     assert len(files) == 2
     assert all(".txt" in f for f in files)
     
     # Test exclude mode
-    files = gather_filtered_files(str(tmp_path), max_size_kb=100,
+    files = gather_filtered_files(str(tmp_path),
                                 pattern_mode="exclude", pattern_input="*.md")
     assert len(files) == 2
     assert not any(".md" in f for f in files)
 
-def test_gather_filtered_files_size_limit(tmp_path):
-    """Test file size filtering."""
-    # Create test files
-    (tmp_path / "small.txt").write_text("small")
-    (tmp_path / "large.txt").write_text("x" * 200 * 1024)  # 200KB
-    
-    # Test size limit
-    files = gather_filtered_files(str(tmp_path), max_size_kb=100,
-                                pattern_mode="include", pattern_input="*.txt")
-    assert len(files) == 1
-    assert "small.txt" in files[0]
+# Size limit test removed - no longer restricting file sizes
 
 def test_gather_filtered_files_symlinks(tmp_path):
     """Test symlink handling in file gathering."""
@@ -111,7 +101,7 @@ def test_gather_filtered_files_symlinks(tmp_path):
     link_dir.symlink_to(src_dir)
     
     # Test symlink traversal
-    files = gather_filtered_files(str(link_dir), max_size_kb=100,
+    files = gather_filtered_files(str(link_dir),
                                 pattern_mode="include", pattern_input="*.txt")
     assert len(files) == 1
     assert "test.txt" in files[0]
@@ -120,15 +110,10 @@ def test_gather_filtered_files_errors():
     """Test error handling in file gathering."""
     # Test nonexistent directory
     with pytest.raises(IOError):
-        gather_filtered_files("/nonexistent", max_size_kb=100,
+        gather_filtered_files("/nonexistent",
                             pattern_mode="include", pattern_input="*.txt")
     
     # Test invalid pattern mode
     with pytest.raises(ValueError):
-        gather_filtered_files(".", max_size_kb=100,
+        gather_filtered_files(".",
                             pattern_mode="invalid", pattern_input="*.txt")
-    
-    # Test negative size limit
-    with pytest.raises(ValueError):
-        gather_filtered_files(".", max_size_kb=-1,
-                            pattern_mode="include", pattern_input="*.txt")

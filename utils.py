@@ -23,11 +23,10 @@ def matches_pattern(file_path: Union[str, Path], pattern_input: Optional[str], b
     """
     if file_path is None:
         raise TypeError("file_path cannot be None")
-    if not pattern_input:
-        return False
     if not pattern_input or not pattern_input.strip():
         return False  # No patterns means no matches
         
+    # Split and clean patterns, removing empty ones
     patterns = [p.strip() for p in pattern_input.split(';') if p.strip()]
     if not patterns:
         return False  # Empty patterns list means no matches
@@ -70,41 +69,21 @@ def matches_pattern(file_path: Union[str, Path], pattern_input: Optional[str], b
         pattern = pattern.strip()
         if not pattern:
             continue
+            
         # Remove any trailing slashes that might interfere with matching
         while pattern.endswith('/'):
             pattern = pattern[:-1]
+            
+        # Always add the original pattern
+        normalized_patterns.append(pattern)
         
-        # Handle different pattern types
-        if '/' in pattern:
-            # Directory pattern (e.g., build/*)
-            base_dir = pattern.split('/')[0]
-            if not pattern.startswith('**/'):
-                # Add patterns to match at any depth
-                normalized_patterns.append(f'**/{pattern}')  # Full pattern at any depth
-                normalized_patterns.append(f'**/{base_dir}/**')  # Match any files under directory
-            normalized_patterns.append(pattern)  # Also try exact match
-            normalized_patterns.append(f'{base_dir}/**')  # Match files directly under directory
-        elif pattern.startswith('*.'):
-            # Extension pattern (e.g., *.md)
-            normalized_patterns.append(pattern)  # Match files in root
-            normalized_patterns.append(f'**/{pattern}')  # Match files in subdirectories
-        elif '*' in pattern:
-            # Pattern with wildcards (e.g., file*.txt)
-            if '.' in pattern:  # Pattern includes file extension
-                base_pattern = pattern.split('.')[0]  # Get part before extension
-                ext = pattern.split('.')[-1]  # Get extension
-                # Add various forms to match at different directory levels
-                normalized_patterns.append(pattern)  # Match in root
-                normalized_patterns.append(f'**/{pattern}')  # Match in subdirectories
-                normalized_patterns.append(f'**/{base_pattern}*.{ext}')  # Match with any middle part
-            else:
-                normalized_patterns.append(pattern)  # Match in root
-                normalized_patterns.append(f'**/{pattern}')  # Match in subdirectories
-                normalized_patterns.append(f'**/{pattern}*')  # Match with anything after
-        else:
-            # Simple pattern without wildcards
-            normalized_patterns.append(pattern)  # Exact match
+        # If pattern doesn't start with **/, add a **/ version
+        if not pattern.startswith('**/'):
             normalized_patterns.append(f'**/{pattern}')
+            
+        # For directory patterns, also add **/ version
+        if '/' in pattern and not pattern.endswith('/*'):
+            normalized_patterns.append(f'{pattern}/*')
         logger.debug(f"Normalized pattern: {pattern}")
     
     # Convert path to string and get parts for matching
@@ -169,12 +148,11 @@ def matches_pattern(file_path: Union[str, Path], pattern_input: Optional[str], b
     logger.debug(f"Path {path_obj} does not match any patterns")
     return False
 
-def gather_filtered_files(base_dir: str, max_size_kb: int, pattern_mode: str, pattern_input: str) -> List[str]:
-    """Gather files from a directory recursively, applying size and pattern filters.
+def gather_filtered_files(base_dir: str, pattern_mode: str, pattern_input: str) -> List[str]:
+    """Gather files from a directory recursively, applying pattern filters.
     
     Args:
         base_dir: Base directory to scan
-        max_size_kb: Maximum file size in KB (files larger than this are excluded)
         pattern_mode: Either 'exclude' or 'include'
         pattern_input: Semicolon-separated list of glob patterns
         
@@ -182,17 +160,14 @@ def gather_filtered_files(base_dir: str, max_size_kb: int, pattern_mode: str, pa
         List[str]: List of filtered file paths
         
     Raises:
-        ValueError: If pattern_mode is invalid or max_size_kb is not positive
+        ValueError: If pattern_mode is invalid
         IOError: If directory access fails
     """
     # Validate inputs
     if pattern_mode not in ["exclude", "include"]:
         raise ValueError(f"Invalid pattern_mode: {pattern_mode}. Must be 'exclude' or 'include'")
-    if max_size_kb <= 0:
-        raise ValueError(f"Invalid max_size_kb: {max_size_kb}. Must be positive")
         
     filtered_files = []
-    max_size_bytes = max_size_kb * 1024
     
     # Default ignore patterns for common directories and files
     default_ignores = [
@@ -245,15 +220,7 @@ def gather_filtered_files(base_dir: str, max_size_kb: int, pattern_mode: str, pa
                     # Use absolute path but don't resolve symlinks
                     abs_path = file_path.absolute()
 
-                    # Check file size
-                    try:
-                        size = abs_path.stat().st_size
-                        if size > max_size_bytes:
-                            logger.debug(f"Skipping {abs_path}: exceeds size limit of {max_size_kb}KB ({size/1024:.1f}KB)")
-                            continue
-                    except OSError as e:
-                        logger.warning(f"Error checking size of {abs_path}: {e}")
-                        continue
+                    # Size checks removed - no longer restricting file sizes
 
                     # Check pattern match using path relative to base directory
                     try:
